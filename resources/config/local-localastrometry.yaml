@@ -1,0 +1,27 @@
+app:
+  version: 0.1.0
+  debug: true
+  logging:
+    level: debug
+  star_catalog:
+    type: sstrc7
+    path: /path/to/sstrc7
+  astrometry:
+    indices_series: "5200_LITE"
+    indices_path: /path/to/indices/5000/5200-LITE
+    max_sources: 100
+    min_sources_for_attempt: 4
+    min_width_degrees: 0.1
+    max_width_degrees: 5
+    cpulimit_seconds: 60
+    docker_image: null # astrometry-cli or null for local mode
+  cors:
+    allowed_origins:
+      - "http://localhost:8000"  # Local API
+  detection:
+    detect: true
+    snr_threshold: 3.0
+    verbose: False
+  plotting:
+    debug: false
+    review: false

@@ -1,0 +1,7 @@
+tests/              export-ignore
+.github/            export-ignore
+docs/               export-ignore
+*.ipynb             export-ignore
+coverage-*.xml      export-ignore
+junit-*.xml         export-ignore
+senpai/tests/data/**  export-ignore

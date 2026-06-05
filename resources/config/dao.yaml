@@ -1,0 +1,147 @@
+# Senpai config for burr-collected data on the DAO-01 sensor.
+#
+# Same lineage as burr.yaml (burr's FITS header conventions: float-degree
+# RA/DEC, RA_RATE/DEC_RATE in deg/s, TRKMODE), but tuned for the DAO-01 optics:
+#   * narrow field → astrometry.net 4200 index series (1–3° fields), not the
+#     wide-field 5200_LITE Hornet uses;
+#   * site coords are written as float degrees (Hornet wrote sexagesimal);
+#   * AZ/ALT boresight keywords are present (Hornet omitted them).
+#
+# Verified against DAO-01 FITS headers.
+app:
+  astrometry:
+    cpulimit_seconds: 60
+    docker_image: astrometry-cli
+    indices_path: /path/to/indices/4000/4200
+    indices_series: "4200"
+    max_sources: 500
+    # DAO-01 is ~8120px over a 1–3° field; bound the solver accordingly.
+    min_width_degrees: 1.0
+    max_width_degrees: 3.0
+    min_sources_for_attempt: 4
+    # Refit SIP distortion during WCS refinement. With this off, the refinement
+    # caps the SIP order at 0 (linear) and *discards* astrometry.net's distortion
+    # solution, leaving pincushion in the sidereal WCS — which also breaks the
+    # sidereal->rate shift transfer (mispredicted streak positions). On.
+    sip_refit_enabled: true
+    sip_refit_order: 3
+    tweak_order: 3
+  calibrations:
+    auto_apply_darks: false
+    auto_apply_flats: false
+    auto_remove_column_median: true
+    auto_remove_row_median: true
+    auto_scale_images: false
+    auto_subtract_background: false
+    background_box_size: 20
+    background_exclude_percentile: 50.0
+    background_filter_size: 3
+    background_maxiters: 10
+    background_sigma: 3.0
+    clip_negative_after_dark: true
+    dark_matching_headers:
+    - XBINNING
+    flat_matching_headers:
+    - BINNING
+    - FILTER
+    master_darks_dir: null
+    master_flats_dir: null
+    max_dark_exposure_ratio: 1.5
+    negative_clip_threshold: -1000
+    oversample_threshold: 4.0
+    scaling_method: median_filter
+    target_fwhm: 3.0
+  cors:
+    allowed_origins:
+    - http://localhost:8000
+  debug: false
+  detection:
+    detect: true
+    snr_threshold: 3.0
+    verbose: false
+  headers:
+    exposure_time:
+      exposure_time_keys:
+      - EXPTIME
+    observation_time:
+      observation_time_keys:
+      - DATE-OBS
+    pointing:
+      # DAO-01 writes float-degree RA/DEC plus float AZ/ALT boresight keywords.
+      az_alt_format: float
+      boresight_altitude_keys:
+      - ALT
+      boresight_azimuth_keys:
+      - AZ
+      ra_dec_format: float
+      ra_units: degrees
+      target_dec_keys:
+      - DEC
+      target_ra_keys:
+      - RA
+    site:
+      # SITELAT/SITELONG/SITEELEV are float; elevation in km (~0.25).
+      altitude_unit: kilometers
+      positional_format: float
+      site_altitude_keys:
+      - SITEELEV
+      site_latitude_keys:
+      - SITELAT
+      site_longitude_keys:
+      - SITELONG
+    tracking:
+      # TRKMODE is authoritative on DAO-01 (sidereal vs rate tagged correctly),
+      # so senpai's classifier routes off it directly; the residual non-zero
+      # rates on sidereal frames don't misroute because the mode string wins.
+      track_mode_keys:
+      - TRKMODE
+      track_ra_rate_keys:
+      - RA_RATE
+      track_dec_rate_keys:
+      - DEC_RATE
+      track_ra_rate_unit: degrees/second
+      track_dec_rate_unit: degrees/second
+  logging:
+    level: info
+  photometry:
+    gain: 0.1
+    include_read_noise: true
+    max_crowding: 0.3
+    min_snr: 3.0
+    preferred_filters:
+    - Johnson_V
+    - Johnson_R
+    - Sloan_r
+    - Gaia_G
+    - Sloan_g
+    - Johnson_B
+    read_noise: 1.0
+    limiting_snr: 3.0
+    limiting_completeness_fraction: 0.5
+  plotting:
+    # Heavy inline per-frame plots are OFF: on 8120x8120 frames the review /
+    # photometry / kernel figures render at ~50-150 MB each (a single kernel plot
+    # was ~50 s), which dominates the night pipeline's wall time and disk. The
+    # pipeline writes only the data products (the *_processed.fits frames +
+    # senpai_<id>.json); review/photometry/aperture diagnostics are regenerated
+    # after the fact, from ONLY that FITS + JSON, by `senpai-burr plots <dir>`
+    # (senpai.integrations.burr.replot) — so a plot never costs a re-run. The 8
+    # aggregate calibration plots still come from `senpai-burr calibrate`.
+    #
+    # `debug` gates the heavy WCS kernel / cross-correlation plots — kept OFF.
+    # `streak` is a separate, lightweight flag (PSF/refinement panels, <1MB each,
+    # rate frames only) — left ON inline since they're cheap and the streak
+    # intermediates aren't (yet) persisted for post-hoc replot.
+    debug: false
+    review: false
+    photometry: false
+    streak: true
+  star_catalog:
+    # Gaia DR3 (online) reaches G~21 — deeper than the frames' detection limit
+    # (~mag 20), so the SNR/completeness curve rolls over within the data and we
+    # can measure a real limiting magnitude + ZP (sstrc7's faint_limit 19 cut
+    # the data at the catalog edge). Heavier (~24k stars/2deg field) and needs
+    # network; revisit if a deep local catalog becomes available.
+    type: gaia
+    faint_limit: 21.0
+  version: 0.1.0

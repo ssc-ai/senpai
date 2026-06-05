@@ -1,0 +1,33 @@
+{
+    "folders": [
+        {
+            "name": "senpai",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.analysis.extraPaths": [
+            "./senpai/api",
+            "./senpai/engine",
+            "./senpai/astrometry",
+            "./senpai/core",
+            "./senpai/photometry",
+            "./senpai/catalog",
+            "./senpai/cli",
+            "${workspaceFolder}"
+        ],
+        "[python]": {
+            "editor.formatOnSave": true,
+            "editor.defaultFormatter": "charliermarsh.ruff",
+            "editor.codeActionsOnSave": {
+                "source.fixAll": "explicit"
+            }
+        },
+        "ruff.enable": true,
+        "ruff.organizeImports": true,
+        "ruff.fixAll": true,
+        "ruff.lineLength": 120,
+        "makefile.configureOnOpen": false,
+    }
+}

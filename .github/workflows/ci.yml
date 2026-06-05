@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --all-extras
+      - name: Ruff (errors and unused code)
+        run: uv run ruff check senpai --select E9,F63,F7,F82,F401,F541,F811
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --all-extras --python ${{ matrix.python-version }}
+      - name: Run tests with coverage
+        # Astrometry.net + index files and local star catalogs aren't available
+        # on CI runners; those tests are marker-skipped. Run `make coverage`
+        # locally to exercise the full suite and regenerate the README badges.
+        run: |
+          uv run pytest -v \
+            -m "not requires_astrometry and not requires_catalog" \
+            --junitxml=reports/junit/junit.xml \
+            --cov=senpai \
+            --cov-report=xml

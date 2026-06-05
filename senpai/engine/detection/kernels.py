@@ -1,0 +1,222 @@
+import functools
+import logging
+
+import cv2
+import numpy as np
+from PIL import Image
+from scipy.ndimage import shift
+
+logger = logging.getLogger(__name__)
+
+
+def rotate_pil(array, angle):
+    pyimg = Image.fromarray(array)
+    pyimg = pyimg.rotate(angle, Image.BILINEAR, expand=1)
+    array = np.array(pyimg)
+
+    return array
+
+
+def shift_filter_subpx(filter, pix_shift):
+    pad = (pix_shift + 0.5).round().astype(int)
+
+    padded = np.pad(filter, ((pad[0], pad[0]), (pad[1], pad[1])))
+    shifted = shift(padded, pix_shift)
+
+    shifted[np.where(np.abs(shifted) < 1e-4)] = 0.000
+    shifted[np.where(shifted < 0)] = 0.001
+    shifted[np.where(shifted > 1)] = 1
+
+    return shifted
+
+
+@functools.lru_cache(maxsize=32)
+def rectangle_pyramoid(
+    length: float,
+    sinx: float,
+    cosx: float,
+    width: int = 4,
+    upsample: int = 100,
+    pix_shift: tuple[float, float] | None = None,
+    halo_fwhm: float | None = None,
+    halo_level: float = 1e-3,
+    verbose: bool = False,
+):
+    if verbose:
+        logger.info("rectangle_pyramoid")
+
+    angle = np.rad2deg(np.arctan2(sinx, cosx))
+
+    width = int(width)
+    length = int(length)
+    pyramid = np.ones((width * upsample, length * upsample))
+    if verbose:
+        logger.info("built base streak")
+
+    if halo_fwhm is not None:
+        if verbose:
+            logger.info("adding halo")
+
+        halo_fwhm = int(halo_fwhm / 2)
+        # logger.info("adding nonzero halo")
+        pyramid = np.pad(
+            pyramid,
+            (
+                (halo_fwhm * upsample, halo_fwhm * upsample),
+                (halo_fwhm * upsample, halo_fwhm * upsample),
+            ),
+            mode="constant",
+            constant_values=0.0,
+        )
+
+        if verbose:
+            logger.info("padded pyramid")
+
+        pyramid2 = np.zeros(pyramid.shape) + halo_level
+
+        if verbose:
+            logger.info("created pyramid2")
+
+        pyramid2 = rotate_pil(pyramid2, -angle)
+
+        if verbose:
+            logger.info("rotated pyramid2")
+
+    pyramid = rotate_pil(pyramid, -angle)
+    if verbose:
+        logger.info("rotated pyramid")
+
+    if halo_fwhm is not None:
+        # add nonzero halo to original pyramid
+        pyramid[np.where(pyramid == 0)] = pyramid2[np.where(pyramid == 0)]
+        if verbose:
+            logger.info("added halo")
+
+    pyramid = cv2.resize(
+        pyramid,
+        dsize=(int(pyramid.shape[1] / upsample), int(pyramid.shape[0] / upsample)),
+        interpolation=cv2.INTER_AREA,
+    )
+    if verbose:
+        logger.info("resized pyramid")
+
+    if pix_shift is not None:
+        pyramid = shift_filter_subpx(pyramid, pix_shift)
+        if verbose:
+            logger.info("shifted pyramid")
+
+    pyramid[pyramid > 1.0] = 1.0
+
+    return pyramid
+
+
+@functools.lru_cache(maxsize=256)
+def streak_matched_kernel(
+    fwhm: float, angle_deg: float, length_fwhm: float = 5.0
+) -> np.ndarray:
+    """Directional matched filter: Gaussian cross-section extruded along an angle.
+
+    Used as part of a filter bank to detect streak-shaped signal in residual
+    images (after PSF-model subtraction). The kernel is seeing-limited
+    perpendicular to the streak and flat along it, with Gaussian taper at the
+    ends to avoid ringing in FFT convolution.
+
+    Args:
+        fwhm: PSF full width at half maximum in pixels.
+        angle_deg: Streak direction in degrees (0 = along x-axis).
+        length_fwhm: Kernel length as a multiple of FWHM.
+
+    Returns:
+        2D kernel array normalized to sum to 1.
+    """
+    sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
+    length = fwhm * length_fwhm
+
+    # Kernel must encompass the rotated streak + Gaussian wings on all sides
+    size = int(np.ceil(length + 6 * sigma))
+    if size % 2 == 0:
+        size += 1
+
+    half = size // 2
+    y, x = np.mgrid[-half : half + 1, -half : half + 1].astype(np.float64)
+
+    angle_rad = np.radians(angle_deg)
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+
+    # Project pixel coordinates onto streak direction and perpendicular
+    along = x * cos_a + y * sin_a
+    perp = -x * sin_a + y * cos_a
+
+    # Gaussian profile perpendicular to streak (seeing-limited width)
+    cross_section = np.exp(-(perp**2) / (2 * sigma**2))
+
+    # Flat along streak body, Gaussian taper beyond the ends
+    half_len = length / 2
+    excess = np.maximum(np.abs(along) - half_len, 0)
+    along_taper = np.exp(-(excess**2) / (2 * sigma**2))
+
+    kernel = cross_section * along_taper
+
+    total = kernel.sum()
+    if total > 0:
+        kernel /= total
+
+    return kernel
+
+
+def build_directional_filter_bank(
+    fwhm: float, n_angles: int = 36, length_fwhm: float = 5.0
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Build a bank of directional matched filters at evenly spaced angles.
+
+    Each filter is a :func:`streak_matched_kernel` at a different orientation.
+    Together they form a filter bank that can detect streak-shaped signal at
+    any angle by convolving the image with each filter and comparing responses.
+
+    Args:
+        fwhm: PSF FWHM in pixels.
+        n_angles: Number of angles to sample in [0, 180) degrees.
+        length_fwhm: Each filter's length as a multiple of FWHM.
+
+    Returns:
+        Tuple of (list of kernel arrays, array of angles in degrees).
+    """
+    angles = np.linspace(0, 180, n_angles, endpoint=False)
+    # Round for lru_cache friendliness
+    fwhm_r = round(float(fwhm), 2)
+    length_r = round(float(length_fwhm), 2)
+    kernels = [streak_matched_kernel(fwhm_r, float(a), length_r) for a in angles]
+    return kernels, angles
+
+
+@functools.lru_cache(maxsize=32)
+def sidereal_kernel(fwhm: float) -> np.ndarray:
+    """Generate a 2D Gaussian kernel for sidereal star detection.
+
+    Args:
+        fwhm (float): Full width at half maximum of the Gaussian in pixels.
+
+    Returns:
+        np.ndarray: 2D Gaussian kernel normalized to sum to 1.
+    """
+    # Convert FWHM to sigma
+    sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
+
+    # Make kernel size odd and ~6 sigma
+    size = int(np.ceil(6 * sigma))
+    if size % 2 == 0:
+        size += 1
+
+    # Create coordinate grid
+    x = np.arange(0, size, 1, float)
+    y = x[:, np.newaxis]
+    x0 = y0 = size // 2
+
+    # Generate 2D Gaussian
+    kernel = np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma**2))
+
+    # Normalize to sum to 1
+    kernel = kernel / kernel.sum()
+
+    return kernel
