@@ -301,7 +301,7 @@ def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
 
 def _worker_init(
     config_path: str, log_level: str, detect: bool,
-    save_processed_fits: bool = True,
+    save_processed_fits: bool = True, detect_streaks: bool = True,
 ) -> None:
     """Per-worker setup for parallel batch processing. Spawned workers start with
     no initialized config singleton, so each must load it; BLAS is already pinned
@@ -311,7 +311,7 @@ def _worker_init(
     config = initialize_config(Path(config_path))
     set_log_level(log_level)
     config.detection.detect = detect
-    config.detection.detect_streaks = detect
+    config.detection.detect_streaks = detect_streaks
     config.runtime.save_processed_fits = save_processed_fits
 
 
@@ -420,7 +420,8 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
                 initializer=_worker_init,
                 initargs=(str(args.config), get_config().logging.level,
                           args.detect,
-                          get_config().runtime.save_processed_fits),
+                          get_config().runtime.save_processed_fits,
+                          args.detect and not args.no_streaks),
             ) as ex:
                 futs = {ex.submit(_run_batch, b, bd): b for (b, bd) in chunk}
                 for fut in concurrent.futures.as_completed(futs):
@@ -484,7 +485,7 @@ def cmd_night(args: argparse.Namespace) -> int:
     config = initialize_config(Path(args.config))
     set_log_level(config.logging.level)
     config.detection.detect = args.detect
-    config.detection.detect_streaks = args.detect
+    config.detection.detect_streaks = args.detect and not args.no_streaks
     if args.no_processed_fits:
         config.runtime.save_processed_fits = False
     if args.debug_plots:
@@ -840,6 +841,13 @@ def build_parser() -> argparse.ArgumentParser:
         "-D", "--detect", action="store_true",
         help="Enable streak / non-star detection (default off; needed for the "
              "starcsp dataset build).",
+    )
+    p_night.add_argument(
+        "--no-streaks", action="store_true",
+        help="With -D, run point-source detection only and SKIP streak "
+             "detection (detect=True, detect_streaks=False). For calsats the "
+             "satellite is a point source in rate frames, so this avoids the "
+             "slow sidereal streak detector — ~10x faster per calsat batch.",
     )
     p_night.add_argument(
         "--dry-run", action="store_true",
