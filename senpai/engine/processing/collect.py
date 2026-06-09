@@ -42,8 +42,10 @@ def process_senpai_collect(
     for frame in file_list:
         preprocess_image(frame, config, store_intermediates=False)
 
-        # Save the processed frame data for later export
-        if hasattr(frame, "file_path") and frame.file_path:
+        # Save the processed frame data for later export (replot reads these;
+        # full-night runs skip them — ~260 MB/frame dominates the output dir).
+        if (config.runtime.save_processed_fits
+                and hasattr(frame, "file_path") and frame.file_path):
             # Create processed filename
             processed_path = Path(frame.file_path)
             processed_filename = (
@@ -348,6 +350,24 @@ def process_senpai_collect(
             )
 
         solve_shift(senpai_run, next_shift)
+
+        # Backstop against a livelock: the loop pulls the next *unprocessed*
+        # shift, so a solver that returns without setting processed=True hands
+        # the same shift back forever (a missing-starfield early-return did
+        # exactly this and spun 8 workers at 100% CPU for hours). A solver
+        # must always mark the shift processed; if one didn't, retire it as
+        # failed here so the loop can make progress.
+        if not next_shift.processed:
+            logger.error(
+                "Shift %d->%d returned unprocessed from solver; force-retiring "
+                "as failed to avoid livelock.",
+                next_shift.source_index, next_shift.target_index,
+            )
+            next_shift.processed = True
+            next_shift.is_valid = False
+            next_shift.error_message = (
+                next_shift.error_message or "Solver returned without processing"
+            )
 
         senpai_run.update_valid_path()
 

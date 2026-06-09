@@ -82,6 +82,16 @@ def refine_correlation_shift_by_global_shift(
     streak: StreakMetadata,
     shift: np.ndarray,
 ) -> np.ndarray:
+    src_streak = rate_frame_source.streak
+    if (src_streak is None or src_streak.pixel_length is None
+            or src_streak.fwhm is None):
+        # No streak model on the source frame (failed extraction) — the
+        # refinement kernel can't be built; keep the unrefined CC shift.
+        logger.warning(
+            "Skipping correlation-shift refinement: source frame %s has no "
+            "streak model", rate_frame_source.index,
+        )
+        return shift
     kernel = rectangle_pyramoid(
         rate_frame_source.streak.pixel_length,
         rate_frame_source.streak.sine_angle,
@@ -168,6 +178,30 @@ def solve_rate_from_rate(
 ) -> None:
     # Return the modified object
 
+    # Only the SOURCE frame needs a starfield: this solver reads
+    # rate_frame_a.starfield.catalog_stars for cross-correlation masking and shift
+    # validation (and would AttributeError on None), then the caller propagates
+    # that WCS to the target. The TARGET's starfield is the *output* of this shift
+    # — it's built downstream in collect.py ("Shifting WCS by pixel shift"), so a
+    # target with starfield=None is the normal, expected pre-solve state. Requiring
+    # it here wrongly skipped every rate->rate shift whose target wasn't already
+    # anchored, killing propagation past the first rate frame.
+    #
+    # A fully-cloudy source gets no WCS / no starfield. Mark the shift processed-
+    # but-invalid and return: the caller's loop pulls the next *unprocessed* shift
+    # (SenpaiRun.get_next_shift), so returning without setting processed=True hands
+    # the same shift back forever — a livelock (observed in _full7).
+    if rate_frame_a.starfield is None:
+        logger.warning(
+            "Skipping rate-to-rate shift %d->%d: source frame missing starfield "
+            "— frame likely had no WCS solution.",
+            frame_shift.source_index, frame_shift.target_index,
+        )
+        frame_shift.processed = True
+        frame_shift.is_valid = False
+        frame_shift.error_message = "Missing starfield (no WCS solution)"
+        return
+
     frame_exposure_gap_seconds = abs(
         (rate_frame_a.timestamp - rate_frame_b.timestamp).total_seconds()
     )
@@ -192,9 +226,9 @@ def solve_rate_from_rate(
     if rate_frame_b.streak is not None:
         fwhms.append(rate_frame_b.streak.fwhm)
 
-    streak_fwhm = rate_frame_a.streak.fwhm
-    if fwhms:
-        streak_fwhm = np.mean(fwhms)
+    # Both frames can lack a streak (failed extraction); downstream consumers
+    # (cc_downsample_factor, the metadata headers) all accept fwhm=None.
+    streak_fwhm = float(np.mean(fwhms)) if fwhms else None
 
     rate_a_data = prepare_rate_frame(rate_frame_a)
     rate_b_data = prepare_rate_frame(rate_frame_b)
@@ -279,31 +313,46 @@ def solve_rate_from_rate(
 
         max_expected_shift = streak_rate * total_shift_time
 
-        # Use the larger of our two estimates for masking
-        if expected_shift is not None:
+        # Use the larger of our two estimates for masking. A failed streak
+        # extraction can leave length/exposure NaN → NaN radius → int() crash;
+        # the mask is only a CC-peak-suppression optimization, so fall back to
+        # the expected_shift estimate or skip masking rather than dying.
+        if not np.isfinite(max_expected_shift):
+            logger.warning(
+                "Streak-based shift estimate is not finite "
+                "(length=%s, exposure=%s); masking from expected_shift only.",
+                streak_measurements.streak_mapping.length, rate_a_exposure_time,
+            )
+            max_expected_shift = None
+        if expected_shift is not None and max_expected_shift is not None:
             mask_radius = int(2.0 * max(max_expected_shift, expected_shift))
-        else:
+        elif expected_shift is not None:
+            mask_radius = int(2.0 * expected_shift)
+        elif max_expected_shift is not None:
             mask_radius = int(2.0 * max_expected_shift)
+        else:
+            mask_radius = None
 
-        logger.info(
-            f"Masking cross-correlation outside radius {mask_radius:.1f}px "
-            f"(from streak length={streak_measurements.streak_mapping.length:.1f}px, "
-            f"rate={streak_rate:.1f}px/s, time={total_shift_time:.1f}s)"
-        )
+        if mask_radius is not None:
+            logger.info(
+                f"Masking cross-correlation outside radius {mask_radius:.1f}px "
+                f"(from streak length={streak_measurements.streak_mapping.length:.1f}px, "
+                f"rate={streak_rate:.1f}px/s, time={total_shift_time:.1f}s)"
+            )
 
-        # Create circular mask centered on image
-        center_y, center_x = (
-            cross_correlated_image.shape[0] // 2,
-            cross_correlated_image.shape[1] // 2,
-        )
-        y, x = np.ogrid[
-            -center_y : cross_correlated_image.shape[0] - center_y,
-            -center_x : cross_correlated_image.shape[1] - center_x,
-        ]
-        mask = x * x + y * y <= mask_radius * mask_radius
+            # Create circular mask centered on image
+            center_y, center_x = (
+                cross_correlated_image.shape[0] // 2,
+                cross_correlated_image.shape[1] // 2,
+            )
+            y, x = np.ogrid[
+                -center_y : cross_correlated_image.shape[0] - center_y,
+                -center_x : cross_correlated_image.shape[1] - center_x,
+            ]
+            mask = x * x + y * y <= mask_radius * mask_radius
 
-        # Set everything outside mask to minimum value
-        cross_correlated_image[~mask] = np.min(cross_correlated_image)
+            # Set everything outside mask to minimum value
+            cross_correlated_image[~mask] = np.min(cross_correlated_image)
 
         if get_config().plotting.debug:
             from senpai.engine.plotting.images import plot_single_frame

@@ -590,7 +590,12 @@ def fit_and_validate_wcs(
         (w // 2, h // 2),
     ]
     original_world = original_wcs.all_pix2world(reference_pixels, 0)
-    new_pixels = refined_astropy_wcs.all_world2pix(original_world, 0)
+    # quiet=True: fit_wcs_from_points fits no inverse SIP, so all_world2pix
+    # inverts iteratively and raises NoConvergence on marginal fits — which
+    # would kill the batch inside a *consistency check*. Take astropy's best
+    # solution instead; a genuinely diverged inverse lands far from the
+    # reference pixels and the max_shift test below rejects the refinement.
+    new_pixels = refined_astropy_wcs.all_world2pix(original_world, 0, quiet=True)
 
     max_shift = max(
         np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)

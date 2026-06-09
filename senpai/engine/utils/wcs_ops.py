@@ -87,9 +87,12 @@ def existing_stars_from_wcs(
     # Extract RA and Dec from all stars
     ra_dec_list = [(star.ra, star.dec) for star in star_list]
 
-    # Convert all coordinates at once for efficiency
+    # Convert all coordinates at once for efficiency. quiet=True: WCS models
+    # refined via fit_wcs_from_points carry no inverse SIP, so this inverts
+    # iteratively and would raise NoConvergence on marginal solutions —
+    # astropy's best solution is sub-pixel for any star that matters.
     if ra_dec_list:
-        pixel_coords = astropy_wcs.all_world2pix(ra_dec_list, 0)
+        pixel_coords = astropy_wcs.all_world2pix(ra_dec_list, 0, quiet=True)
     else:
         # Return empty list if no stars
         return []
