@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from datetime import datetime
 from functools import lru_cache
@@ -508,6 +509,29 @@ def query_catalog_sdss(
 _GAIA_SKY_CACHE: list[dict] = []
 _GAIA_SKY_PAD_DEG = 0.1  # absorb intra-batch jitter (shift+refine) into coverage
 _GAIA_SKY_CACHE_MAX = 64  # regions
+# Total-star bound across all regions. Region *coverage* grows without limit
+# as a night's pointings accumulate (a worker that has seen hundreds of
+# batches can hold multi-GB of star dicts — observed as an OOM kill at 8.7 GB
+# RSS on a full-night run). Evict least-recently-used whole regions once the
+# total crosses this; ~1M dicts ≈ 300 MB per worker.
+_GAIA_SKY_CACHE_MAX_STARS = 1_000_000
+
+
+def _trim_sky_cache() -> None:
+    """Evict least-recently-used regions until the total star count fits.
+    Callers move the active region to the end of the list first (LRU touch)."""
+    total = sum(len(r["stars"]) for r in _GAIA_SKY_CACHE)
+    while len(_GAIA_SKY_CACHE) > 1 and (
+        total > _GAIA_SKY_CACHE_MAX_STARS or len(_GAIA_SKY_CACHE) > _GAIA_SKY_CACHE_MAX
+    ):
+        dropped = _GAIA_SKY_CACHE.pop(0)
+        total -= len(dropped["stars"])
+        logger.info(
+            "Gaia sky-cache EVICT: region %.0f deg² / %d stars (total now %d)",
+            (dropped["box"][1] - dropped["box"][0])
+            * (dropped["box"][3] - dropped["box"][2]),
+            len(dropped["stars"]), total,
+        )
 
 
 def _box_overlap(a, b) -> bool:
@@ -588,6 +612,10 @@ def _query_gaia_sky(
     for region in _GAIA_SKY_CACHE:
         if region["fb"] != key_fb or not _box_overlap(region["box"], B):
             continue
+        # LRU touch: keep the active region at the end so eviction starts
+        # from regions that haven't been used recently.
+        _GAIA_SKY_CACHE.remove(region)
+        _GAIA_SKY_CACHE.append(region)
         C = region["box"]
         if _box_contains(C, B):
             logger.info("Gaia sky-cache HIT (within coverage); no online query")
@@ -611,17 +639,23 @@ def _query_gaia_sky(
             "coverage now [%.3f,%.3f]x[%.3f,%.3f]",
             len(strips), added, U[0], U[1], U[2], U[3],
         )
+        _trim_sky_cache()
         return _within_B(region["stars"])
 
     # No overlapping region: fresh (padded) query, start a new region.
     stars = _online(Bp)
     _GAIA_SKY_CACHE.append({"fb": key_fb, "box": Bp, "stars": list(stars)})
-    if len(_GAIA_SKY_CACHE) > _GAIA_SKY_CACHE_MAX:
-        _GAIA_SKY_CACHE.pop(0)
+    _trim_sky_cache()
     return _within_B(stars)
 
 
-@lru_cache(maxsize=50000)
+# Small maxsize ON PURPOSE: the WCS-tuple key changes on every frame shift /
+# refinement nudge, so entries almost never re-hit across batches — at 50000
+# this was a pure accumulator pinning each query's full star list (tens of MB
+# per entry, and it kept evicted sky-cache regions alive through shared dict
+# refs) — a worker-process memory leak that OOM-killed full-night runs. A
+# handful of entries covers any genuine same-WCS re-query within a frame.
+@lru_cache(maxsize=8)
 def _query_catalog_gaia_cached(
     wcs_tuple: tuple,
     faint_lim: int | None,
@@ -893,9 +927,43 @@ def examine_catalog():
         return _examine_sdss_catalog()
     elif catalog_enum == CatalogType.GAIA:
         return _examine_gaia_catalog()
+    elif catalog_enum == CatalogType.GAIA_LOCAL:
+        return _examine_gaia_local_catalog(catalog_path)
     else:
         logger.error(f"Unsupported catalog type: {catalog_enum}")
         return False
+
+
+def _examine_gaia_local_catalog(catalog_path: str) -> bool:
+    """Validate the local Gaia mirror: index.json present and every tile it
+    references exists on disk (catches a partial / in-progress download)."""
+    import json
+    import os
+
+    if not catalog_path:
+        logger.error("gaia_local catalog path not configured")
+        return False
+    index_path = os.path.join(catalog_path, "index.json")
+    if not os.path.isfile(index_path):
+        logger.error("gaia_local mirror index missing: %s", index_path)
+        return False
+    try:
+        with open(index_path) as fh:
+            tiles = (json.load(fh).get("tiles") or {})
+    except Exception as e:
+        logger.error("gaia_local index unreadable: %s", e)
+        return False
+    if not tiles:
+        logger.error("gaia_local index has no tiles")
+        return False
+    missing = [m["file"] for m in tiles.values()
+               if not os.path.isfile(os.path.join(catalog_path, m["file"]))]
+    if missing:
+        logger.error("gaia_local mirror incomplete: %d/%d tiles missing (e.g. %s)",
+                     len(missing), len(tiles), missing[0])
+        return False
+    logger.info("gaia_local mirror OK: %d tiles at %s", len(tiles), catalog_path)
+    return True
 
 
 def _examine_sstrc7_catalog(catalog_path: str) -> bool:
@@ -1012,6 +1080,21 @@ def query_catalog(
             f"Catalog type {catalog} not supported, choose from: sstrc7, sdss, gaia, gaia_local"
         )
 
+    # Bound dense fields for full-catalog callers (max_stars=None): a galactic-
+    # plane frame can return 70k+ stars, and every downstream structure (pydantic
+    # star copies per WCS update, isolation trees, photometry scaffolding) scales
+    # with it — observed ~30 GB/worker on one batch, enough to OOM a j8 pool.
+    # Stratified by magnitude so the faint bins survive for completeness; callers
+    # passing an explicit max_stars keep the brightest-N semantics above.
+    cap = getattr(config.star_catalog, "max_stars_per_frame", None)
+    if max_stars is None and cap and len(result.stars) > cap:
+        n_before = len(result.stars)
+        result.stars = _stratified_mag_cap(result.stars, cap)
+        logger.info(
+            "Capped catalog %d -> %d stars (magnitude-stratified; "
+            "star_catalog.max_stars_per_frame=%d)", n_before, len(result.stars), cap,
+        )
+
     if apply_sip and result.stars:
         # Re-project the (cached, linear) catalog positions through the full WCS so
         # SIP distortion is applied. Returns fresh StarInSpace objects, so the cached
@@ -1022,3 +1105,37 @@ def query_catalog(
         result.stars = existing_stars_from_wcs(wcs, result.stars)
 
     return result
+
+
+def _stratified_mag_cap(stars: list, cap: int) -> list:
+    """Subsample to ``cap`` stars, stratified over 0.5-mag bins.
+
+    Waterfilling from the sparsest bin up: small (bright) bins are kept whole,
+    over-full (faint) bins are evenly subsampled by magnitude rank, so per-bin
+    statistics (completeness fractions, per-bin SNR medians) stay unbiased.
+    Deterministic — no RNG. Stars without a magnitude share one bin.
+    """
+    bins: dict[float, list] = {}
+    for s in stars:
+        m = getattr(s, "magnitude", None)
+        key = math.floor(m * 2.0) / 2.0 if m is not None else math.inf
+        bins.setdefault(key, []).append(s)
+
+    out: list = []
+    remaining = cap
+    # Sparsest bins first so their full contents fit before quotas tighten.
+    order = sorted(bins.values(), key=len)
+    for i, members in enumerate(order):
+        quota = remaining // (len(order) - i)
+        if len(members) <= quota:
+            out.extend(members)
+            remaining -= len(members)
+        else:
+            members = sorted(
+                members,
+                key=lambda s: s.magnitude if s.magnitude is not None else math.inf,
+            )
+            step = len(members) / quota
+            out.extend(members[int(j * step)] for j in range(quota))
+            remaining -= quota
+    return out

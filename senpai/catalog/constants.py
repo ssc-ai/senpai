@@ -11,6 +11,7 @@ class CatalogType(Enum):
     SSTRC7 = "sstrc7"
     SDSS = "sdss"
     GAIA = "gaia"
+    GAIA_LOCAL = "gaia_local"
 
 
 class SSTRC7Filter(Enum):
