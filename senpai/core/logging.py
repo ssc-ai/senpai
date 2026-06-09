@@ -1,5 +1,6 @@
 import logging
 import logging.config
+import logging.handlers
 from enum import Enum
 from typing import Any, Dict, Literal
 
@@ -8,6 +9,26 @@ from senpai.core.constants import LOG_PATH
 logger = logging.getLogger(__name__)
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+
+class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler tolerant of concurrent rollovers.
+
+    The burr night pipeline runs many worker processes that all log to the
+    same file. With size-based rotation they race in doRollover: once one
+    process renames app.log -> app.log.1, the others' os.rename of the
+    now-missing app.log raises FileNotFoundError, which logging prints as a
+    spurious traceback (the record is dropped but processing is unaffected).
+    Swallow that specific race and just reopen the (recreated) base file so
+    the loser keeps logging to the fresh app.log.
+    """
+
+    def rotate(self, source: str, dest: str) -> None:
+        try:
+            super().rotate(source, dest)
+        except FileNotFoundError:
+            # Another process already rotated this file out from under us.
+            pass
 
 
 class LogMode(str, Enum):
@@ -47,7 +68,7 @@ def get_local_config() -> Dict[str, Any]:
         "handlers": {
             "console": {"class": "colorlog.StreamHandler", "formatter": "colored", "stream": "ext://sys.stdout"},
             "file": {
-                "class": "logging.handlers.RotatingFileHandler",
+                "class": "senpai.core.logging.MultiprocessSafeRotatingFileHandler",
                 "formatter": "file",
                 "filename": str(LOG_PATH),
                 "maxBytes": 10485760,

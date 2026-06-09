@@ -87,6 +87,14 @@ class StarCatalogConfig(BaseModel):
         description="Default faint magnitude limit for online catalogs (e.g., Gaia G); "
         "set to None to use the service default.",
     )
+    max_stars_per_frame: int | None = Field(
+        default=None,
+        description="Cap on catalog stars returned per frame for callers that "
+        "request the full catalog (max_stars=None). Applied as a magnitude-"
+        "stratified subsample so completeness statistics survive; bounds the "
+        "per-frame memory/CPU on dense galactic-plane fields (a 74k-star field "
+        "needed ~30 GB/worker uncapped). None = unbounded.",
+    )
 
     @model_validator(mode="after")
     def validate_catalog_config(self):
@@ -107,6 +115,13 @@ class RuntimeConfig(BaseModel):
 
     run_id: str = Field(default="senpai", description="Run identifier")
     output_dir: str = Field(default=".", description="Output directory")
+    save_processed_fits: bool = Field(
+        default=True,
+        description="Write per-frame *_processed.fits next to the results. "
+        "Needed for decoupled replotting, but ~260 MB/frame on 8k sensors "
+        "(~94% of a night's output) — full-night runs disable it via "
+        "`senpai-burr night --no-processed-fits`.",
+    )
 
     model_config = ConfigDict(frozen=False)  # Allow updates to Runtime config
 
