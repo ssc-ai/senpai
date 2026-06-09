@@ -28,7 +28,13 @@ app:
     tweak_order: 3
   calibrations:
     auto_apply_darks: false
-    auto_apply_flats: false
+    # Per-night master flats from twilight_flats sequences (senpai-burr flats).
+    # The DAO01 response has a +10%/-12% centered dome — without division it
+    # puts a t-linear structured-background term in the photometric noise
+    # (depth stopped improving past ~5s) and a ~0.1 mag position-dependent
+    # star-flux error. BINNING-only matching: DAO01 writes no FILTER keyword,
+    # and listing it makes the matcher fail (flat never applied).
+    auto_apply_flats: true
     auto_remove_column_median: true
     auto_remove_row_median: true
     auto_scale_images: false
@@ -43,9 +49,8 @@ app:
     - XBINNING
     flat_matching_headers:
     - BINNING
-    - FILTER
     master_darks_dir: null
-    master_flats_dir: null
+    master_flats_dir: /stars/data/processed/burr/calib
     max_dark_exposure_ratio: 1.5
     negative_clip_threshold: -1000
     oversample_threshold: 4.0
@@ -144,4 +149,7 @@ app:
     # network; revisit if a deep local catalog becomes available.
     type: gaia
     faint_limit: 21.0
+    # Bound dense galactic-plane fields (a 74k-star frame needed ~30 GB/worker
+    # and OOM'd the j8 pool); magnitude-stratified so completeness stats hold.
+    max_stars_per_frame: 30000
   version: 0.1.0

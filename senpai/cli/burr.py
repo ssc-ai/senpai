@@ -299,14 +299,20 @@ def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
     return nights
 
 
-def _worker_init(config_path: str, log_level: str, detect: bool) -> None:
+def _worker_init(
+    config_path: str, log_level: str, detect: bool,
+    save_processed_fits: bool = True,
+) -> None:
     """Per-worker setup for parallel batch processing. Spawned workers start with
     no initialized config singleton, so each must load it; BLAS is already pinned
-    to 1 thread via the env set before the pool was created (inherited at import)."""
+    to 1 thread via the env set before the pool was created (inherited at import).
+    CLI overrides applied to the parent config must be re-applied here — workers
+    re-read the YAML and would otherwise silently drop them."""
     config = initialize_config(Path(config_path))
     set_log_level(log_level)
     config.detection.detect = detect
     config.detection.detect_streaks = detect
+    config.runtime.save_processed_fits = save_processed_fits
 
 
 def _failed_entry(batch: FrameBatch, exc: Exception) -> dict:
@@ -337,6 +343,12 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
 
     entries: list[dict] = []
     n_done = n_skipped = n_failed = 0
+
+    # Write the manifest incrementally (every MANIFEST_FLUSH_EVERY completed
+    # batches, plus once at the end) so calibrate/export can run on partial
+    # results mid-run. _write_manifest merges by batch_id, so repeated calls
+    # are idempotent and a crash mid-night still leaves a usable manifest.
+    MANIFEST_FLUSH_EVERY = 25
 
     # Resolve skips up front (cheap, parent-side); only the real work is dispatched.
     todo: list[tuple[FrameBatch, Path]] = []
@@ -370,6 +382,8 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
             else:
                 n_done += 1
             entries.append(entry)
+            if i % MANIFEST_FLUSH_EVERY == 0:
+                _write_manifest(night_root, night, entries)
     else:
         import concurrent.futures
         import multiprocessing as mp
@@ -381,25 +395,50 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
             os.environ.setdefault(var, "1")
         ctx = mp.get_context("spawn")
         logger.info("Processing %d batches across %d workers", n_total, jobs)
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=jobs, mp_context=ctx,
-            initializer=_worker_init,
-            initargs=(str(args.config), get_config().logging.level, args.detect),
-        ) as ex:
-            futs = {ex.submit(_run_batch, b, bd): b for (b, bd) in todo}
-            for n, fut in enumerate(concurrent.futures.as_completed(futs), start=1):
-                batch = futs[fut]
-                try:
-                    entry = fut.result()
-                except Exception as e:
-                    logger.exception("Batch %s failed: %s", batch.batch_id, e)
-                    entry = _failed_entry(batch, e)
-                    n_failed += 1
-                else:
-                    n_done += 1
-                    logger.info("[%d/%d done] batch %s (%s)",
-                                n, n_total, batch.batch_id, batch.task)
-                entries.append(entry)
+        # Recycle workers by slicing the work and giving each slice a FRESH
+        # pool: long-lived workers accumulate memory (caches, fragmentation)
+        # over hundreds of batches, and one worker reaching the OOM killer
+        # breaks the pool and fails every queued batch. Deliberately NOT
+        # max_tasks_per_child: when all spawn workers hit that limit together
+        # (and they do — they start together on uniform work) the executor
+        # can fail to respawn any of them and deadlocks with zero children;
+        # observed hung at exactly jobs×24 batches. A fresh pool per slice is
+        # a few seconds of respawn against many minutes of batch work.
+        #
+        # 8 batches/worker/cycle: workers grow ~0.5-1 GB per batch (observed
+        # 9->22 GB across a dense-field stretch at 24/worker), and a single
+        # dense galactic-plane batch adds a 10-20 GB working set on top.
+        # At jobs*24 one worker hit 30 GB -> OOM kill -> BrokenProcessPool
+        # failed the whole queued slice (59 batches, _full6 v5). Recycling
+        # 3x more often bounds the accumulation well under the spike room.
+        tasks_per_cycle = jobs * 8
+        n = 0
+        for lo in range(0, len(todo), tasks_per_cycle):
+            chunk = todo[lo:lo + tasks_per_cycle]
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=jobs, mp_context=ctx,
+                initializer=_worker_init,
+                initargs=(str(args.config), get_config().logging.level,
+                          args.detect,
+                          get_config().runtime.save_processed_fits),
+            ) as ex:
+                futs = {ex.submit(_run_batch, b, bd): b for (b, bd) in chunk}
+                for fut in concurrent.futures.as_completed(futs):
+                    n += 1
+                    batch = futs[fut]
+                    try:
+                        entry = fut.result()
+                    except Exception as e:
+                        logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                        entry = _failed_entry(batch, e)
+                        n_failed += 1
+                    else:
+                        n_done += 1
+                        logger.info("[%d/%d done] batch %s (%s)",
+                                    n, n_total, batch.batch_id, batch.task)
+                    entries.append(entry)
+                    if n % MANIFEST_FLUSH_EVERY == 0:
+                        _write_manifest(night_root, night, entries)
 
     _write_manifest(night_root, night, entries)
     logger.info(
@@ -446,6 +485,8 @@ def cmd_night(args: argparse.Namespace) -> int:
     set_log_level(config.logging.level)
     config.detection.detect = args.detect
     config.detection.detect_streaks = args.detect
+    if args.no_processed_fits:
+        config.runtime.save_processed_fits = False
     if args.debug_plots:
         config.plotting.debug = True
         config.plotting.review = True
@@ -457,6 +498,59 @@ def cmd_night(args: argparse.Namespace) -> int:
     rc = 0
     for night in nights:
         rc |= _process_night(night, args, output_root)
+    return rc
+
+
+# --- sub-command: flats ---------------------------------------------------
+
+
+def cmd_flats(args: argparse.Namespace) -> int:
+    """Build a per-night master flat from the night's twilight_flats frames.
+
+    Twilight flats are auto-exposed (sky level held roughly constant while
+    the exposure time ramps) and untracked, so stars drift between frames
+    and the sigma-clipped median rejects them. The result is a photometric
+    flat (median = 1.0) written to --output-dir, named so the
+    BINNING-matched apply path (``app.calibrations.master_flats_dir`` +
+    ``auto_apply_flats``) can pick it up.
+    """
+    from senpai.engine.utils.flats import _create_master_flat_from_files
+
+    output_dir = Path(args.output_dir)
+    rc = 0
+    for night in _resolve_nights(args):
+        files = sorted(
+            frame.path
+            for batch in _iter_filtered_batches(night, ["twilight_flats"], None, None)
+            for frame in batch.frames
+        )
+        if len(files) < args.min_frames:
+            logger.warning(
+                "Night %s: only %d twilight_flats frames (< %d) — skipping",
+                night.night_id, len(files), args.min_frames,
+            )
+            rc = 2
+            continue
+        out_path = output_dir / f"{night.night_id}_master_flat.fits"
+        logger.info(
+            "Night %s: building master flat from %d twilight frames -> %s",
+            night.night_id, len(files), out_path,
+        )
+        try:
+            _create_master_flat_from_files(
+                files,
+                output_path=out_path,
+                min_median=args.min_median,
+                max_median=args.max_median,
+                max_counts=args.max_counts,
+                max_percentile=99.9,
+                min_frames=args.min_frames,
+                sigma=3.0,
+                maxiters=5,
+            )
+        except Exception as e:
+            logger.exception("Night %s: master flat failed: %s", night.night_id, e)
+            rc = 2
     return rc
 
 
@@ -723,6 +817,13 @@ def build_parser() -> argparse.ArgumentParser:
              "batch exceeds the cap on its own).",
     )
     p_night.add_argument(
+        "--no-processed-fits", action="store_true",
+        help="Don't write per-frame *_processed.fits (~260 MB/frame on 8k "
+             "sensors, ~94%% of a night's output). Calibration/results JSONs "
+             "are unaffected; decoupled replotting needs the FITS and won't "
+             "work for runs produced with this flag.",
+    )
+    p_night.add_argument(
         "--skip-existing", action="store_true",
         help="Skip batches whose SenpaiRun JSON already exists. Resumable.",
     )
@@ -754,6 +855,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_args(p_night)
     p_night.set_defaults(func=cmd_night)
+
+    p_flats = sub.add_parser(
+        "flats",
+        help="Build a per-night master flat from the night's twilight_flats frames.",
+    )
+    p_flats.add_argument(
+        "night_dir",
+        help="Path to /burr/burr/<Sensor>_<YYYYMMDD> (the metadata-sidecar dir).",
+    )
+    p_flats.add_argument("--burr-root", default=None,
+                         help="Burr tree root (default: parent of the metadata sidecar's parent).")
+    p_flats.add_argument("--data-dir", default=None,
+                         help="Override sensor data dir (default: <burr_root>/<sensor>/).")
+    p_flats.add_argument("--auto-nights", action="store_true",
+                         help="Split a flat multi-night --data-dir into per-session nights "
+                              "(same semantics as `night --auto-nights`).")
+    p_flats.add_argument("--gap-hours", type=float, default=3.0,
+                         help="With --auto-nights, inter-frame gap (hours) separating nights.")
+    p_flats.add_argument("--night", default=None,
+                         help="With --auto-nights, only nights whose id contains this string.")
+    p_flats.add_argument(
+        "-o", "--output-dir", required=True,
+        help="Directory for <night_id>_master_flat.fits — point "
+             "app.calibrations.master_flats_dir here to enable apply.",
+    )
+    p_flats.add_argument("--min-frames", type=int, default=10,
+                         help="Minimum accepted twilight frames to build (default 10).")
+    p_flats.add_argument("--min-median", type=float, default=20000.0,
+                         help="Reject frames with median below this (under-exposed probes).")
+    p_flats.add_argument("--max-median", type=float, default=60000.0,
+                         help="Reject frames with median above this (nonlinear/saturating).")
+    p_flats.add_argument("--max-counts", type=float, default=65000.0,
+                         help="Reject frames whose 99.9th percentile reaches this (saturated regions).")
+    p_flats.set_defaults(func=cmd_flats)
 
     p_cal = sub.add_parser(
         "calibrate", help="Build per-night photometric calibration from processed batches.",

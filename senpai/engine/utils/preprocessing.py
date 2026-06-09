@@ -458,7 +458,19 @@ def _find_master_calibration(
 
     print(f"Looking for {calibration_type} with metadata: {target_metadata}")
 
-    # Check each calibration file for matching headers
+    # Science frame time, for picking the nearest-in-time calibration when
+    # several match (e.g. one master flat per night in a shared dir).
+    target_time = None
+    try:
+        if "DATE-OBS" in target_header:
+            from astropy.time import Time
+
+            target_time = Time(target_header["DATE-OBS"]).unix
+    except Exception:
+        target_time = None
+
+    # Collect every calibration file whose headers match
+    candidates: list[tuple[Path, Optional[float], dict]] = []
     for calib_file in calib_files:
         try:
             with fits.open(calib_file) as hdul:
@@ -499,11 +511,31 @@ def _find_master_calibration(
                         break
 
                 if matches:
-                    print(f"Found matching {calibration_type}: {calib_file.name} with metadata: {calib_metadata}")
-                    return calib_file
+                    calib_time = None
+                    try:
+                        if "DATE-OBS" in calib_header:
+                            from astropy.time import Time
+
+                            calib_time = Time(calib_header["DATE-OBS"]).unix
+                    except Exception:
+                        calib_time = None
+                    candidates.append((calib_file, calib_time, calib_metadata))
 
         except Exception as e:
             print(f"Warning: Could not read {calibration_type} file {calib_file}: {e}")
+
+    if candidates:
+        if target_time is not None and len(candidates) > 1:
+            # Prefer the calibration taken closest in time; undated ones last.
+            candidates.sort(
+                key=lambda c: abs(c[1] - target_time) if c[1] is not None else float("inf")
+            )
+        calib_file, _, calib_metadata = candidates[0]
+        print(
+            f"Found matching {calibration_type}: {calib_file.name} with metadata: "
+            f"{calib_metadata} ({len(candidates)} candidate(s))"
+        )
+        return calib_file
 
     print(f"No matching {calibration_type} found for metadata: {target_metadata}")
 

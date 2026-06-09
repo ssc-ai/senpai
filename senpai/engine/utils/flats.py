@@ -50,6 +50,7 @@ Auto-applying calibrations based on config:
     calibrated_image = auto_apply_calibrations(processed_fits_image)
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -58,6 +59,18 @@ from astropy.io import fits
 from astropy.stats import SigmaClip
 
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
+
+
+@dataclass
+class _FlatSource:
+    """A validated flat frame, referenced by path; data is re-read lazily
+    chunk-by-chunk during combination so full frames never co-reside in
+    memory (a night of unbinned 8120^2 twilight flats is ~50 GB)."""
+
+    path: Path
+    median: float  # frame median (after dark subtraction); normalizes the frame
+    dark_path: Optional[Path] = None
+    dark_scale: float = 1.0
 
 
 def create_master_flat(
@@ -104,7 +117,8 @@ def create_master_flat(
     Returns
     -------
     master_flat : np.ndarray
-        The master flat field normalized between 0 and 1
+        The master flat field normalized to median = 1.0 (a photometric
+        flat: dividing a science frame by it preserves the flux scale)
     header : fits.Header
         Header from the first valid flat frame
     """
@@ -132,75 +146,32 @@ def create_master_flat(
     largest_group_files = max(frame_groups.values(), key=len)
     print(f"Processing {len(largest_group_files)} frames from the largest consistent group")
 
-    # Load and validate frames
-    valid_frames = []
-    valid_headers = []
-    dark_subtracted_count = 0
+    valid_sources, valid_headers, dark_subtracted_count = _validate_flat_sources(
+        largest_group_files,
+        min_median=min_median,
+        max_median=max_median,
+        max_counts=max_counts,
+        max_percentile=max_percentile,
+        dark_directory=dark_directory,
+        max_dark_exptime_ratio=max_dark_exptime_ratio,
+    )
 
-    for file_path in largest_group_files:
-        try:
-            with fits.open(file_path) as hdul:
-                data = hdul[0].data.astype(np.float64)
-                header = hdul[0].header
+    if len(valid_sources) < 3:
+        raise ValueError(f"Need at least 3 valid frames, found {len(valid_sources)}")
 
-                # Apply dark subtraction if dark directory provided
-                if dark_directory is not None:
-                    flat_exptime = header.get("EXPTIME", header.get("EXPOSURE", 1.0))
-                    dark_result = _find_and_apply_dark_to_flat(
-                        data, header, dark_directory, flat_exptime, max_dark_exptime_ratio
-                    )
-                    if dark_result is not None:
-                        data = dark_result
-                        dark_subtracted_count += 1
-
-                # Check linearity constraints using percentile instead of max to handle hot pixels
-                frame_median = np.median(data)
-                frame_percentile = np.percentile(data, max_percentile)
-                frame_max = np.max(data)
-
-                if min_median <= frame_median <= max_median and frame_percentile < max_counts:
-                    valid_frames.append(data)
-                    valid_headers.append(header)
-                    print(
-                        f"✓ {file_path.name}: median={frame_median:.1f}, {max_percentile:.1f}%ile={frame_percentile:.1f}, max={frame_max:.1f}"
-                    )
-                else:
-                    print(
-                        f"✗ {file_path.name}: median={frame_median:.1f}, {max_percentile:.1f}%ile={frame_percentile:.1f}, max={frame_max:.1f} - rejected"
-                    )
-
-        except Exception as e:
-            print(f"✗ {file_path.name}: Error reading file - {e}")
-
-    if len(valid_frames) < 3:
-        raise ValueError(f"Need at least 3 valid frames, found {len(valid_frames)}")
-
-    print(f"Using {len(valid_frames)} valid frames for master flat")
+    print(f"Using {len(valid_sources)} valid frames for master flat")
     if dark_directory is not None:
-        print(f"Dark subtracted {dark_subtracted_count}/{len(valid_frames)} frames")
+        print(f"Dark subtracted {dark_subtracted_count}/{len(valid_sources)} frames")
 
-    # Get image dimensions from first frame
-    height, width = valid_frames[0].shape
-    total_pixels = height * width
-
-    # Estimate memory usage and decide on processing approach
-    estimated_memory_gb = (len(valid_frames) * total_pixels * 8) / (1024**3)  # 8 bytes per float64
-    print(f"Estimated memory usage: {estimated_memory_gb:.1f} GB")
-
-    if estimated_memory_gb > 4.0:  # Use chunked processing for > 4GB
-        print("Using memory-efficient chunked processing...")
-        master_flat = _create_master_flat_chunked(valid_frames, sigma, maxiters)
-    else:
-        print("Using standard in-memory processing...")
-        master_flat = _create_master_flat_standard(valid_frames, sigma, maxiters)
+    master_flat = _combine_flat_sources(valid_sources, sigma, maxiters)
 
     # Create output header from first valid frame
     output_header = valid_headers[0].copy()
-    output_header.add_history(f"Master flat created from {len(valid_frames)} frames")
+    output_header.add_history(f"Master flat created from {len(valid_sources)} frames")
     output_header.add_history(f"Sigma-clipped median combination (sigma={sigma}, maxiters={maxiters})")
-    output_header.add_history("Normalized to 0-1 range")
+    output_header.add_history("Normalized to median = 1.0")
     if dark_directory is not None:
-        output_header.add_history(f"Dark subtracted {dark_subtracted_count}/{len(valid_frames)} frames")
+        output_header.add_history(f"Dark subtracted {dark_subtracted_count}/{len(valid_sources)} frames")
 
     # Save if output path provided
     if output_path is not None:
@@ -332,77 +303,6 @@ def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]
     return groups
 
 
-def _find_and_apply_dark_to_flat(
-    flat_data: np.ndarray,
-    flat_header: fits.Header,
-    dark_directory: Union[str, Path],
-    flat_exptime: float,
-    max_exptime_ratio: float = 10.0,
-) -> Optional[np.ndarray]:
-    """
-    Find and apply dark subtraction to a flat frame.
-
-    Parameters
-    ----------
-    flat_data : np.ndarray
-        Flat frame data
-    flat_header : fits.Header
-        Flat frame header
-    dark_directory : str or Path
-        Directory containing dark frames
-    flat_exptime : float
-        Exposure time of the flat frame
-    max_exptime_ratio : float
-        Maximum ratio between flat and dark exposure times
-
-    Returns
-    -------
-    dark_subtracted_flat : np.ndarray or None
-        Dark-subtracted flat data, or None if no suitable dark found
-    """
-    from senpai.engine.utils.darks import find_best_dark_for_exposure
-
-    # Try to find a suitable dark frame
-    dark_result = find_best_dark_for_exposure(
-        dark_directory=dark_directory,
-        target_exptime=flat_exptime,
-        matching_headers=["BINNING"],  # Only match binning for flats
-        max_exptime_ratio=max_exptime_ratio,
-    )
-
-    if dark_result is None:
-        print(f"    No suitable dark found for {flat_exptime}s flat")
-        return None
-
-    dark_path, dark_exptime = dark_result
-
-    try:
-        # Load the dark frame
-        with fits.open(dark_path) as hdul:
-            dark_data = hdul[0].data.astype(np.float64)
-
-        # Check if shapes match
-        if flat_data.shape != dark_data.shape:
-            print(f"    Dark shape mismatch: flat {flat_data.shape} vs dark {dark_data.shape}")
-            return None
-
-        # Scale dark if exposure times differ
-        if abs(flat_exptime - dark_exptime) > 0.1:
-            scaling_factor = flat_exptime / dark_exptime
-            scaled_dark = dark_data * scaling_factor
-            print(f"    Scaled dark by {scaling_factor:.3f} for {flat_exptime}s flat")
-        else:
-            scaled_dark = dark_data
-            print(f"    Applied dark ({dark_exptime}s) to flat ({flat_exptime}s)")
-
-        # Subtract dark from flat
-        return flat_data - scaled_dark
-
-    except Exception as e:
-        print(f"    Error applying dark: {e}")
-        return None
-
-
 def load_master_flat(file_path: Union[str, Path]) -> Tuple[np.ndarray, fits.Header]:
     """
     Load a master flat from a FITS file.
@@ -464,95 +364,153 @@ def _create_descriptive_filename(
     return output_dir / descriptive_filename
 
 
-def _create_master_flat_standard(
-    valid_frames: List[np.ndarray],
+def _find_dark_for_flat(
+    dark_directory: Union[str, Path],
+    flat_exptime: float,
+    max_exptime_ratio: float = 10.0,
+) -> Optional[Tuple[Path, float]]:
+    """Find the best-matching dark for a flat exposure. Returns (path, dark_exptime)."""
+    from senpai.engine.utils.darks import find_best_dark_for_exposure
+
+    return find_best_dark_for_exposure(
+        dark_directory=dark_directory,
+        target_exptime=flat_exptime,
+        matching_headers=["BINNING"],  # Only match binning for flats
+        max_exptime_ratio=max_exptime_ratio,
+    )
+
+
+def _validate_flat_sources(
+    fits_files: List[Path],
+    min_median: float,
+    max_median: float,
+    max_counts: float,
+    max_percentile: float,
+    dark_directory: Optional[Union[str, Path]] = None,
+    max_dark_exptime_ratio: float = 10.0,
+    indent: str = "",
+) -> Tuple[List[_FlatSource], List[fits.Header], int]:
+    """Quality-filter flat frames from subsampled stats only.
+
+    Full frames are never held in memory; stats come from an 8x-strided
+    subsample read via ``hdu.section`` (which does partial reads even on
+    BSCALE/BZERO-scaled integer FITS, where memmap is unavailable). The
+    combination step re-reads accepted frames chunk-by-chunk.
+    """
+    valid_sources: List[_FlatSource] = []
+    valid_headers: List[fits.Header] = []
+    dark_subtracted_count = 0
+
+    for file_path in fits_files:
+        try:
+            with fits.open(file_path) as hdul:
+                header = hdul[0].header
+                sample = np.asarray(hdul[0].section[::8, ::8], dtype=np.float64)
+
+            dark_path: Optional[Path] = None
+            dark_scale = 1.0
+            if dark_directory is not None:
+                flat_exptime = header.get("EXPTIME", header.get("EXPOSURE", 1.0))
+                dark_result = _find_dark_for_flat(
+                    dark_directory, flat_exptime, max_dark_exptime_ratio
+                )
+                if dark_result is None:
+                    print(f"{indent}    No suitable dark found for {flat_exptime}s flat")
+                else:
+                    dark_path, dark_exptime = dark_result
+                    dark_path = Path(dark_path)
+                    if abs(flat_exptime - dark_exptime) > 0.1:
+                        dark_scale = flat_exptime / dark_exptime
+                    with fits.open(dark_path) as dh:
+                        sample = sample - dark_scale * np.asarray(
+                            dh[0].section[::8, ::8], dtype=np.float64
+                        )
+                    dark_subtracted_count += 1
+
+            # Check linearity constraints using percentile instead of max to handle hot pixels
+            frame_median = float(np.median(sample))
+            frame_percentile = float(np.percentile(sample, max_percentile))
+
+            if min_median <= frame_median <= max_median and frame_percentile < max_counts:
+                valid_sources.append(
+                    _FlatSource(Path(file_path), frame_median, dark_path, dark_scale)
+                )
+                valid_headers.append(header)
+                print(
+                    f"{indent}✓ {file_path.name}: median={frame_median:.1f}, "
+                    f"{max_percentile:.1f}%ile={frame_percentile:.1f}"
+                )
+            else:
+                print(
+                    f"{indent}✗ {file_path.name}: median={frame_median:.1f}, "
+                    f"{max_percentile:.1f}%ile={frame_percentile:.1f} - rejected"
+                )
+
+        except Exception as e:
+            print(f"{indent}✗ {file_path.name}: Error reading file - {e}")
+
+    return valid_sources, valid_headers, dark_subtracted_count
+
+
+def _combine_flat_sources(
+    sources: List[_FlatSource],
     sigma: float,
     maxiters: int,
+    chunk_size: int = 512,
 ) -> np.ndarray:
-    """Standard in-memory processing for smaller datasets."""
-    # Normalize each frame by its median
-    normalized_frames = []
-    for frame in valid_frames:
-        frame_median = np.median(frame)
-        normalized_frame = frame / frame_median
-        normalized_frames.append(normalized_frame)
+    """Sigma-clipped median combination, streamed in row chunks.
 
-    # Stack frames for sigma-clipped median combination
-    frame_stack = np.stack(normalized_frames, axis=0)
+    Each frame is normalized by its own median (so auto-exposed twilight
+    flats at different sky levels combine as relative response maps), then
+    the per-pixel sigma-clipped median is taken across frames. Drifting
+    stars and saturated pixels appear at any given pixel in only a few
+    frames and are rejected by the clip. The result is normalized to
+    median = 1.0 — a photometric flat (min-max scaling would be an affine
+    distortion of the response and would zero out the dimmest pixels).
+    """
+    with fits.open(sources[0].path) as hdul:
+        height, width = hdul[0].shape
 
-    # Perform sigma-clipped median combination
+    master_flat = np.empty((height, width), dtype=np.float64)
     sigma_clip = SigmaClip(sigma=sigma, maxiters=maxiters)
-    clipped_stack = sigma_clip(frame_stack, axis=0)
 
-    # Convert MaskedArray to regular array and compute median
-    if hasattr(clipped_stack, "filled"):
-        # It's a MaskedArray, convert to regular array
-        master_flat = np.median(clipped_stack.filled(np.nan), axis=0)
-        # Replace any NaN values with the median of surrounding pixels
-        if np.any(np.isnan(master_flat)):
-            master_flat = np.where(np.isnan(master_flat), np.nanmedian(frame_stack, axis=0), master_flat)
-    else:
-        # It's already a regular array
-        master_flat = np.median(clipped_stack, axis=0)
-
-    # Normalize to 0-1 range
-    master_flat = (master_flat - np.min(master_flat)) / (np.max(master_flat) - np.min(master_flat))
-
-    return master_flat
-
-
-def _create_master_flat_chunked(
-    valid_frames: List[np.ndarray],
-    sigma: float,
-    maxiters: int,
-    chunk_size: int = 1024,
-) -> np.ndarray:
-    """Memory-efficient chunked processing for larger datasets."""
-    height, width = valid_frames[0].shape
-    master_flat = np.zeros((height, width), dtype=np.float64)
-
-    # Normalize each frame by its median first
-    normalized_frames = []
-    for frame in valid_frames:
-        frame_median = np.median(frame)
-        normalized_frame = frame / frame_median
-        normalized_frames.append(normalized_frame)
-
-    # Process in chunks to reduce memory usage
     for start_row in range(0, height, chunk_size):
         end_row = min(start_row + chunk_size, height)
-        chunk_height = end_row - start_row
+        print(f"    Combining rows {start_row}-{end_row - 1}")
 
-        print(f"    Processing rows {start_row}-{end_row - 1} ({chunk_height} rows)")
+        chunk_stack = np.empty((len(sources), end_row - start_row, width), dtype=np.float32)
+        dark_chunks: Dict[Path, np.ndarray] = {}
+        for i, src in enumerate(sources):
+            with fits.open(src.path) as hdul:
+                chunk = np.asarray(hdul[0].section[start_row:end_row, :], dtype=np.float32)
+            if src.dark_path is not None:
+                if src.dark_path not in dark_chunks:
+                    with fits.open(src.dark_path) as dh:
+                        dark_chunks[src.dark_path] = np.asarray(
+                            dh[0].section[start_row:end_row, :], dtype=np.float32
+                        )
+                chunk = chunk - np.float32(src.dark_scale) * dark_chunks[src.dark_path]
+            chunk_stack[i] = chunk / np.float32(src.median)
 
-        # Extract chunk from each normalized frame
-        chunk_stack = np.zeros((len(normalized_frames), chunk_height, width), dtype=np.float64)
-        for i, frame in enumerate(normalized_frames):
-            chunk_stack[i] = frame[start_row:end_row]
-
-        # Perform sigma-clipped median combination on this chunk
-        sigma_clip = SigmaClip(sigma=sigma, maxiters=maxiters)
-        clipped_chunk = sigma_clip(chunk_stack, axis=0)
-
-        # Convert MaskedArray to regular array and compute median
-        if hasattr(clipped_chunk, "filled"):
-            # It's a MaskedArray, convert to regular array
-            chunk_result = np.median(clipped_chunk.filled(np.nan), axis=0)
-            # Replace any NaN values with the median
-            if np.any(np.isnan(chunk_result)):
-                chunk_result = np.where(np.isnan(chunk_result), np.nanmedian(chunk_stack, axis=0), chunk_result)
+        clipped = sigma_clip(chunk_stack, axis=0)
+        if np.ma.isMaskedArray(clipped):
+            chunk_result = np.ma.median(clipped, axis=0)
+            # Pixels masked in every frame (shouldn't happen) fall back to
+            # the unclipped median.
+            chunk_result = np.asarray(
+                chunk_result.filled(np.nan), dtype=np.float64
+            )
+            bad = np.isnan(chunk_result)
+            if bad.any():
+                chunk_result[bad] = np.median(chunk_stack, axis=0)[bad]
         else:
-            # It's already a regular array
-            chunk_result = np.median(clipped_chunk, axis=0)
+            chunk_result = np.median(clipped, axis=0).astype(np.float64)
 
-        # Store result
         master_flat[start_row:end_row] = chunk_result
+        del chunk_stack, clipped, chunk_result
 
-        # Explicitly delete chunk arrays to free memory
-        del chunk_stack, clipped_chunk, chunk_result
-
-    # Normalize to 0-1 range
-    master_flat = (master_flat - np.min(master_flat)) / (np.max(master_flat) - np.min(master_flat))
+    # Normalize to median = 1.0
+    master_flat /= np.median(master_flat)
 
     return master_flat
 
@@ -745,75 +703,33 @@ def _create_master_flat_from_files(
     """
     Helper function to create master flat from a specific list of files.
     """
-    # Load and validate frames
-    valid_frames = []
-    valid_headers = []
-    dark_subtracted_count = 0
+    valid_sources, valid_headers, dark_subtracted_count = _validate_flat_sources(
+        fits_files,
+        min_median=min_median,
+        max_median=max_median,
+        max_counts=max_counts,
+        max_percentile=max_percentile,
+        dark_directory=dark_directory,
+        max_dark_exptime_ratio=max_dark_exptime_ratio,
+        indent="  ",
+    )
 
-    for file_path in fits_files:
-        try:
-            with fits.open(file_path) as hdul:
-                data = hdul[0].data.astype(np.float64)
-                header = hdul[0].header
+    if len(valid_sources) < min_frames:
+        raise ValueError(f"Need at least {min_frames} valid frames, found {len(valid_sources)}")
 
-                # Apply dark subtraction if dark directory provided
-                if dark_directory is not None:
-                    flat_exptime = header.get("EXPTIME", header.get("EXPOSURE", 1.0))
-                    dark_result = _find_and_apply_dark_to_flat(
-                        data, header, dark_directory, flat_exptime, max_dark_exptime_ratio
-                    )
-                    if dark_result is not None:
-                        data = dark_result
-                        dark_subtracted_count += 1
-
-                # Check linearity constraints using percentile instead of max to handle hot pixels
-                frame_median = np.median(data)
-                frame_percentile = np.percentile(data, max_percentile)
-                frame_max = np.max(data)
-
-                if min_median <= frame_median <= max_median and frame_percentile < max_counts:
-                    valid_frames.append(data)
-                    valid_headers.append(header)
-                    print(
-                        f"  ✓ {file_path.name}: median={frame_median:.1f}, {max_percentile:.1f}%ile={frame_percentile:.1f}, max={frame_max:.1f}"
-                    )
-                else:
-                    print(
-                        f"  ✗ {file_path.name}: median={frame_median:.1f}, {max_percentile:.1f}%ile={frame_percentile:.1f}, max={frame_max:.1f} - rejected"
-                    )
-
-        except Exception as e:
-            print(f"  ✗ {file_path.name}: Error reading file - {e}")
-
-    if len(valid_frames) < min_frames:
-        raise ValueError(f"Need at least {min_frames} valid frames, found {len(valid_frames)}")
-
-    print(f"  Using {len(valid_frames)} valid frames for master flat")
+    print(f"  Using {len(valid_sources)} valid frames for master flat")
     if dark_directory is not None:
-        print(f"  Dark subtracted {dark_subtracted_count}/{len(valid_frames)} frames")
+        print(f"  Dark subtracted {dark_subtracted_count}/{len(valid_sources)} frames")
 
-    # Get image dimensions from first frame
-    height, width = valid_frames[0].shape
-    total_pixels = height * width
-
-    # Estimate memory usage and decide on processing approach
-    estimated_memory_gb = (len(valid_frames) * total_pixels * 8) / (1024**3)  # 8 bytes per float64
-    print(f"Estimated memory usage: {estimated_memory_gb:.1f} GB")
-
-    if estimated_memory_gb > 4.0:  # Use chunked processing for > 4GB
-        print("Using memory-efficient chunked processing...")
-        master_flat = _create_master_flat_chunked(valid_frames, sigma, maxiters)
-    else:
-        print("Using standard in-memory processing...")
-        master_flat = _create_master_flat_standard(valid_frames, sigma, maxiters)
+    master_flat = _combine_flat_sources(valid_sources, sigma, maxiters)
 
     # Create output header from first valid frame
     output_header = valid_headers[0].copy()
-    output_header.add_history(f"Master flat created from {len(valid_frames)} frames")
+    output_header.add_history(f"Master flat created from {len(valid_sources)} frames")
     output_header.add_history(f"Sigma-clipped median combination (sigma={sigma}, maxiters={maxiters})")
-    output_header.add_history("Normalized to 0-1 range")
+    output_header.add_history("Normalized to median = 1.0")
     if dark_directory is not None:
-        output_header.add_history(f"Dark subtracted {dark_subtracted_count}/{len(valid_frames)} frames")
+        output_header.add_history(f"Dark subtracted {dark_subtracted_count}/{len(valid_sources)} frames")
 
     # Save master flat
     output_path = Path(output_path)
