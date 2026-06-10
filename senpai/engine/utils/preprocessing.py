@@ -61,10 +61,18 @@ def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates
     # Convert array to float64 before operations to allow for negative values
     array = array.astype(np.float64)
 
+    # Capture the sky level (flat-fielded frame median, ADU) BEFORE we subtract
+    # it away — this is the physical sky background (moonglow/twilight), which
+    # the row/col subtraction otherwise erases. Stored in the step metadata so
+    # it survives serialization for the calibration sky-background plot.
+    sky_median_adu = float(np.median(array))
+
     # Subtract column medians (shape: (1, n_cols))
     column_medians = np.median(array, axis=0)[np.newaxis, :]
     array -= column_medians
-    col_metadata = ProcessingMetadata(step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT, parameters={})
+    col_metadata = ProcessingMetadata(
+        step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT,
+        parameters={"sky_median_adu": sky_median_adu})
     image.processing_history.append(col_metadata)
 
     # Subtract row medians (shape: (n_rows, 1))

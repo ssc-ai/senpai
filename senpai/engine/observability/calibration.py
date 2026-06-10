@@ -64,6 +64,7 @@ class FramePhoto:
     moon_sep_deg: float | None = None
     moon_alt_deg: float | None = None
     fwhm_px: float | None = None  # sidereal PSF FWHM (detection_metadata)
+    sky_adu: float | None = None  # flat-fielded sky level before row/col subtract
 
     # Filter → ZP from the multiband calibration, when present.
     multiband_zps: dict[str, float] = field(default_factory=dict)
@@ -239,6 +240,16 @@ def _extract_frame_photo(
     if track_mode != "rate":
         fwhm_px = det_meta.get("pixel_fwhm")
 
+    # Physical sky level (ADU), captured pre-row/col-subtraction in the
+    # column-median step metadata (only present on runs after that capture
+    # landed; older runs leave this None and the sky plot is skipped).
+    sky_adu = None
+    for step in (frame_dict.get("processing_history") or []):
+        if isinstance(step, dict) and "column_median_subtract" in str(
+                step.get("step_type", "")).lower():
+            sky_adu = (step.get("parameters") or {}).get("sky_median_adu")
+            break
+
     # Rate-track geometry — only meaningful on rate frames. (Burr leaves a
     # non-zero residual RA/DEC rate in the header even on the sidereal leg, so
     # we must not read a "track rate" off sidereal frames.)
@@ -285,6 +296,7 @@ def _extract_frame_photo(
         pixel_track_rate=pixel_track_rate,
         track_rate_arcsec_per_s=track_rate_arcsec_per_s,
         fwhm_px=fwhm_px,
+        sky_adu=sky_adu,
     )
 
 
@@ -1815,8 +1827,59 @@ def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "fwhm_vs_time.png")
 
 
+def _data_sky_background(calib: NightCalibration):
+    import numpy as np
+
+    pts = [(f.moon_sep_deg, f.sky_adu, f.altitude_deg) for f in calib.frames
+           if f.sky_adu is not None and f.moon_sep_deg is not None]
+    if len(pts) < 10:
+        return None
+    sep = np.array([p[0] for p in pts])
+    sky = np.array([p[1] for p in pts])
+    edges = np.arange(0, math.ceil(sep.max() / 10) * 10 + 10, 10)
+    cx, cy, e_lo, e_hi = [], [], [], []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        v = sky[(sep >= lo) & (sep < hi)]
+        if len(v) >= 5:
+            md = float(np.median(v))
+            cx.append((lo + hi) / 2)
+            cy.append(md)
+            e_lo.append(md - float(np.percentile(v, 16)))
+            e_hi.append(float(np.percentile(v, 84)) - md)
+    return {
+        "sep": list(sep), "sky": list(sky),
+        "alt": [float(p[2]) if p[2] is not None else 0.0 for p in pts],
+        "binned": {"x": cx, "y": cy, "e_lo": e_lo, "e_hi": e_hi},
+        "median_sky": float(np.median(sky)),
+    }
+
+
+def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    cs = d["alt"]
+    sc = ax.scatter(d["sep"], d["sky"], c=cs, cmap="viridis", s=10, alpha=0.4)
+    b = d["binned"]
+    if b["x"]:
+        ax.errorbar(b["x"], b["y"], yerr=[b["e_lo"], b["e_hi"]], fmt="o-",
+                    color="black", ms=7, capsize=4, capthick=1.5, elinewidth=1.5,
+                    zorder=5, label="binned median ± 16/84%")
+    if any(c > 0 for c in cs):
+        cb = plt.colorbar(sc, ax=ax)
+        cb.set_label("altitude (deg)")
+    mi = meta.get("moon_illumination")
+    illum = f"Moon {100 * mi:.0f}%" if mi is not None else ""
+    ax.set_xlabel("Moon separation (°)")
+    ax.set_ylabel("sky background (ADU, flat-fielded, pre-subtraction)")
+    ax.set_title(f"{meta['night_id']}: sky background vs Moon separation "
+                 f"({illum}; median {d['median_sky']:.0f} ADU)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=9)
+    return _save(fig, output_dir / "sky_background_vs_moon.png")
+
+
 _PLOT_BUILDERS.update({
     "fwhm_vs_time": (_data_fwhm, _render_fwhm),
+    "sky_background_vs_moon": (_data_sky_background, _render_sky_background),
 })
 
 
