@@ -756,7 +756,8 @@ def plot_calibration(source, output_dir: str | Path,
     for name, (_analysis, render) in _PLOT_BUILDERS.items():
         d = plot_data.get("plots", {}).get(name)
         if d is not None:
-            paths.append(render(d, meta, output_dir, plt, np))
+            out = render(d, meta, output_dir, plt, np)
+            paths.extend(out if isinstance(out, list) else [out])
 
     # Plots not yet migrated to the split still render straight from calib
     # (live runs only). Shrinks to nothing as plots move into _PLOT_BUILDERS.
@@ -777,229 +778,10 @@ def _render_legacy(
     import matplotlib.pyplot as plt
     import numpy as np
 
-    # Forced-photometry floor shared by the SNR/Moon blocks below (was defined
-    # in the now-migrated search-rate block).
+    # Shared by the SNR/Moon blocks below (originally defined in now-migrated
+    # blocks: min_meas_snr from search-rate, _CAL_TASKS from snr-vs-mag).
     min_meas_snr = 3.0
-
-    # 8) SNR vs exposure time, one errorbar series per 1-mag bin, FACETED BY
-    #    TASK. Pooling tasks makes this plot zigzag and is physically
-    #    meaningless: each program uses a different exposure set at a different
-    #    field-background level (coverage 1/3/5 s, photometric 1/6/10 s — they
-    #    overlap only at 1 s), so a pooled curve steps by the background offset
-    #    wherever the dominant task changes. Within a task the field and
-    #    conditions are uniform, so each panel is a clean √t ladder. SNR is
-    #    airmass-normalized (star dimmed k·(X−1) mag vs zenith → airmass-1 SNR
-    #    = SNR·10^(0.4·k·(X−1))) and the frames are weather-masked to the
-    #    clear-sky ZP band, the same treatment that cleaned the SNR-vs-mag plot.
-    #    Per (mag bin, exposure) cell: median SNR ± 16/84 percentiles.
-    ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
-    k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
-    band = _clear_sky_zp_band(calib.frames)
-    by_task: dict[str, list[tuple[float, float, float]]] = {}
-    if band is not None:
-        zp_mode, zp_sig = band
-        for f in _zp_frames(calib.frames):
-            if (f.zero_point is None or not f.exposure_time or not f.stars_mag
-                    or abs(f.zero_point - zp_mode) > zp_sig or not _moon_ok(f)):
-                continue
-            k = ext_k.get(f.filter_name or "unknown", k_default)
-            corr = (10 ** (0.4 * k * (f.airmass - 1.0))
-                    if f.airmass is not None else 1.0)
-            # Same forced-photometry guards as the search-rate plot on RAW SNR
-            # (detection reality is a raw-SNR question): below min_meas_snr the
-            # "measurement" is background noise at a catalog position, and
-            # non-isolated / SNR-inconsistent stars report contaminating flux.
-            # The airmass-1 correction is display-only.
-            by_task.setdefault(_frame_task(f), []).extend(
-                (f.exposure_time, m, s * corr)
-                for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
-                if s >= min_meas_snr and iso and _snr_consistent(s, m, f)
-            )
-    order = [t for t in ("coverage", "photometric", "calsats", "other")
-             if by_task.get(t)]
-    if order:
-        # Shared mag-bin colors + exposure grid across panels so they compare.
-        all_pts = [p for t in order for p in by_task[t]]
-        a_exp = np.array([p[0] for p in all_pts])
-        a_mag = np.array([p[1] for p in all_pts])
-        std_exps = np.arange(max(1, math.floor(a_exp.min())),
-                             math.ceil(a_exp.max()) + 1)
-        bins = list(range(math.floor(a_mag.min()), math.ceil(a_mag.max())))
-        colors = plt.cm.turbo(np.linspace(0.05, 0.95, max(len(bins), 1)))
-        fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5),
-                                 sharey=True, squeeze=False)
-        axes = axes[0]
-        for ax, tk in zip(axes, order):
-            pts = by_task[tk]
-            e = np.array([p[0] for p in pts])
-            m = np.array([p[1] for p in pts])
-            s = np.array([p[2] for p in pts])
-            for color, lo in zip(colors, bins):
-                in_bin = (m >= lo) & (m < lo + 1)
-                if in_bin.sum() < 5:
-                    continue
-                xs, meds, e_lo, e_hi = [], [], [], []
-                for t in std_exps:
-                    sel = s[in_bin & (np.abs(e - t) <= 0.5)]
-                    if len(sel) < 20:
-                        continue
-                    md = float(np.median(sel))
-                    xs.append(t)
-                    meds.append(md)
-                    e_lo.append(1.253 * float(np.std(sel)) / math.sqrt(len(sel)))
-                    e_hi.append(1.253 * float(np.std(sel)) / math.sqrt(len(sel)))
-                if len(xs) >= 2:
-                    ax.errorbar(xs, meds, yerr=[e_lo, e_hi], fmt="o-",
-                                color=color, alpha=0.8, linewidth=1.5,
-                                markersize=5, capsize=3, label=f"{lo + 0.5:.1f}")
-            ax.set_yscale("log")
-            ax.set_xticks(std_exps)
-            ax.set_xlabel("Exposure Time [s]")
-            ax.set_title(tk)
-            ax.grid(True, alpha=0.3, which="both")
-        axes[0].set_ylabel("SNR (normalized to airmass = 1)")
-        # Per-panel legend (not one shared on the last panel): each task spans
-        # a different magnitude range, so a single legend mislabels the others'
-        # curves even though the color→magnitude map is global/consistent.
-        for ax in axes:
-            if ax.lines:
-                ax.legend(loc="lower right", fontsize=7, title=r"m$_G$", ncol=2)
-        fig.suptitle(
-            f"{calib.night_id}: SNR vs exposure by task "
-            f"(weather-masked, airmass-normalized, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
-        fig.tight_layout()
-        paths.append(_save(fig, output_dir / "snr_vs_exposure_by_task.png"))
-
-        # Global pooled view (coverage + photometric — the calibration taskset;
-        # calsats star content is unreliable). With the Moon cut + weather mask
-        # + airmass-norm the programs agree per magnitude, so pooling is
-        # representative. CAVEAT: photometric (6/10 s) still sits ~0.2-0.3 mag
-        # below the coverage √t line — that program ran at systematically higher
-        # airmass AND closer to the Moon than coverage, and neither the airmass-1
-        # norm (corrects star dimming, not sky brightness) nor a 30° Moon cut
-        # (glow reaches ~60°) fully removes that. The faceted by-task plot is the
-        # rigorous per-program √t view; this is the at-a-glance summary.
-        pooled = [p for t in ("coverage", "photometric") for p in by_task.get(t, [])]
-        if pooled:
-            pe = np.array([p[0] for p in pooled])
-            pm = np.array([p[1] for p in pooled])
-            ps = np.array([p[2] for p in pooled])
-            figg, axg = plt.subplots(figsize=(10, 7))
-            for color, lo in zip(colors, bins):
-                in_bin = (pm >= lo) & (pm < lo + 1)
-                if in_bin.sum() < 5:
-                    continue
-                xs, meds, e_lo, e_hi = [], [], [], []
-                for t in std_exps:
-                    sel = ps[in_bin & (np.abs(pe - t) <= 0.5)]
-                    if len(sel) < 20:
-                        continue
-                    md = float(np.median(sel))
-                    xs.append(t)
-                    meds.append(md)
-                    e_lo.append(1.253 * float(np.std(sel)) / math.sqrt(len(sel)))
-                    e_hi.append(1.253 * float(np.std(sel)) / math.sqrt(len(sel)))
-                if len(xs) >= 2:
-                    axg.errorbar(xs, meds, yerr=[e_lo, e_hi], fmt="o-", color=color,
-                                 alpha=0.8, linewidth=1.5, markersize=5, capsize=3,
-                                 label=f"{lo + 0.5:.1f}")
-            axg.set_yscale("log")
-            # Plain decade labels (10, 100, 1000) instead of 10^1/10^2/10^3.
-            from matplotlib.ticker import FuncFormatter, NullFormatter
-            axg.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:g}"))
-            axg.yaxis.set_minor_formatter(NullFormatter())
-            axg.set_ylim(top=axg.get_ylim()[1] * 1.8)  # headroom above the data
-            axg.set_xticks(std_exps)
-            axg.set_xlabel("Exposure Time [seconds]")
-            axg.set_ylabel("SNR (normalized to airmass = 1)")
-            axg.set_title(
-                f"{calib.night_id}: SNR vs exposure  (coverage+photometric, "
-                f"weather-masked, airmass-norm, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
-            axg.grid(True, alpha=0.3, which="both")
-            # Long single-column legend parked outside the axes (right), where
-            # it can't cover data; _save uses bbox_inches="tight" so it's kept.
-            axg.legend(loc="center left", bbox_to_anchor=(1.01, 0.5),
-                       fontsize=8, title=r"m$_G$", ncol=1)
-            paths.append(_save(figg, output_dir / "snr_vs_exposure_by_magnitude.png"))
-
-    # 9) SNR vs magnitude — the cleanest √t view, with the confounds removed:
-    #    * weather mask: only frames whose ZP is within ±1σ of the clear-sky
-    #      mode (drops cloud-attenuated frames — see _clear_sky_zp_band);
-    #    * "calibration" taskset only (coverage + photometric_standards);
-    #      calsats are sparse satellite pointings with unreliable star content;
-    #    * SNR airmass-normalized; one curve per whole-second exposure.
-    #    The red line is the night's median lim50 (its 16/84 band shaded). To
-    #    the RIGHT of it the curves are NOT real depth: completeness collapses
-    #    past lim50, so the only catalog positions still reporting SNR ≥ floor
-    #    are ones sitting on brighter contaminating flux (blends, PSF wings) —
-    #    forced-photometry survivor bias. SNR there is meaningless.
     _CAL_TASKS = ("coverage", "photometric")
-    band = _clear_sky_zp_band(calib.frames)
-    mag_pts = []  # (exposure, mag, airmass-normalized snr)
-    if band is not None:
-        zp_mode, zp_sig = band
-        ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
-        k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
-        for f in _zp_frames(calib.frames):
-            if (f.zero_point is None or not f.exposure_time or not f.stars_mag
-                    or abs(f.zero_point - zp_mode) > zp_sig
-                    or _frame_task(f) not in _CAL_TASKS or not _moon_ok(f)):
-                continue
-            kk = ext_k.get(f.filter_name or "unknown", k_default)
-            corr = (10 ** (0.4 * kk * (f.airmass - 1.0))
-                    if f.airmass is not None else 1.0)
-            mag_pts.extend(
-                (f.exposure_time, m, s * corr)
-                for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
-                if s >= min_meas_snr and iso and _snr_consistent(s, m, f)
-            )
-    if mag_pts:
-        fig, ax = plt.subplots(figsize=(10, 7))
-        exps = np.array([p[0] for p in mag_pts])
-        mags = np.array([p[1] for p in mag_pts])
-        snrs = np.array([p[2] for p in mag_pts])
-        std_exps = np.arange(max(1, math.floor(exps.min())),
-                             math.ceil(exps.max()) + 1)
-        mgrid = np.arange(math.floor(mags.min()), math.ceil(mags.max()), 0.5)
-        cmap = plt.cm.viridis(np.linspace(0, 0.9, max(len(std_exps), 1)))
-        for color, t in zip(cmap, std_exps):
-            sel_t = np.abs(exps - t) <= 0.5
-            if sel_t.sum() < 20:
-                continue
-            xs, ys = [], []
-            for mlo in mgrid:
-                cell = snrs[sel_t & (mags >= mlo) & (mags < mlo + 0.5)]
-                if len(cell) >= 5:
-                    xs.append(mlo + 0.25)
-                    ys.append(float(np.median(cell)))
-            if len(xs) >= 3:
-                ax.plot(xs, ys, "o-", color=color, ms=4, lw=1.5, alpha=0.85,
-                        label=f"{int(t)}s")
-        # Limiting-magnitude marker: median lim50 over the same weather-masked
-        # calibration-taskset frames, with the 16/84 nightly scatter shaded.
-        lims = [f.limiting_magnitude_50 for f in _zp_frames(calib.frames)
-                if f.limiting_magnitude_50 is not None and f.zero_point is not None
-                and abs(f.zero_point - zp_mode) <= zp_sig
-                and _frame_task(f) in _CAL_TASKS and _moon_ok(f)]
-        if lims:
-            lmed = float(np.median(lims))
-            llo, lhi = float(np.percentile(lims, 16)), float(np.percentile(lims, 84))
-            ax.axvspan(llo, lhi, color="red", alpha=0.10)
-            ax.axvline(llo, color="red", ls=":", lw=1, alpha=0.6)
-            ax.axvline(lhi, color="red", ls=":", lw=1, alpha=0.6)
-            ax.axvline(lmed, color="red", ls="--", lw=1.8,
-                       label=f"lim50 = {lmed:.2f} (16/84: {llo:.2f}–{lhi:.2f})")
-        ax.axhline(min_meas_snr, color="gray", ls=":", lw=1,
-                   label=f"SNR = {min_meas_snr:.0f}")
-        ax.set_yscale("log")
-        ax.set_xlabel("Gaia G magnitude")
-        ax.set_ylabel("SNR (normalized to airmass = 1)")
-        ax.set_title(
-            f"{calib.night_id}: SNR vs magnitude  (coverage+photometric, "
-            f"weather-masked ZP {zp_mode:.2f}±{zp_sig:.2f}, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
-        ax.grid(True, alpha=0.3, which="both")
-        ax.legend(loc="upper right", fontsize=9, title="exposure")
-        paths.append(_save(fig, output_dir / "snr_vs_mag_weathermasked.png"))
 
     # 10) Moon geometry: frame pointings on the az/alt dome colored by Moon
     #     separation, Moon track overlaid. On full-Moon nights the standard
@@ -1683,6 +1465,225 @@ _PLOT_BUILDERS.update({
     "search_rate": (_data_search_rate, _render_search_rate),
     "detection_rate_vs_altitude": (
         _data_detection_rate_vs_altitude, _render_detection_rate_vs_altitude),
+})
+
+
+def _data_snr_vs_exposure(calib: NightCalibration):
+    import numpy as np
+
+    band = _clear_sky_zp_band(calib.frames)
+    if band is None:
+        return None
+    zp_mode, zp_sig = band
+    ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
+    k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
+    min_meas_snr = 3.0
+    by_task: dict[str, list] = {}
+    for f in _zp_frames(calib.frames):
+        if (f.zero_point is None or not f.exposure_time or not f.stars_mag
+                or abs(f.zero_point - zp_mode) > zp_sig or not _moon_ok(f)):
+            continue
+        k = ext_k.get(f.filter_name or "unknown", k_default)
+        corr = (10 ** (0.4 * k * (f.airmass - 1.0))
+                if f.airmass is not None else 1.0)
+        by_task.setdefault(_frame_task(f), []).extend(
+            (f.exposure_time, m, s * corr)
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
+            if s >= min_meas_snr and iso and _snr_consistent(s, m, f)
+        )
+    order = [t for t in ("coverage", "photometric", "calsats", "other")
+             if by_task.get(t)]
+    if not order:
+        return None
+    all_pts = [p for t in order for p in by_task[t]]
+    a_exp = np.array([p[0] for p in all_pts])
+    a_mag = np.array([p[1] for p in all_pts])
+    std_exps = list(range(max(1, math.floor(a_exp.min())),
+                          math.ceil(a_exp.max()) + 1))
+    bins = list(range(math.floor(a_mag.min()), math.ceil(a_mag.max())))
+
+    def _series(pts):
+        e = np.array([p[0] for p in pts])
+        m = np.array([p[1] for p in pts])
+        s = np.array([p[2] for p in pts])
+        out = []
+        for lo in bins:
+            in_bin = (m >= lo) & (m < lo + 1)
+            if in_bin.sum() < 5:
+                continue
+            xs, meds, e_lo, e_hi = [], [], [], []
+            for t in std_exps:
+                sel = s[in_bin & (np.abs(e - t) <= 0.5)]
+                if len(sel) < 20:
+                    continue
+                sem = 1.253 * float(np.std(sel)) / math.sqrt(len(sel))
+                xs.append(t)
+                meds.append(float(np.median(sel)))
+                e_lo.append(sem)
+                e_hi.append(sem)
+            if len(xs) >= 2:
+                out.append({"bin": lo, "x": xs, "y": meds,
+                            "e_lo": e_lo, "e_hi": e_hi})
+        return out
+
+    pooled_pts = [p for t in ("coverage", "photometric")
+                  for p in by_task.get(t, [])]
+    return {
+        "std_exps": std_exps, "bins": bins, "order": order,
+        "faceted": {tk: _series(by_task[tk]) for tk in order},
+        "pooled": _series(pooled_pts) if pooled_pts else [],
+    }
+
+
+def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
+    from matplotlib.ticker import FuncFormatter, NullFormatter
+
+    std_exps, bins, order = d["std_exps"], d["bins"], d["order"]
+    colors = plt.cm.turbo(np.linspace(0.05, 0.95, max(len(bins), 1)))
+    color_of = {lo: colors[i] for i, lo in enumerate(bins)}
+    paths = []
+
+    fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5),
+                             sharey=True, squeeze=False)
+    axes = axes[0]
+    for ax, tk in zip(axes, order):
+        for ser in d["faceted"].get(tk, []):
+            ax.errorbar(ser["x"], ser["y"], yerr=[ser["e_lo"], ser["e_hi"]],
+                        fmt="o-", color=color_of[ser["bin"]], alpha=0.8,
+                        linewidth=1.5, markersize=5, capsize=3,
+                        label=f"{ser['bin'] + 0.5:.1f}")
+        ax.set_yscale("log")
+        ax.set_xticks(std_exps)
+        ax.set_xlabel("Exposure Time [s]")
+        ax.set_title(tk)
+        ax.grid(True, alpha=0.3, which="both")
+    axes[0].set_ylabel("SNR (normalized to airmass = 1)")
+    for ax in axes:
+        if ax.lines:
+            ax.legend(loc="lower right", fontsize=7, title=r"m$_G$", ncol=2)
+    fig.suptitle(
+        f"{meta['night_id']}: SNR vs exposure by task "
+        f"(weather-masked, airmass-normalized, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
+    fig.tight_layout()
+    paths.append(_save(fig, output_dir / "snr_vs_exposure_by_task.png"))
+
+    if d["pooled"]:
+        figg, axg = plt.subplots(figsize=(10, 7))
+        for ser in d["pooled"]:
+            axg.errorbar(ser["x"], ser["y"], yerr=[ser["e_lo"], ser["e_hi"]],
+                         fmt="o-", color=color_of[ser["bin"]], alpha=0.8,
+                         linewidth=1.5, markersize=5, capsize=3,
+                         label=f"{ser['bin'] + 0.5:.1f}")
+        axg.set_yscale("log")
+        axg.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:g}"))
+        axg.yaxis.set_minor_formatter(NullFormatter())
+        axg.set_ylim(top=axg.get_ylim()[1] * 1.8)
+        axg.set_xticks(std_exps)
+        axg.set_xlabel("Exposure Time [seconds]")
+        axg.set_ylabel("SNR (normalized to airmass = 1)")
+        axg.set_title(
+            f"{meta['night_id']}: SNR vs exposure  (coverage+photometric, "
+            f"weather-masked, airmass-norm, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
+        axg.grid(True, alpha=0.3, which="both")
+        axg.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8,
+                   title=r"m$_G$", ncol=1)
+        paths.append(_save(figg, output_dir / "snr_vs_exposure_by_magnitude.png"))
+    return paths
+
+
+def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
+    import numpy as np
+
+    band = _clear_sky_zp_band(calib.frames)
+    if band is None:
+        return None
+    zp_mode, zp_sig = band
+    ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
+    k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
+    min_meas_snr = 3.0
+    cal_tasks = ("coverage", "photometric")
+    mag_pts = []
+    for f in _zp_frames(calib.frames):
+        if (f.zero_point is None or not f.exposure_time or not f.stars_mag
+                or abs(f.zero_point - zp_mode) > zp_sig
+                or _frame_task(f) not in cal_tasks or not _moon_ok(f)):
+            continue
+        kk = ext_k.get(f.filter_name or "unknown", k_default)
+        corr = (10 ** (0.4 * kk * (f.airmass - 1.0))
+                if f.airmass is not None else 1.0)
+        mag_pts.extend(
+            (f.exposure_time, m, s * corr)
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
+            if s >= min_meas_snr and iso and _snr_consistent(s, m, f)
+        )
+    if not mag_pts:
+        return None
+    exps = np.array([p[0] for p in mag_pts])
+    mags = np.array([p[1] for p in mag_pts])
+    snrs = np.array([p[2] for p in mag_pts])
+    std_exps = list(range(max(1, math.floor(exps.min())),
+                          math.ceil(exps.max()) + 1))
+    mgrid = np.arange(math.floor(mags.min()), math.ceil(mags.max()), 0.5)
+    lines = []
+    for t in std_exps:
+        sel_t = np.abs(exps - t) <= 0.5
+        if sel_t.sum() < 20:
+            continue
+        xs, ys = [], []
+        for mlo in mgrid:
+            cell = snrs[sel_t & (mags >= mlo) & (mags < mlo + 0.5)]
+            if len(cell) >= 5:
+                xs.append(float(mlo + 0.25))
+                ys.append(float(np.median(cell)))
+        if len(xs) >= 3:
+            lines.append({"exp": int(t), "x": xs, "y": ys})
+    lims = [f.limiting_magnitude_50 for f in _zp_frames(calib.frames)
+            if f.limiting_magnitude_50 is not None and f.zero_point is not None
+            and abs(f.zero_point - zp_mode) <= zp_sig
+            and _frame_task(f) in cal_tasks and _moon_ok(f)]
+    lim50 = None
+    if lims:
+        lim50 = {"med": float(np.median(lims)),
+                 "lo": float(np.percentile(lims, 16)),
+                 "hi": float(np.percentile(lims, 84))}
+    return {"std_exps": std_exps, "lines": lines, "lim50": lim50,
+            "min_meas_snr": min_meas_snr, "zp_mode": zp_mode, "zp_sig": zp_sig}
+
+
+def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
+    std_exps = d["std_exps"]
+    fig, ax = plt.subplots(figsize=(10, 7))
+    cmap = plt.cm.viridis(np.linspace(0, 0.9, max(len(std_exps), 1)))
+    color_of = {t: cmap[i] for i, t in enumerate(std_exps)}
+    for ln in d["lines"]:
+        ax.plot(ln["x"], ln["y"], "o-", color=color_of[ln["exp"]], ms=4,
+                lw=1.5, alpha=0.85, label=f"{int(ln['exp'])}s")
+    lim = d["lim50"]
+    if lim is not None:
+        ax.axvspan(lim["lo"], lim["hi"], color="red", alpha=0.10)
+        ax.axvline(lim["lo"], color="red", ls=":", lw=1, alpha=0.6)
+        ax.axvline(lim["hi"], color="red", ls=":", lw=1, alpha=0.6)
+        ax.axvline(lim["med"], color="red", ls="--", lw=1.8,
+                   label=f"lim50 = {lim['med']:.2f} "
+                         f"(16/84: {lim['lo']:.2f}–{lim['hi']:.2f})")
+    ax.axhline(d["min_meas_snr"], color="gray", ls=":", lw=1,
+               label=f"SNR = {d['min_meas_snr']:.0f}")
+    ax.set_yscale("log")
+    ax.set_xlabel("Gaia G magnitude")
+    ax.set_ylabel("SNR (normalized to airmass = 1)")
+    ax.set_title(
+        f"{meta['night_id']}: SNR vs magnitude  (coverage+photometric, "
+        f"weather-masked ZP {d['zp_mode']:.2f}±{d['zp_sig']:.2f}, "
+        f"Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
+    ax.grid(True, alpha=0.3, which="both")
+    ax.legend(loc="upper right", fontsize=9, title="exposure")
+    return _save(fig, output_dir / "snr_vs_mag_weathermasked.png")
+
+
+_PLOT_BUILDERS.update({
+    "snr_vs_exposure": (_data_snr_vs_exposure, _render_snr_vs_exposure),
+    "snr_vs_mag_weathermasked": (
+        _data_snr_vs_mag_weathermasked, _render_snr_vs_mag_weathermasked),
 })
 
 
