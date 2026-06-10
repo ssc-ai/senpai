@@ -515,16 +515,69 @@ def _percentile(sorted_xs: list[float], q: float) -> float:
     return sorted_xs[lo] + (idx - lo) * (sorted_xs[hi] - sorted_xs[lo])
 
 
-def _fit_extinction(frames: list[FramePhoto]) -> dict[str, ExtinctionFit]:
-    """Per-filter Bouguer fit ``zero_point = m0 - k * airmass``.
+_EXT_ENV_PCT = 85.0      # upper-envelope percentile = clear-sky proxy
+_EXT_BIN_W = 0.1         # airmass bin width
+_EXT_CLEAR_TOL = 0.1     # mag; frames within this below the line count as clear
 
-    Requires ≥3 frames with both ZP and airmass in a filter. Standard OLS on
-    the line ``y = m0 + slope * x``; the extinction coefficient ``k`` is the
-    negated slope so it matches the conventional positive-extinction sign
-    (atmosphere makes stars dimmer at higher airmass → ZP decreases with
-    airmass → slope < 0 → k = -slope > 0).
+
+def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
+    """Cloud-robust Bouguer fit of frame zero point vs airmass.
+
+    pairs = [(airmass, zero_point), ...] for one filter. Cloud only ATTENUATES
+    (drops ZP, never raises it), so the clear-sky Bouguer line is the UPPER
+    ENVELOPE of the ZP-vs-airmass cloud — cloudy frames scatter below it. We fit
+    the per-airmass-bin upper percentile (the clean edge) rather than the median:
+    the median is the central tendency of a one-sidedly cloud-eaten sample, i.e.
+    survivorship-biased downward (and OLS over-steepens k by conflating cloud
+    with extinction). Returns fit + the bin median/envelope points for plotting,
+    plus a clear_fraction diagnostic. None if too few points / airmass range.
     """
+    import numpy as np
 
+    if len(pairs) < 3:
+        return None
+    X = np.array([p[0] for p in pairs])
+    Z = np.array([p[1] for p in pairs])
+    if X.max() - X.min() < _MIN_AIRMASS_RANGE:
+        return None
+    edges = np.arange(X.min(), X.max() + _EXT_BIN_W, _EXT_BIN_W)
+    cx, cmed, cenv = [], [], []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        zz = Z[(X >= lo) & (X < hi)]
+        if len(zz) >= 5:
+            cx.append(float((lo + hi) / 2))
+            cmed.append(float(np.median(zz)))
+            cenv.append(float(np.percentile(zz, _EXT_ENV_PCT)))
+    if len(cx) >= 2:
+        ex, ey, note = cx, cenv, f"{_EXT_ENV_PCT:.0f}th-pct envelope"
+    else:
+        ex, ey, note = list(map(float, X)), list(map(float, Z)), "raw OLS (sparse)"
+    n = len(ex)
+    mx = sum(ex) / n
+    my = sum(ey) / n
+    ssxx = sum((x - mx) ** 2 for x in ex)
+    if ssxx <= 0:
+        return None
+    slope = sum((ex[i] - mx) * (ey[i] - my) for i in range(n)) / ssxx
+    m0 = my - slope * mx
+    resid = [ey[i] - (m0 + slope * ex[i]) for i in range(n)]
+    sigma2 = sum(r * r for r in resid) / max(n - 2, 1)
+    slope_err = math.sqrt(sigma2 / ssxx) if sigma2 > 0 else 0.0
+    m0_err = math.sqrt(sigma2 * (1 / n + mx * mx / ssxx)) if sigma2 > 0 else 0.0
+    clear_fraction = float(np.mean(Z >= (m0 + slope * X) - _EXT_CLEAR_TOL))
+    return {
+        "k": -slope, "k_err": slope_err, "m0": m0, "m0_err": m0_err,
+        "n": len(pairs), "airmass_range": (float(X.min()), float(X.max())),
+        "bin_centers": cx, "bin_median": cmed, "bin_envelope": cenv,
+        "note": note, "clear_fraction": clear_fraction,
+    }
+
+
+def _fit_extinction(frames: list[FramePhoto]) -> dict[str, ExtinctionFit]:
+    """Per-filter cloud-robust Bouguer fit ``zero_point = m0 - k * airmass`` via
+    the upper-envelope method (see _extinction_envelope_fit). k = -slope. This is
+    the authoritative extinction used in night_calibration.json and for the
+    airmass-normalization across the SNR plots."""
     by_filter: dict[str, list[tuple[float, float]]] = {}
     for f in _zp_frames(frames):
         if f.zero_point is None or f.airmass is None:
@@ -532,64 +585,16 @@ def _fit_extinction(frames: list[FramePhoto]) -> dict[str, ExtinctionFit]:
         key = f.filter_name or "unknown"
         by_filter.setdefault(key, []).append((f.airmass, f.zero_point))
 
-    def _ols(xs, ys):
-        n = len(xs)
-        mean_x = sum(xs) / n
-        mean_y = sum(ys) / n
-        ssxx = sum((x - mean_x) ** 2 for x in xs)
-        ssxy = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(n))
-        if ssxx <= 0:
-            return None
-        slope = ssxy / ssxx
-        m0 = mean_y - slope * mean_x
-        resid = [ys[i] - (m0 + slope * xs[i]) for i in range(n)]
-        ss_res = sum(r * r for r in resid)
-        sigma2 = ss_res / max(n - 2, 1)
-        slope_err = math.sqrt(sigma2 / ssxx) if sigma2 > 0 else 0.0
-        m0_err = math.sqrt(sigma2 * (1 / n + mean_x * mean_x / ssxx)) if sigma2 > 0 else 0.0
-        return slope, m0, slope_err, m0_err, math.sqrt(sigma2)
-
     out: dict[str, ExtinctionFit] = {}
     for filt, pairs in by_filter.items():
-        if len(pairs) < 3:
+        r = _extinction_envelope_fit(pairs)
+        if r is None:
             continue
-        xs = [p[0] for p in pairs]
-        ys = [p[1] for p in pairs]
-        if max(xs) - min(xs) < _MIN_AIRMASS_RANGE:
-            continue
-        # Robust Bouguer fit: cloud only ATTENUATES (drops ZP), so on a
-        # non-photometric night cloudy frames sit below the clear-sky line and
-        # a plain OLS over-steepens k (conflating cloud with extinction).
-        # Iteratively sigma-clip residuals (2.5σ) to reject the cloud dropouts
-        # while preserving the airmass slope. A flat ZP cut can't be used here:
-        # it would also reject high-airmass clear frames whose ZP is genuinely
-        # lower from extinction, flattening k to ~0.
-        fit = _ols(xs, ys)
-        if fit is None:
-            continue
-        for _ in range(3):
-            slope, m0, _se, _me, sigma = fit
-            if sigma <= 0:
-                break
-            kept = [(x, y) for x, y in zip(xs, ys)
-                    if abs(y - (m0 + slope * x)) <= 2.5 * sigma]
-            if len(kept) == len(xs) or len(kept) < 3:
-                break
-            kxs = [p[0] for p in kept]
-            if max(kxs) - min(kxs) < _MIN_AIRMASS_RANGE:
-                break
-            xs, ys = kxs, [p[1] for p in kept]
-            refit = _ols(xs, ys)
-            if refit is None:
-                break
-            fit = refit
-        slope, m0, slope_err, m0_err, _sigma = fit
         out[filt] = ExtinctionFit(
             filter_name=filt,
-            m0=m0, m0_err=m0_err,
-            k=-slope, k_err=slope_err,  # extinction coefficient is -slope
-            n=len(xs),
-            airmass_range=(min(xs), max(xs)),
+            m0=r["m0"], m0_err=r["m0_err"],
+            k=r["k"], k_err=r["k_err"],
+            n=r["n"], airmass_range=r["airmass_range"],
         )
     return out
 
@@ -905,128 +910,69 @@ def _render_detection_rate_vs_altitude(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_extinction_curve(calib: NightCalibration):
-    import numpy as np
-
-    ext_min_snr = 20.0
-    star_ext = []  # (airmass, per-star ZP)
+    # Frame ZP vs airmass, fit cloud-robustly by the upper envelope (same
+    # _extinction_envelope_fit that feeds night_calibration.json, so the plot's
+    # red line == the reported k). Cloud drops points below the clear-sky line;
+    # the per-bin median (shown for contrast) is dragged down by it, the
+    # envelope tracks the clean edge.
+    pairs_by_filter: dict[str, list] = {}
     for f in _zp_frames(calib.frames):
-        if f.airmass is None or not f.stars_zp_offset or not f.exposure_time:
+        if f.zero_point is None or f.airmass is None:
             continue
-        texp_term = 2.5 * math.log10(f.exposure_time)
-        star_ext.extend(
-            (f.airmass, off - texp_term)
-            for m, off, snr, iso in zip(f.stars_mag, f.stars_zp_offset,
-                                        f.stars_snr, _isolated_flags(f))
-            if off is not None and snr >= ext_min_snr and iso
-            and _snr_consistent(snr, m, f)
-        )
-    if len(star_ext) >= 10:
-        airmasses = np.array([p[0] for p in star_ext])
-        offsets = np.array([p[1] for p in star_ext])
-        keep = np.abs(offsets - offsets.mean()) <= 3 * offsets.std()
-        airmasses, offsets = airmasses[keep], offsets[keep]
-        bin_edges = np.arange(airmasses.min(), airmasses.max() + 0.2, 0.2)
-        centers, medians, err_lo, err_hi = [], [], [], []
-        for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
-            in_bin = offsets[(airmasses >= lo) & (airmasses < hi)]
-            if len(in_bin) < 3:
-                continue
-            med = float(np.median(in_bin))
-            centers.append((lo + hi) / 2)
-            medians.append(med)
-            err_lo.append(med - float(np.percentile(in_bin, 16)))
-            err_hi.append(float(np.percentile(in_bin, 84)) - med)
-        if len(centers) >= 2:
-            slope, intercept = np.polyfit(centers, medians, 1)
-            fit_note = "median-binned fit"
-        else:
-            slope, intercept = np.polyfit(airmasses, offsets, 1)
-            fit_note = "per-star fit"
-        # Overlay the robust frame-level Bouguer fit (the k reported in
-        # night_calibration.json). Per-star ZP and frame ZP share the same
-        # m + 2.5·log10(flux/t_exp) scale, so the two lines are directly
-        # comparable — showing both keeps the plot consistent with the JSON.
-        bfits = list(calib.extinction_per_filter.values())
-        bouguer = None
-        if bfits:
-            bf = max(bfits, key=lambda x: x.n)
-            bouguer = {"k": bf.k, "k_err": bf.k_err, "m0": bf.m0, "n": bf.n}
-        return {
-            "mode": "per_star",
-            "airmass": airmasses, "offset": offsets,
-            "binned": {"x": centers, "y": medians,
-                       "err_lo": err_lo, "err_hi": err_hi},
-            "fit": {"slope": float(slope), "intercept": float(intercept),
-                    "note": fit_note},
-            "bouguer": bouguer,
-            "n_stars": int(len(airmasses)), "ext_min_snr": ext_min_snr,
-        }
-    zp_pts = [(f.airmass, f.zero_point, f.filter_name or "unknown")
-              for f in _zp_frames(calib.frames)
-              if f.airmass is not None and f.zero_point is not None]
-    if not zp_pts:
-        return None
-    per_filter = {}
-    for filt in sorted({p[2] for p in zp_pts}):
-        xs = [p[0] for p in zp_pts if p[2] == filt]
-        ys = [p[1] for p in zp_pts if p[2] == filt]
-        fit = calib.extinction_per_filter.get(filt)
-        per_filter[filt] = {
-            "airmass": xs, "zp": ys,
-            "fit": ({"k": fit.k, "k_err": fit.k_err,
-                     "m0": fit.m0, "m0_err": fit.m0_err} if fit else None),
-        }
-    return {"mode": "frame", "per_filter": per_filter}
+        pairs_by_filter.setdefault(f.filter_name or "unknown", []).append(
+            (f.airmass, f.zero_point))
+    series = []
+    for filt, pairs in sorted(pairs_by_filter.items()):
+        r = _extinction_envelope_fit(pairs)
+        if r is None:
+            continue
+        series.append({
+            "filter": filt,
+            "airmass": [p[0] for p in pairs], "zp": [p[1] for p in pairs],
+            "bin_centers": r["bin_centers"], "bin_median": r["bin_median"],
+            "bin_envelope": r["bin_envelope"],
+            "k": r["k"], "k_err": r["k_err"], "m0": r["m0"],
+            "note": r["note"], "clear_fraction": r["clear_fraction"],
+        })
+    return {"series": series} if series else None
 
 
 def _render_extinction_curve(d, meta, output_dir, plt, np) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
-    if d["mode"] == "per_star":
-        airmasses = np.array(d["airmass"])
-        offsets = np.array(d["offset"])
-        ax.scatter(airmasses, offsets, alpha=0.3, s=10, color="lightgray",
-                   label="Individual stars")
-        b = d["binned"]
-        if b["x"]:
-            ax.errorbar(b["x"], b["y"], yerr=[b["err_lo"], b["err_hi"]], fmt="o",
-                        color="black", markersize=7, capsize=4, capthick=1.5,
-                        elinewidth=1.5, alpha=0.85,
-                        label="Binned data (median ± 1σ percentiles)")
-        slope, intercept = d["fit"]["slope"], d["fit"]["intercept"]
-        line_x = np.linspace(airmasses.min(), airmasses.max(), 50)
-        ax.plot(line_x, slope * line_x + intercept, "r-", linewidth=2, alpha=0.8,
-                label=f"per-star fit: k={-slope:.3f} mag/airmass "
-                      f"({d['fit']['note']})")
-        bg = d.get("bouguer")
-        if bg is not None:
-            ax.plot(line_x, bg["m0"] - bg["k"] * line_x, color="darkorange",
-                    ls="--", linewidth=2, alpha=0.85,
-                    label=f"robust frame Bouguer: k={bg['k']:.3f}±{bg['k_err']:.3f} "
-                          f"(n={bg['n']})")
-        ax.set_ylabel(r"per-star ZP (m$_{cat}$ + 2.5·log$_{10}$(flux/t$_{exp}$)) [mag]")
-        ax.set_title(f"{meta['night_id']}: extinction curve ({d['n_stars']} "
-                     f"isolated stars, sidereal, SNR≥{d['ext_min_snr']:.0f})")
-    else:
-        per_filter = d["per_filter"]
-        filters = sorted(per_filter)
-        cmap = plt.cm.viridis(np.linspace(0, 0.85, max(len(filters), 1)))
-        for color, filt in zip(cmap, filters):
-            s = per_filter[filt]
-            xs, ys = s["airmass"], s["zp"]
-            ax.scatter(xs, ys, label=f"{filt} (n={len(xs)})", s=12, alpha=0.6,
-                       color=color)
-            fit = s["fit"]
-            if fit:
-                line_x = np.linspace(min(xs), max(xs), 50)
-                ax.plot(line_x, fit["m0"] - fit["k"] * line_x, color=color,
-                        linewidth=1.5,
-                        label=f"  k={fit['k']:.3f}±{fit['k_err']:.3f}, "
-                              f"m0={fit['m0']:.3f}±{fit['m0_err']:.3f}")
-        ax.set_ylabel("zero point (instrumental → catalog mag)")
-        ax.set_title(f"{meta['night_id']}: Bouguer extinction (per-frame)")
+    series = d["series"]
+    multi = len(series) > 1
+    cmap = plt.cm.viridis(np.linspace(0, 0.85, max(len(series), 1)))
+    title_bits = []
+    for color, s in zip(cmap, series):
+        pre = f"{s['filter']} " if multi else ""
+        X = np.array(s["airmass"])
+        line_x = np.linspace(X.min(), X.max(), 50)
+        sky = 10 ** (-0.4 * s["k"])
+        flag = "  ⚠ NON-PHOTOMETRIC" if s["clear_fraction"] < 0.30 else ""
+        if multi:
+            ax.scatter(X, s["zp"], s=12, alpha=0.5, color=color,
+                       label=f"{pre}frames (n={len(X)})")
+            ax.plot(line_x, s["m0"] - s["k"] * line_x, color=color, lw=2,
+                    label=f"  k={s['k']:.3f}±{s['k_err']:.3f} (T_zen={sky:.0%})")
+        else:
+            ax.scatter(X, s["zp"], s=12, alpha=0.4, color="lightgray",
+                       label=f"frames (n={len(X)})")
+            if s["bin_centers"]:
+                ax.plot(s["bin_centers"], s["bin_median"], "o--",
+                        color="darkorange", ms=6, alpha=0.7,
+                        label="per-bin median (cloud-biased)")
+                ax.plot(s["bin_centers"], s["bin_envelope"], "o", color="black",
+                        ms=7, label=f"{_EXT_ENV_PCT:.0f}th-pct envelope (clear-sky)")
+            ax.plot(line_x, s["m0"] - s["k"] * line_x, "r-", lw=2, alpha=0.85,
+                    label=f"envelope fit: k={s['k']:.3f}±{s['k_err']:.3f}  "
+                          f"(zenith T={sky:.0%})")
+        title_bits.append(f"{pre}k={s['k']:.3f} (clear-frac {s['clear_fraction']:.0%}){flag}")
+    ax.set_ylabel("zero point (instrumental → catalog mag)")
     ax.set_xlabel("Airmass")
+    ax.set_title(f"{meta['night_id']}: extinction (cloud-robust upper-envelope)\n"
+                 + " | ".join(title_bits))
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=9)
+    ax.legend(loc="best", fontsize=8)
     ax2 = ax.twiny()
     ticks = np.array([t for t in ax.get_xticks() if t >= 1.0])
     if len(ticks):
