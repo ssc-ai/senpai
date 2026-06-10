@@ -1267,11 +1267,11 @@ def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
                    linewidth=1.5, alpha=0.8,
                    label=f"median lim. mag (50%) = {d['median_lim50']:.1f}")
     ax.set_xlabel("Apparent Magnitude (Catalog)")
-    ax.set_ylabel(f"Search Rate (deg²/hour to reach SNR={d['target_snr']:.0f})")
+    ax.set_ylabel(f"Search Rate (deg²/hour to TARGET {d['target_snr']:.0f}σ)")
     ax.set_title(f"{meta['night_id']}: search rate vs magnitude "
                  f"({d['n_stars']} isolated stars, sidereal; measured at "
-                 f"SNR≥{d['min_meas_snr']:.0f}, rate scaled to SNR="
-                 f"{d['target_snr']:.0f})")
+                 f"{d['min_meas_snr']:.0f}σ, rate scaled to TARGET "
+                 f"{d['target_snr']:.0f}σ)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="lower left", fontsize=9)
     return _save(fig, output_dir / "search_rate.png")
