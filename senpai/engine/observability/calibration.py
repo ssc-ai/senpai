@@ -1210,7 +1210,9 @@ def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
 def _data_search_rate(calib: NightCalibration):
     import numpy as np
 
-    target_snr, min_exposure_s, readout_s, min_meas_snr = 6.0, 0.1, 1.0, 3.0
+    # Target SNR = measurement floor = 3σ: the search rate is the sky area/hour
+    # surveyable while still reaching a 3σ detection per field.
+    target_snr, min_exposure_s, readout_s, min_meas_snr = 3.0, 0.1, 1.0, 3.0
     star_pts, lim50s = [], []
     for f in _zp_frames(calib.frames):
         if not f.exposure_time or not f.fov_sq_deg or not f.stars_mag:
