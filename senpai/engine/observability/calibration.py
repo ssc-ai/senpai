@@ -888,24 +888,6 @@ def _render_legacy(
         ax2.set_xlabel("Altitude")
         paths.append(_save(fig, output_dir / "extinction_curve.png"))
 
-    # 2) Limiting magnitude (50%) distribution per filter (sidereal frames only —
-    #    rate-track completeness is unreliable; see _summarize_limiting_mag)
-    lim_data = [(f.limiting_magnitude_50, f.filter_name or "unknown")
-                for f in _zp_frames(calib.frames)
-                if f.limiting_magnitude_50 is not None]
-    if lim_data:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        filters = sorted({d[1] for d in lim_data})
-        for filt in filters:
-            xs = [d[0] for d in lim_data if d[1] == filt]
-            ax.hist(xs, bins=30, alpha=0.5, label=f"{filt} (n={len(xs)})")
-        ax.set_xlabel("limiting magnitude (50% completeness)")
-        ax.set_ylabel("number of frames")
-        ax.set_title(f"{calib.night_id}: limiting magnitude distribution")
-        ax.legend(loc="best", fontsize=9)
-        ax.grid(True, alpha=0.3)
-        paths.append(_save(fig, output_dir / "limiting_magnitude_hist.png"))
-
     # 3) Az/Alt coverage polar plot
     aa = [(f.azimuth_deg, f.altitude_deg, f.timestamp)
           for f in calib.frames
@@ -981,31 +963,6 @@ def _render_legacy(
         ax.grid(True, alpha=0.3)
         fig.autofmt_xdate()
         paths.append(_save(fig, output_dir / "zp_drift.png"))
-
-    # 5) Limiting magnitude vs exposure time (colored by airmass)
-    #    Shows the depth/exposure trade-off and how much extra exposure buys
-    #    at given airmass. Sidereal only: rate-frame completeness is computed
-    #    on streaked stars and fabricates impossible depths (lim50 22-24 on
-    #    1-5 s exposures — a fake second "deep" population).
-    depth_pts = [(f.exposure_time, f.limiting_magnitude_50, f.airmass)
-                 for f in _zp_frames(calib.frames)
-                 if f.exposure_time and f.limiting_magnitude_50]
-    if depth_pts:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        xs = [p[0] for p in depth_pts]
-        ys = [p[1] for p in depth_pts]
-        cs = [p[2] if p[2] is not None else 0.0 for p in depth_pts]
-        sc = ax.scatter(xs, ys, c=cs, cmap="viridis", s=24, alpha=0.8,
-                        edgecolor="black", linewidth=0.3)
-        ax.set_xscale("log")
-        ax.set_xlabel("exposure time (s)")
-        ax.set_ylabel("limiting magnitude (50% completeness)")
-        ax.set_title(f"{calib.night_id}: depth vs exposure time")
-        ax.grid(True, alpha=0.3)
-        if any(c > 0 for c in cs):
-            cb = plt.colorbar(sc, ax=ax)
-            cb.set_label("airmass")
-        paths.append(_save(fig, output_dir / "depth_vs_exposure.png"))
 
     # 6) Search rate vs magnitude, per STAR (sidereal frames only — rate-track
     #    aperture photometry is unreliable). For each measured star, scale its
@@ -1086,32 +1043,6 @@ def _render_legacy(
         ax.grid(True, alpha=0.3)
         ax.legend(loc="lower left", fontsize=9)
         paths.append(_save(fig, output_dir / "search_rate.png"))
-
-    # 7) n_stars detected vs altitude (or airmass when alt unavailable)
-    counts = [(f.altitude_deg, f.n_stars, f.exposure_time,
-               f.filter_name or "unknown")
-              for f in calib.frames
-              if f.n_stars and f.altitude_deg is not None]
-    if counts:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        # Normalize by exposure to compare across heterogeneous exposures.
-        xs = [c[0] for c in counts]
-        ys = [c[1] / c[2] if c[2] else c[1] for c in counts]
-        filters = sorted({c[3] for c in counts})
-        for filt in filters:
-            mask = [c[3] == filt for c in counts]
-            ax.scatter(
-                [x for x, m in zip(xs, mask) if m],
-                [y for y, m in zip(ys, mask) if m],
-                label=f"{filt} (n={sum(mask)})", s=20, alpha=0.7,
-            )
-        ax.set_xlabel("altitude (deg)")
-        ax.set_ylabel("stars detected per second")
-        ax.set_yscale("log")
-        ax.set_title(f"{calib.night_id}: detection rate vs altitude")
-        ax.legend(loc="best", fontsize=9)
-        ax.grid(True, alpha=0.3, which="both")
-        paths.append(_save(fig, output_dir / "detection_rate_vs_altitude.png"))
 
     # 8) SNR vs exposure time, one errorbar series per 1-mag bin, FACETED BY
     #    TASK. Pooling tasks makes this plot zigzag and is physically
@@ -1638,6 +1569,98 @@ def _save(fig, path: Path) -> Path:
     plt.close(fig)
     logger.info("Wrote %s", path)
     return path
+
+
+# --- Migrated plots: (analysis, render) pairs --------------------------------
+# analysis(calib) -> JSON-serializable dict | None;  render(d, meta, out, plt, np) -> Path.
+# Registered in _PLOT_BUILDERS at the bottom of this section.
+
+
+def _data_limiting_magnitude_hist(calib: NightCalibration):
+    by_filter: dict[str, list] = {}
+    for f in _zp_frames(calib.frames):
+        if f.limiting_magnitude_50 is not None:
+            by_filter.setdefault(f.filter_name or "unknown", []).append(
+                f.limiting_magnitude_50)
+    return {"by_filter": by_filter} if by_filter else None
+
+
+def _render_limiting_magnitude_hist(d, meta, output_dir, plt, np) -> Path:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for filt in sorted(d["by_filter"]):
+        xs = d["by_filter"][filt]
+        ax.hist(xs, bins=30, alpha=0.5, label=f"{filt} (n={len(xs)})")
+    ax.set_xlabel("limiting magnitude (50% completeness)")
+    ax.set_ylabel("number of frames")
+    ax.set_title(f"{meta['night_id']}: limiting magnitude distribution")
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    return _save(fig, output_dir / "limiting_magnitude_hist.png")
+
+
+def _data_depth_vs_exposure(calib: NightCalibration):
+    pts = [(f.exposure_time, f.limiting_magnitude_50, f.airmass)
+           for f in _zp_frames(calib.frames)
+           if f.exposure_time and f.limiting_magnitude_50]
+    if not pts:
+        return None
+    return {
+        "exposure": [p[0] for p in pts],
+        "lim50": [p[1] for p in pts],
+        "airmass": [p[2] if p[2] is not None else 0.0 for p in pts],
+    }
+
+
+def _render_depth_vs_exposure(d, meta, output_dir, plt, np) -> Path:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    cs = d["airmass"]
+    sc = ax.scatter(d["exposure"], d["lim50"], c=cs, cmap="viridis", s=24,
+                    alpha=0.8, edgecolor="black", linewidth=0.3)
+    ax.set_xscale("log")
+    ax.set_xlabel("exposure time (s)")
+    ax.set_ylabel("limiting magnitude (50% completeness)")
+    ax.set_title(f"{meta['night_id']}: depth vs exposure time")
+    ax.grid(True, alpha=0.3)
+    if any(c > 0 for c in cs):
+        cb = plt.colorbar(sc, ax=ax)
+        cb.set_label("airmass")
+    return _save(fig, output_dir / "depth_vs_exposure.png")
+
+
+def _data_detection_rate_vs_altitude(calib: NightCalibration):
+    by_filter: dict[str, dict] = {}
+    for f in calib.frames:
+        if not (f.n_stars and f.altitude_deg is not None):
+            continue
+        rate = f.n_stars / f.exposure_time if f.exposure_time else f.n_stars
+        s = by_filter.setdefault(f.filter_name or "unknown", {"alt": [], "rate": []})
+        s["alt"].append(f.altitude_deg)
+        s["rate"].append(rate)
+    return {"by_filter": by_filter} if by_filter else None
+
+
+def _render_detection_rate_vs_altitude(d, meta, output_dir, plt, np) -> Path:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for filt in sorted(d["by_filter"]):
+        s = d["by_filter"][filt]
+        ax.scatter(s["alt"], s["rate"], label=f"{filt} (n={len(s['alt'])})",
+                   s=20, alpha=0.7)
+    ax.set_xlabel("altitude (deg)")
+    ax.set_ylabel("stars detected per second")
+    ax.set_yscale("log")
+    ax.set_title(f"{meta['night_id']}: detection rate vs altitude")
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(True, alpha=0.3, which="both")
+    return _save(fig, output_dir / "detection_rate_vs_altitude.png")
+
+
+_PLOT_BUILDERS.update({
+    "limiting_magnitude_hist": (
+        _data_limiting_magnitude_hist, _render_limiting_magnitude_hist),
+    "depth_vs_exposure": (_data_depth_vs_exposure, _render_depth_vs_exposure),
+    "detection_rate_vs_altitude": (
+        _data_detection_rate_vs_altitude, _render_detection_rate_vs_altitude),
+})
 
 
 # --- CLI hook -----------------------------------------------------------------
