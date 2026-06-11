@@ -125,7 +125,9 @@ class TestRemoveColumnAndRowMedians:
         data[0, 0] = 0  # one low pixel so a column/row median > min exists
         img = _make_image(data, header=fits.Header())
         out = remove_column_and_row_medians(img)
-        assert out.data.dtype == np.float64
+        # float32 by design: the whole downstream pipeline inherits this
+        # dtype and float64 doubles its cost for ADU-scale data.
+        assert out.data.dtype == np.float32
         # Median-subtracted data must contain negatives somewhere.
         assert out.data.min() < 0
 

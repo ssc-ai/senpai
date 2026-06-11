@@ -58,8 +58,12 @@ def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates
 
     array = image.data
 
-    # Convert array to float64 before operations to allow for negative values
-    array = array.astype(np.float64)
+    # Convert to a signed float so the subtraction can go negative. float32
+    # on purpose: the whole downstream pipeline (detection convolutions,
+    # statistics, photometry) inherits this dtype, and float64 doubles every
+    # one of those costs for nothing — the data are ADU-scale (<~1e5), where
+    # float32's 24-bit mantissa resolves ~0.005 ADU, far below read noise.
+    array = array.astype(np.float32)
 
     # Capture the sky level (flat-fielded frame median, ADU) BEFORE we subtract
     # it away — this is the physical sky background (moonglow/twilight), which
@@ -130,7 +134,9 @@ def remove_background(
     )
     image.processing_history.append(bg_metadata)
 
-    image.data = image.data - background
+    # Background2D returns float64; don't let the subtraction silently
+    # upcast the frame (the pipeline runs float32).
+    image.data = (image.data - background).astype(np.float32, copy=False)
     image.data -= np.min(image.data)
 
     return image
@@ -726,9 +732,12 @@ def preprocess_image(
     fname = Path(image.file_path).name if image.file_path else "?"
 
     def log_stats(stage, arr):
+        # Median on a stride-8 subsample: this is a diagnostic log line, and
+        # four full-frame medians per frame cost ~1 s each on 66 Mpix.
         logger.info(
             "[%s] %s: min=%.1f, max=%.1f, median=%.1f, mean=%.1f",
-            fname, stage, np.min(arr), np.max(arr), np.median(arr), np.mean(arr),
+            fname, stage, np.min(arr), np.max(arr),
+            np.median(arr[::8, ::8]), np.mean(arr),
         )
 
     log_stats("loaded", image.data)

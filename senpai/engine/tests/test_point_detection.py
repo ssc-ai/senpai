@@ -353,3 +353,258 @@ def test_satellite_extract_assigns_no_radec_without_wcs():
         assert det.ra is None
         assert det.dec is None
         assert det.pixel_fwhm is not None and det.pixel_fwhm > 0
+
+
+# ---------------------------------------------------------------------------
+# Large-format paths: binned second pass + FWHM-crop fallback
+#
+# On large frames the second detection pass runs on a 2x2-binned frame when
+# the PSF is fat enough (FWHM >= 6 px) and accepted centroids are re-measured
+# at full resolution; pass 1 (FWHM estimation) runs on a central crop with a
+# full-frame fallback. These tests pin both the routing (which branch ran)
+# and the contract that matters downstream: sub-pixel centroid accuracy.
+# ---------------------------------------------------------------------------
+def _large_field(
+    sigma: float,
+    shape: tuple[int, int] = (2304, 2304),
+    margin: int = 150,
+    spacing: int = 250,
+    flux: float = 60000.0,
+    seed: int = 42,
+) -> tuple[np.ndarray, list[tuple[float, float]]]:
+    """A large synthetic field with sub-pixel jittered star positions."""
+    rng = np.random.default_rng(seed)
+    h, w = shape
+    truth = []
+    image = np.full(shape, 100.0) + rng.normal(0.0, 5.0, shape)
+    for gy in range(margin, h - margin, spacing):
+        for gx in range(margin, w - margin, spacing):
+            x = gx + float(rng.uniform(-0.5, 0.5))
+            y = gy + float(rng.uniform(-0.5, 0.5))
+            _add_gaussian(image, x, y, flux, sigma)
+            truth.append((x, y))
+    return image, truth
+
+
+def _centroid_rms(detected, truth, tol=1.5):
+    """(n_matched, rms residual) of truth stars matched by a detection."""
+    residuals = []
+    for tx, ty in truth:
+        best = None
+        for dx, dy in detected:
+            d2 = (dx - tx) ** 2 + (dy - ty) ** 2
+            if d2 <= tol**2 and (best is None or d2 < best):
+                best = d2
+        if best is not None:
+            residuals.append(best)
+    if not residuals:
+        return 0, np.inf
+    return len(residuals), float(np.sqrt(np.mean(residuals)))
+
+
+def _track_refiner_calls(monkeypatch):
+    """Record invocations of the full-res centroid refiner (binned path only)."""
+    import senpai.engine.detection.point.sidereal as sid
+
+    calls = []
+    original = sid._refine_centroid_full_res
+
+    def wrapper(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sid, "_refine_centroid_full_res", wrapper)
+    return calls
+
+
+def test_binned_pass2_runs_and_keeps_subpixel_accuracy(monkeypatch):
+    sigma = 3.5  # FWHM ~8.2 px -> binned branch
+    image, truth = _large_field(sigma)
+    refiner_calls = _track_refiner_calls(monkeypatch)
+
+    starlist, fwhm = extract_point_sources(
+        _processed_image(image), max_detections=len(truth)
+    )
+
+    assert refiner_calls, "fat-PSF large frame must take the binned pass-2 path"
+    assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
+    detected = [(d.x, d.y) for d in starlist.detections]
+    n_matched, rms = _centroid_rms(detected, truth)
+    assert n_matched >= 0.95 * len(truth)
+    # The contract that matters for astrometry: binning must not cost
+    # sub-pixel accuracy (full-res refinement recovers it).
+    assert rms < 0.15
+
+
+def test_small_fwhm_large_frame_stays_unbinned(monkeypatch):
+    sigma = 1.7  # FWHM ~4.0 px -> binning would undersample; must not bin
+    image, truth = _large_field(sigma)
+    refiner_calls = _track_refiner_calls(monkeypatch)
+
+    starlist, fwhm = extract_point_sources(
+        _processed_image(image), max_detections=len(truth)
+    )
+
+    assert not refiner_calls, "well-sampled PSF must use the full-res path"
+    assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
+    detected = [(d.x, d.y) for d in starlist.detections]
+    n_matched, rms = _centroid_rms(detected, truth)
+    assert n_matched >= 0.95 * len(truth)
+    assert rms < 0.15
+
+
+def test_fwhm_pass_measures_full_frame_even_with_sparse_center():
+    # Stars only in the outer band of a large frame. Pass 1 must scan the
+    # full frame (a central-crop variant was reverted after it skewed the
+    # source-peak saturation percentile on a real calsat field and biased
+    # the FWHM from a true ~9 px down to 3.1 px), so an empty center must
+    # not degrade the FWHM estimate.
+    sigma = 3.5
+    shape = (4608, 4608)
+    rng = np.random.default_rng(7)
+    image = np.full(shape, 100.0) + rng.normal(0.0, 5.0, shape)
+    truth = []
+    band = [(x, y) for x in range(80, 4530, 220) for y in (80, 180, 4430, 4530)]
+    band += [(x, y) for y in range(400, 4200, 220) for x in (80, 180, 4430, 4530)]
+    for gx, gy in band:
+        x, y = gx + float(rng.uniform(-0.5, 0.5)), gy + float(rng.uniform(-0.5, 0.5))
+        _add_gaussian(image, x, y, 60000.0, sigma)
+        truth.append((x, y))
+
+    starlist, fwhm = extract_point_sources(
+        _processed_image(image), max_detections=len(truth)
+    )
+
+    assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.5)
+    detected = [(d.x, d.y) for d in starlist.detections]
+    n_matched, _ = _centroid_rms(detected, truth)
+    assert n_matched >= 0.9 * len(truth)
+
+
+def test_satellite_threshold_search_matches_daostarfinder():
+    """The satellite detector's shared-convolution threshold search must
+    reproduce DAOStarFinder exactly at any threshold. This pins the
+    private-API reimplementation (_StarFinderKernel/_DAOStarFinderCatalog):
+    if a photutils upgrade moves those internals, this fails loudly.
+    """
+    from photutils.detection import DAOStarFinder
+    from photutils.detection.daofinder import _StarFinderKernel
+    from scipy.signal import fftconvolve
+
+    from senpai.engine.detection.point.satellite import (
+        _dao_sources_at_threshold,
+        _local_maxima_above,
+    )
+
+    sigma = 2.2
+    rng = np.random.default_rng(12)
+    data = rng.normal(0.0, 5.0, (512, 512))
+    positions = [(float(x), float(y)) for x in range(40, 480, 45) for y in range(40, 480, 45)]
+    fluxes = rng.uniform(2000.0, 80000.0, len(positions))
+    for (x, y), f in zip(positions, fluxes, strict=True):
+        _add_gaussian(data, x, y, float(f), sigma)
+    data = data.astype(np.float32)
+
+    fwhm = SIGMA_TO_FWHM * sigma
+    std = float(np.std(data[data < np.percentile(data, 90)]))
+    kernel = _StarFinderKernel(float(fwhm), ratio=1.0, theta=0.0, sigma_radius=1.5)
+    convolved = fftconvolve(data, kernel.data.astype(np.float32), mode="same")
+    ys, xs, vals = _local_maxima_above(
+        convolved, kernel.mask.astype(bool), 3.0 * std * kernel.relerr
+    )
+    cand_xy = np.column_stack((xs, ys))
+
+    for thr_sigma in (3.0, 8.0, 25.0):
+        thr = thr_sigma * std
+        ref = DAOStarFinder(
+            fwhm=float(fwhm), threshold=thr, sharplo=0.1, sharphi=1.5,
+            roundlo=-1.5, roundhi=1.5, brightest=None, peakmax=None,
+        )(data)
+        got = _dao_sources_at_threshold(
+            data, convolved, kernel, cand_xy, vals, thr,
+            sharplo=0.1, sharphi=1.5, roundlo=-1.5, roundhi=1.5,
+        )
+        n_ref = 0 if ref is None else len(ref)
+        n_got = 0 if got is None else len(got)
+        assert n_got == n_ref, f"count mismatch at {thr_sigma} sigma: {n_got} != {n_ref}"
+        if n_ref:
+            assert np.allclose(np.sort(np.asarray(got["xcentroid"])), np.sort(np.asarray(ref["xcentroid"])), atol=1e-3)
+            assert np.allclose(np.sort(np.asarray(got["ycentroid"])), np.sort(np.asarray(ref["ycentroid"])), atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# measure_fwhm_from_catalog_stars: saturation + winged-PSF behavior
+# ---------------------------------------------------------------------------
+def test_catalog_fwhm_skips_clipped_stars_and_measures_truth():
+    # A field with a saturated pile (clipped cores) plus unsaturated stars:
+    # the measured FWHM must come from the unsaturated cohort and match the
+    # true PSF width — the old Gaussian-fit path measured only the faintest
+    # stars (broken catalog-sample sat level) and read ~1.5x wide.
+    sigma = 3.8  # FWHM ~8.9 px
+    rng = np.random.default_rng(21)
+    data = np.full((1400, 1400), 0.0) + rng.normal(0.0, 5.0, (1400, 1400))
+    catalog = []
+    grid = [(x, y) for x in range(120, 1300, 130) for y in range(120, 1300, 130)]
+    for i, (gx, gy) in enumerate(grid):
+        x, y = gx + 0.3, gy + 0.4
+        saturated = i % 3 == 0  # every third star is clipped
+        flux = 4.0e6 if saturated else 3.0e5
+        _add_gaussian(data, x, y, flux, sigma)
+        catalog.append(
+            StarInSpace(ra=0.0, dec=0.0, magnitude=8.0 + 0.05 * i, x=x, y=y)
+        )
+    ceiling = 42000.0
+    np.minimum(data, ceiling, out=data)  # clip the bright cores
+
+    image = _processed_image(data)
+    stats = measure_fwhm_from_catalog_stars(image, catalog, initial_fwhm=8.0)
+    assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
+
+
+def test_catalog_fwhm_uses_detection_sat_level_when_provided():
+    sigma = 3.0
+    rng = np.random.default_rng(22)
+    data = np.full((900, 900), 0.0) + rng.normal(0.0, 4.0, (900, 900))
+    catalog = []
+    for i, (gx, gy) in enumerate([(x, y) for x in range(100, 850, 120) for y in range(100, 850, 120)]):
+        _add_gaussian(data, gx, gy, 2.0e5, sigma)
+        catalog.append(StarInSpace(ra=0.0, dec=0.0, magnitude=9.0 + 0.1 * i, x=float(gx), y=float(gy)))
+
+    image = _processed_image(data)
+    # An absurdly low explicit sat level marks every star saturated ->
+    # no measurements -> falls back to the initial value. Proves the
+    # passed-through level is honored rather than re-estimated.
+    stats = measure_fwhm_from_catalog_stars(
+        image, catalog, initial_fwhm=6.5, sat_level=10.0
+    )
+    assert stats.median_fwhm == pytest.approx(6.5, abs=1e-6)
+
+    # And with the true (permissive) level, the real PSF width is measured.
+    stats = measure_fwhm_from_catalog_stars(
+        image, catalog, initial_fwhm=6.5, sat_level=1.0e9
+    )
+    assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
+
+
+def test_catalog_fwhm_reads_profile_width_on_winged_psf():
+    # Gaussian core + broad shallow wings (Moffat-like): the FWHM is the
+    # composite profile's half-max width — slightly above the core's, far
+    # below what a wing-absorbing single-Gaussian fit can drift to, and far
+    # above the in-box-background half-max-area measure (which folds wing
+    # flux into the sky and read ~30% narrow on real winged frames).
+    sigma = 3.8
+    rng = np.random.default_rng(23)
+    data = np.full((1200, 1200), 0.0) + rng.normal(0.0, 4.0, (1200, 1200))
+    catalog = []
+    for i, (gx, gy) in enumerate([(x, y) for x in range(140, 1100, 150) for y in range(140, 1100, 150)]):
+        x, y = float(gx) + 0.2, float(gy) - 0.3
+        _add_gaussian(data, x, y, 2.5e5, sigma)
+        _add_gaussian(data, x, y, 1.2e5, sigma * 3.0)  # wings
+        catalog.append(StarInSpace(ra=0.0, dec=0.0, magnitude=9.0 + 0.1 * i, x=x, y=y))
+
+    image = _processed_image(data)
+    stats = measure_fwhm_from_catalog_stars(image, catalog, initial_fwhm=8.0)
+    # Wings raise the half-max slightly; allow modest tolerance but pin it
+    # far below the Gaussian-fit failure mode (~1.5x).
+    assert stats.median_fwhm < 1.25 * SIGMA_TO_FWHM * sigma
+    assert stats.median_fwhm > 0.8 * SIGMA_TO_FWHM * sigma

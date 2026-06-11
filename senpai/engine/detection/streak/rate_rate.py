@@ -92,6 +92,17 @@ def refine_correlation_shift_by_global_shift(
             "streak model", rate_frame_source.index,
         )
         return shift
+    starfield = rate_frame_source.starfield
+    if (starfield is None or not starfield.catalog_stars
+            or not starfield.astrometric_fit_stars):
+        # No catalog/astrometric stars on the source frame (failed catalog
+        # query or WCS) — the global-shift refinement has nothing to anchor
+        # to; keep the unrefined CC shift.
+        logger.warning(
+            "Skipping correlation-shift refinement: source frame %s has no "
+            "catalog/astrometric stars", rate_frame_source.index,
+        )
+        return shift
     kernel = rectangle_pyramoid(
         rate_frame_source.streak.pixel_length,
         rate_frame_source.streak.sine_angle,
@@ -128,11 +139,15 @@ def refine_correlation_shift_by_global_shift(
 
 
 def whiten_image(im, sigma=3, eps=1e-6):
+    # scipy.fft is the same pocketfft as numpy's but multithreaded with
+    # workers — identical values, several times faster on full frames.
+    from scipy import fft as sfft
+
     # subtract mean (optional but recommended)
     im0 = im - np.mean(im)
 
     # FFT
-    F = np.fft.fft2(im0)
+    F = sfft.fft2(im0, workers=-1)
 
     # Power spectrum
     P = np.abs(F) ** 2
@@ -142,7 +157,7 @@ def whiten_image(im, sigma=3, eps=1e-6):
     F_white = F / np.sqrt(P_smooth + eps)
 
     # Back to image space
-    return np.fft.ifft2(F_white).real
+    return sfft.ifft2(F_white, workers=-1).real
 
 
 def _block_median_downsample(img: np.ndarray, factor: int) -> np.ndarray:
