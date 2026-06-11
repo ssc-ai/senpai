@@ -402,10 +402,6 @@ def extract_point_sources(
     # Default FWHM values - more permissive for poor seeing conditions
     DEFAULT_FWHM = 4.0
     MIN_VALID_FWHM = 1.5
-    # Pass 1 (FWHM estimation) only needs ~40 unsaturated stars, so it runs
-    # on a central crop rather than the full frame; falls back to the full
-    # frame when the crop is too sparse (clouds, empty field).
-    FWHM_CROP = 4096
     # Pass 2 (detection) runs on a 2x2-binned frame when the PSF is fat
     # enough that binning keeps it well-sampled (binned FWHM >= 3 px);
     # accepted centroids are then re-measured at full resolution.
@@ -413,36 +409,20 @@ def extract_point_sources(
     BIN_MIN_DIM = 2048
 
     data = image.data
+    h, w = data.shape
 
     # Background statistics: computed once on a strided subsample and shared
     # by both detection passes (this was previously recomputed full-frame
     # inside each pass and dominated the total detection cost).
     bg_stats = robust_background_stats(data)
 
-    h, w = data.shape
-    if h > FWHM_CROP and w > FWHM_CROP:
-        y0, x0 = (h - FWHM_CROP) // 2, (w - FWHM_CROP) // 2
-        fwhm_region = data[y0 : y0 + FWHM_CROP, x0 : x0 + FWHM_CROP]
-    else:
-        fwhm_region = data
-
-    fwhms, sat_level, n_detected = _measure_fwhm_sample(
-        fwhm_region, bg_stats, DEFAULT_FWHM
-    )
-    if len(fwhms) < 10 and fwhm_region is not data:
-        # Central crop couldn't anchor the FWHM — retry on the full frame.
-        # The bar is 10, not "any": a pure-noise crop (clouds, blank center)
-        # still yields a handful of 5-sigma noise blobs whose half-max
-        # "FWHMs" sit at the detection-kernel scale (~2 px) and would
-        # silently poison the kernel for the whole frame. A real starfield
-        # crop hits the 40-measurement cap.
-        logger.info(
-            "FWHM crop yielded only %d measurements; retrying on full frame",
-            len(fwhms),
-        )
-        fwhms, sat_level, n_detected = _measure_fwhm_sample(
-            data, bg_stats, DEFAULT_FWHM
-        )
+    # Pass 1 deliberately scans the FULL frame even though it only needs ~40
+    # FWHM stars: the saturation level is a percentile of the detected
+    # sources' peaks, and a central-crop population was observed to land the
+    # percentile far below the true clip level (28.7k vs 42.3k on a real
+    # calsat field), rejecting the bright unsaturated stars and biasing the
+    # median FWHM to the noise-truncated faint end (3.1 px vs a true ~9 px).
+    fwhms, sat_level, n_detected = _measure_fwhm_sample(data, bg_stats, DEFAULT_FWHM)
 
     if n_detected == 0:
         logger.warning("No bright sources detected in first pass")

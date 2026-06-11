@@ -453,12 +453,12 @@ def test_small_fwhm_large_frame_stays_unbinned(monkeypatch):
     assert rms < 0.15
 
 
-def test_fwhm_crop_falls_back_to_full_frame_when_center_sparse(monkeypatch):
-    # Stars only in the outer band of a frame larger than the 4096 px
-    # pass-1 crop: the crop sees noise, so FWHM estimation must retry on
-    # the full frame instead of silently using the default FWHM.
-    import senpai.engine.detection.point.sidereal as sid
-
+def test_fwhm_pass_measures_full_frame_even_with_sparse_center():
+    # Stars only in the outer band of a large frame. Pass 1 must scan the
+    # full frame (a central-crop variant was reverted after it skewed the
+    # source-peak saturation percentile on a real calsat field and biased
+    # the FWHM from a true ~9 px down to 3.1 px), so an empty center must
+    # not degrade the FWHM estimate.
     sigma = 3.5
     shape = (4608, 4608)
     rng = np.random.default_rng(7)
@@ -471,21 +471,10 @@ def test_fwhm_crop_falls_back_to_full_frame_when_center_sparse(monkeypatch):
         _add_gaussian(image, x, y, 60000.0, sigma)
         truth.append((x, y))
 
-    seen_shapes = []
-    original = sid._measure_fwhm_sample
-
-    def wrapper(data, bg_stats, initial_fwhm):
-        seen_shapes.append(data.shape)
-        return original(data, bg_stats, initial_fwhm)
-
-    monkeypatch.setattr(sid, "_measure_fwhm_sample", wrapper)
-
     starlist, fwhm = extract_point_sources(
         _processed_image(image), max_detections=len(truth)
     )
 
-    assert seen_shapes[0] == (4096, 4096), "pass 1 must try the central crop first"
-    assert seen_shapes[-1] == shape, "sparse crop must fall back to the full frame"
     assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.5)
     detected = [(d.x, d.y) for d in starlist.detections]
     n_matched, _ = _centroid_rms(detected, truth)
