@@ -1010,33 +1010,6 @@ def _render_depth_vs_exposure(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "depth_vs_exposure.png")
 
 
-def _data_detection_rate_vs_altitude(calib: NightCalibration):
-    by_filter: dict[str, dict] = {}
-    for f in calib.frames:
-        if not (f.n_stars and f.altitude_deg is not None):
-            continue
-        rate = f.n_stars / f.exposure_time if f.exposure_time else f.n_stars
-        s = by_filter.setdefault(f.filter_name or "unknown", {"alt": [], "rate": []})
-        s["alt"].append(f.altitude_deg)
-        s["rate"].append(rate)
-    return {"by_filter": by_filter} if by_filter else None
-
-
-def _render_detection_rate_vs_altitude(d, meta, output_dir, plt, np) -> Path:
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for filt in sorted(d["by_filter"]):
-        s = d["by_filter"][filt]
-        ax.scatter(s["alt"], s["rate"], label=f"{filt} (n={len(s['alt'])})",
-                   s=20, alpha=0.7)
-    ax.set_xlabel("altitude (deg)")
-    ax.set_ylabel("stars detected per second")
-    ax.set_yscale("log")
-    ax.set_title(f"{meta['night_id']}: detection rate vs altitude")
-    ax.legend(loc="best", fontsize=9)
-    ax.grid(True, alpha=0.3, which="both")
-    return _save(fig, output_dir / "detection_rate_vs_altitude.png")
-
-
 def _data_extinction_curve(calib: NightCalibration):
     # Frame ZP vs airmass, fit cloud-robustly by the upper envelope (same
     # _extinction_envelope_fit that feeds night_calibration.json, so the plot's
@@ -1287,8 +1260,6 @@ _PLOT_BUILDERS.update({
     "zp_drift": (_data_zp_drift, _render_zp_drift),
     "depth_vs_exposure": (_data_depth_vs_exposure, _render_depth_vs_exposure),
     "search_rate": (_data_search_rate, _render_search_rate),
-    "detection_rate_vs_altitude": (
-        _data_detection_rate_vs_altitude, _render_detection_rate_vs_altitude),
 })
 
 
