@@ -206,12 +206,14 @@ def apply_flat_field(
     corrected_image : ProcessedFitsImage or np.ndarray
         Flat field corrected image
     """
-    # Load master flat if provided as file path
+    # Load master flat if provided as file path. float32 throughout: master
+    # flats are saved as float32 anyway, and the corrected frame's dtype is
+    # inherited by the whole downstream pipeline (float64 doubles its cost).
     if isinstance(master_flat, (str, Path)):
         with fits.open(master_flat) as hdul:
-            master_flat = hdul[0].data.astype(np.float64)
+            master_flat = hdul[0].data.astype(np.float32)
     else:
-        master_flat = master_flat.astype(np.float64)
+        master_flat = master_flat.astype(np.float32)
 
     # Handle ProcessedFitsImage objects
     if isinstance(image, ProcessedFitsImage):
@@ -223,7 +225,7 @@ def apply_flat_field(
         safe_flat = np.where(master_flat < 0.1, 1.0, master_flat)
 
         # Apply flat field correction
-        corrected_data = image.data.astype(np.float64) / safe_flat
+        corrected_data = image.data.astype(np.float32) / safe_flat
 
         # Store intermediate if requested
         if store_intermediates:
@@ -255,7 +257,7 @@ def apply_flat_field(
         # Avoid division by zero/very small values
         safe_flat = np.where(master_flat < 0.1, 1.0, master_flat)
 
-        return image.astype(np.float64) / safe_flat
+        return image.astype(np.float32) / safe_flat
 
 
 def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]) -> Dict[Tuple[str, ...], List[Path]]:

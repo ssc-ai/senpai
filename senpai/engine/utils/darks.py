@@ -218,15 +218,17 @@ def apply_dark_subtraction(
     corrected_image : ProcessedFitsImage or np.ndarray
         Dark-subtracted image
     """
-    # Load master dark if provided as file path
+    # Load master dark if provided as file path. float32 throughout: master
+    # darks are saved as float32 anyway, and the corrected frame's dtype is
+    # inherited by the whole downstream pipeline (float64 doubles its cost).
     if isinstance(master_dark, (str, Path)):
         with fits.open(master_dark) as hdul:
-            master_dark_data = hdul[0].data.astype(np.float64)
+            master_dark_data = hdul[0].data.astype(np.float32)
             dark_header = hdul[0].header
             if dark_exposure_time is None:
                 dark_exposure_time = dark_header.get("EXPTIME", dark_header.get("EXPOSURE", 1.0))
     else:
-        master_dark_data = master_dark.astype(np.float64)
+        master_dark_data = master_dark.astype(np.float32)
         if dark_exposure_time is None:
             dark_exposure_time = 1.0  # Default if not provided
 
@@ -271,7 +273,7 @@ def apply_dark_subtraction(
             scaled_dark = cleaned_dark
 
         # Apply dark subtraction
-        corrected_data = image.data.astype(np.float64) - scaled_dark
+        corrected_data = image.data.astype(np.float32) - scaled_dark
 
         # Store intermediate if requested
         if store_intermediates:
@@ -313,7 +315,7 @@ def apply_dark_subtraction(
             raise ValueError(f"Image shape {image.shape} doesn't match dark shape {cleaned_dark.shape}")
 
         # For numpy arrays, assume no scaling needed (user should handle this)
-        return image.astype(np.float64) - cleaned_dark
+        return image.astype(np.float32) - cleaned_dark
 
 
 def find_best_dark_for_exposure(

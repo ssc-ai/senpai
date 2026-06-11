@@ -58,8 +58,12 @@ def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates
 
     array = image.data
 
-    # Convert array to float64 before operations to allow for negative values
-    array = array.astype(np.float64)
+    # Convert to a signed float so the subtraction can go negative. float32
+    # on purpose: the whole downstream pipeline (detection convolutions,
+    # statistics, photometry) inherits this dtype, and float64 doubles every
+    # one of those costs for nothing — the data are ADU-scale (<~1e5), where
+    # float32's 24-bit mantissa resolves ~0.005 ADU, far below read noise.
+    array = array.astype(np.float32)
 
     # Subtract column medians (shape: (1, n_cols))
     column_medians = np.median(array, axis=0)[np.newaxis, :]
@@ -122,7 +126,9 @@ def remove_background(
     )
     image.processing_history.append(bg_metadata)
 
-    image.data = image.data - background
+    # Background2D returns float64; don't let the subtraction silently
+    # upcast the frame (the pipeline runs float32).
+    image.data = (image.data - background).astype(np.float32, copy=False)
     image.data -= np.min(image.data)
 
     return image
