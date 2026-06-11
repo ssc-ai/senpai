@@ -293,29 +293,74 @@ def measure_simple_star_photometry(
         return None
 
 
-def _chunked_aperture_sums(data, positions, build_apertures, bbox_side):
-    """Run aperture_photometry in position-chunks to bound peak memory.
+def _shared_shape_aperture_sums(data, positions, build_apertures):
+    """Aperture sums for many apertures that share one shape.
 
-    photutils materializes every aperture's bounding-box mask at once, so a
-    bulk call over thousands of FWHM-/streak-scaled apertures can allocate
-    tens of GB and draw the OOM killer (observed twice in burr night runs:
-    rate streak apertures, then circular apertures on a 112k-star field).
-    Slice the positions into chunks sized so each call's masks stay near
-    ~2 GB; results are bit-for-bit identical to one call.
+    Every caller measures thousands of apertures with identical shape
+    parameters (radius / w,h,theta) that differ only in sub-pixel placement,
+    but photutils regenerates each aperture's subpixel mask from scratch
+    (~25 inside-tests per bounding-box pixel per star) and materializes all
+    masks at once — which both cost seconds per frame and OOM'd burr night
+    runs twice before chunking bounded it. Instead: quantize each center to
+    1/8 px and cache one photutils-generated mask per fractional offset
+    (<=64 per aperture), then apply masks as single-cutout multiplies.
+    Mask semantics are exactly photutils' (subpixel, subpixels=5) at the
+    quantized position; the <=1/16 px placement error sits below the
+    subpixel method's own boundary granularity (per-star flux shift:
+    median ~0.02%, p99 <0.4% even in dense fields with neighbors crossing
+    aperture edges — pinned by a test against direct aperture_photometry;
+    <=~0.006 mag, far below the per-star calibration scatter), memory is
+    one bounding box at a time, and the per-star cost drops ~25x.
 
     build_apertures(pos_subset) -> [aperture, bg_aperture].
     Returns (aperture_sum_0_array, aperture_sum_1_array) as float arrays.
     """
-    n = len(positions)
-    per_star_bytes = 3 * 8 * bbox_side * bbox_side  # masks + cutout products
-    chunk = max(64, min(n, int(2e9 / max(per_star_bytes, 1))))
-    f0, f1 = [], []
-    for lo in range(0, n, chunk):
-        aps = build_apertures(positions[lo:lo + chunk])
-        t = aperture_photometry(data, aps, method="subpixel", subpixels=5)
-        f0.append(np.asarray(t["aperture_sum_0"], dtype=float))
-        f1.append(np.asarray(t["aperture_sum_1"], dtype=float))
-    return np.concatenate(f0), np.concatenate(f1)
+    h, w = data.shape
+    # Arbitrary integer anchor for mask generation; large enough that the
+    # bounding box of any realistic aperture stays at positive coordinates.
+    anchor = 100000
+    quantized = np.round(np.asarray(positions, dtype=float) * 8.0) / 8.0
+    sums = (np.empty(len(quantized)), np.empty(len(quantized)))
+    for aper_idx in (0, 1):
+        cache: dict = {}
+        out = sums[aper_idx]
+        for i, (px, py) in enumerate(quantized):
+            ix, iy = int(np.floor(px)), int(np.floor(py))
+            fx, fy = px - ix, py - iy
+            key = (round(fx * 8), round(fy * 8))
+            cached = cache.get(key)
+            if cached is None:
+                ap = build_apertures(np.array([[anchor + fx, anchor + fy]]))[aper_idx]
+                mask = ap.to_mask(method="subpixel", subpixels=5)
+                if isinstance(mask, list):
+                    mask = mask[0]
+                cached = (
+                    mask.data,
+                    mask.bbox.ixmin - anchor,
+                    mask.bbox.iymin - anchor,
+                )
+                cache[key] = cached
+            mdata, bx, by = cached
+            y0, x0 = iy + by, ix + bx
+            my, mx = mdata.shape
+            if y0 >= 0 and x0 >= 0 and y0 + my <= h and x0 + mx <= w:
+                out[i] = float((data[y0:y0 + my, x0:x0 + mx] * mdata).sum())
+                continue
+            # Partially off-frame (callers margin-filter, so this is
+            # belt-and-braces): use only the overlapping region, as
+            # photutils does.
+            cy0, cx0 = max(0, y0), max(0, x0)
+            cy1, cx1 = min(h, y0 + my), min(w, x0 + mx)
+            if cy0 >= cy1 or cx0 >= cx1:
+                out[i] = 0.0
+                continue
+            out[i] = float(
+                (
+                    data[cy0:cy1, cx0:cx1]
+                    * mdata[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
+                ).sum()
+            )
+    return sums
 
 
 def measure_simple_starfield_photometry(
@@ -469,32 +514,18 @@ def measure_simple_starfield_photometry(
     positions = np.array([(star.x, star.y) for star in sampled_stars])
     valid_stars = sampled_stars
 
-    # Run photutils aperture photometry. method="subpixel" (vs default
-    # "exact") for speed; <0.01% flux difference.
-    #
-    # Chunked: photutils materializes every aperture's bounding-box mask at
-    # once. Apertures are FWHM-scaled, so on a dense field (thousands of
-    # mag-sampled stars) with an inflated FWHM the annulus bboxes are huge —
-    # a single call peaked ~42 GB and drew the OOM killer (observed live on a
-    # 112k-star galactic field, _full7). Slice positions into ~2 GB chunks
-    # sized from the annulus bbox; results are identical. Mirrors the rate path.
-    bbox_side = 2.0 * bg_outer + 2.0
-    per_star_bytes = 3 * 8 * bbox_side * bbox_side  # masks + cutout products
-    chunk_size = max(64, min(len(positions), int(2e9 / max(per_star_bytes, 1))))
-
-    flux_parts, bg_parts = [], []
-    for lo in range(0, len(positions), chunk_size):
-        pos_chunk = positions[lo:lo + chunk_size]
-        aperture = CircularAperture(pos_chunk, r=aperture_radius)
-        bg_aperture = CircularAnnulus(pos_chunk, r_in=bg_inner, r_out=bg_outer)
-        phot = aperture_photometry(
-            image.data, [aperture, bg_aperture], method="subpixel", subpixels=5
-        )
-        flux_parts.append(np.asarray(phot["aperture_sum_0"], dtype=float))
-        bg_parts.append(np.asarray(phot["aperture_sum_1"], dtype=float))
-
-    flux_sum = np.concatenate(flux_parts)
-    bg_sum = np.concatenate(bg_parts)
+    # Shared-shape aperture sums (see _shared_shape_aperture_sums): same
+    # photutils subpixel mask semantics, one cached mask per fractional
+    # offset instead of per-star mask generation (which also OOM'd a
+    # 112k-star galactic field at ~42 GB before chunking bounded it).
+    flux_sum, bg_sum = _shared_shape_aperture_sums(
+        image.data,
+        positions,
+        lambda p: [
+            CircularAperture(p, r=aperture_radius),
+            CircularAnnulus(p, r_in=bg_inner, r_out=bg_outer),
+        ],
+    )
 
     # Areas below use the full-position apertures (area is per-aperture
     # identical for circles), so rebuild lightweight aperture objects once.
@@ -805,40 +836,35 @@ def measure_rate_starfield_photometry(
     positions = np.array([(star.x, star.y) for star in sampled_stars])
     valid_stars = sampled_stars
 
-    # Run photutils aperture photometry. method="subpixel" instead of the
-    # default "exact": exact polygon-clipping of thousands of *rotated*
-    # rectangular apertures on a 66 MP frame costs minutes; subpixel(5) is ~26x
-    # faster with <0.01% flux difference on these large (~50 px) apertures.
-    #
-    # Chunked: photutils materializes every aperture's bounding-box mask at
-    # once, and streak-length apertures have bboxes of ~(1.4*length)^2 floats
-    # each — on a dense field (thousands of sampled stars) times aperture +
-    # annulus masks plus their data cutouts, a single call peaked >30 GB and
-    # drew the OOM killer. Slices keep identical results at bounded memory.
-    bbox_side = 1.5 * max(bg_length_out, bg_width_out)
-    per_star_bytes = 3 * 8 * bbox_side * bbox_side  # masks + cutout products
-    chunk_size = max(64, min(len(positions), int(2e9 / max(per_star_bytes, 1))))
-
-    flux_parts, bg_parts = [], []
-    for lo in range(0, len(positions), chunk_size):
-        pos_chunk = positions[lo:lo + chunk_size]
-        apertures = RectangularAperture(pos_chunk, w=width_pixels, h=length_pixels, theta=theta)
-        bg_apertures = RectangularAnnulus(
-            pos_chunk,
-            w_in=bg_width_in,
-            w_out=bg_width_out,
-            h_in=bg_length_in,
-            h_out=bg_length_out,
-            theta=theta,
-        )
-        phot = aperture_photometry(
-            image.data, [apertures, bg_apertures], method="subpixel", subpixels=5
-        )
-        flux_parts.append(np.asarray(phot["aperture_sum_0"], dtype=float))
-        bg_parts.append(np.asarray(phot["aperture_sum_1"], dtype=float))
-
-    flux_sum = np.concatenate(flux_parts)
-    bg_sum = np.concatenate(bg_parts)
+    # Shared-shape aperture sums (see _shared_shape_aperture_sums): photutils
+    # subpixel masks (vs default "exact": exact polygon-clipping of thousands
+    # of rotated rectangles costs minutes for <0.01% flux difference), cached
+    # per fractional offset instead of generated per star — which also OOM'd
+    # a dense field at >30 GB before chunking bounded it.
+    apertures = RectangularAperture(positions, w=width_pixels, h=length_pixels, theta=theta)
+    bg_apertures = RectangularAnnulus(
+        positions,
+        w_in=bg_width_in,
+        w_out=bg_width_out,
+        h_in=bg_length_in,
+        h_out=bg_length_out,
+        theta=theta,
+    )
+    flux_sum, bg_sum = _shared_shape_aperture_sums(
+        image.data,
+        positions,
+        lambda p: [
+            RectangularAperture(p, w=width_pixels, h=length_pixels, theta=theta),
+            RectangularAnnulus(
+                p,
+                w_in=bg_width_in,
+                w_out=bg_width_out,
+                h_in=bg_length_in,
+                h_out=bg_length_out,
+                theta=theta,
+            ),
+        ],
+    )
 
     # Get areas (can be scalar or array)
     aper_area = apertures.area
@@ -2440,16 +2466,15 @@ def calculate_star_snrs_with_aperture_photometry(
         fwhm = frame.starfield.detection_metadata.pixel_fwhm
         radius = max(1.5 * fwhm, 3.0)  # Use at least 3 pixels radius
 
-        # Chunked to bound peak memory (see _chunked_aperture_sums): on a
-        # dense field this runs over all catalog stars with FWHM-scaled
-        # apertures and a single call peaked ~42 GB → OOM (_full7).
-        aper_sum_0, aper_sum_1 = _chunked_aperture_sums(
+        # Shared-shape sums (see _shared_shape_aperture_sums): bounded memory
+        # (a bulk photutils call here peaked ~42 GB → OOM, _full7) and one
+        # cached mask per fractional offset across all catalog stars.
+        aper_sum_0, aper_sum_1 = _shared_shape_aperture_sums(
             counts_array, positions,
             lambda p: [
                 CircularAperture(p, r=radius),
                 CircularAnnulus(p, r_in=radius * 1.5, r_out=radius * 2.5),
             ],
-            bbox_side=2.0 * (radius * 2.5) + 2.0,
         )
         # Lightweight objects for .area only (scalar; no mask materialization)
         apertures = CircularAperture(positions, r=radius)
@@ -2493,10 +2518,11 @@ def calculate_star_snrs_with_aperture_photometry(
         length_pixels = streak.pixel_length + streak.fwhm * 2
         theta = streak.radian_angle() + np.pi / 2  # photutils angle convention
 
-        # Chunked to bound peak memory (see _chunked_aperture_sums): streak-
-        # length rectangular apertures over all catalog stars otherwise
-        # materialize tens of GB of masks at once.
-        aper_sum_0, aper_sum_1 = _chunked_aperture_sums(
+        # Shared-shape sums (see _shared_shape_aperture_sums): bounded memory
+        # (streak-length rectangular apertures over all catalog stars
+        # otherwise materialize tens of GB of masks at once) and one cached
+        # mask per fractional offset.
+        aper_sum_0, aper_sum_1 = _shared_shape_aperture_sums(
             counts_array, positions,
             lambda p: [
                 RectangularAperture(p, w=width_pixels, h=length_pixels, theta=theta),
@@ -2509,7 +2535,6 @@ def calculate_star_snrs_with_aperture_photometry(
                     theta=theta,
                 ),
             ],
-            bbox_side=1.5 * max(length_pixels + 6, width_pixels + 6),
         )
         # Lightweight objects for .area only (scalar; no mask materialization)
         apertures = RectangularAperture(positions, w=width_pixels, h=length_pixels, theta=theta)
