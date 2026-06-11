@@ -253,8 +253,24 @@ def _extract_frame_photo(
     fwhm_px = fwhm_std_px = None
     det_meta = (starfield or {}).get("detection_metadata") or {}
     if track_mode != "rate":
-        fwhm_px = det_meta.get("pixel_fwhm")
-        fwhm_std_px = (det_meta.get("fwhm_stats") or {}).get("std_fwhm")
+        # FWHM over REAL stars only. Sub-pixel (~1.2 px) "detections" are noise
+        # spikes / hot pixels / cosmic rays; when transparency drops (cloud)
+        # real stars vanish and these come to dominate, collapsing the naive
+        # median toward the ~1 px floor — a contamination artifact, not better
+        # seeing. Recompute the median over per-star FWHM ≥ _FWHM_MIN_PX; if too
+        # few real stars survive, leave None (frame excluded from the FWHM plot).
+        fs = det_meta.get("fwhm_stats") or {}
+        positions = fs.get("fwhm_vs_position") or []
+        if positions:
+            real = [v[2] for v in positions
+                    if v and len(v) > 2 and v[2] is not None and v[2] >= _FWHM_MIN_PX]
+            if len(real) >= 5:
+                import statistics as _st
+                fwhm_px = float(_st.median(real))
+                fwhm_std_px = float(_st.pstdev(real)) if len(real) > 1 else 0.0
+        else:  # no per-star list (older serialization) → upstream median
+            fwhm_px = det_meta.get("pixel_fwhm")
+            fwhm_std_px = fs.get("std_fwhm")
 
     # Plate scale (arcsec/pixel) from the WCS field-of-view and image width —
     # needed to put the sky background in mag/arcsec².
@@ -449,6 +465,7 @@ def _asdict_safe(obj: Any) -> Any:
 # A Bouguer fit needs the airmass to actually vary; below this span the slope
 # (extinction coefficient) is unconstrained and any fit is noise.
 _MIN_AIRMASS_RANGE = 0.15
+_FWHM_MIN_PX = 2.0  # below this a "star" is a noise spike, not a real PSF
 
 
 def _zp_frames(frames: list[FramePhoto]) -> list[FramePhoto]:
