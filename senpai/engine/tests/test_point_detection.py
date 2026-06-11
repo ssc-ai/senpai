@@ -490,3 +490,54 @@ def test_fwhm_crop_falls_back_to_full_frame_when_center_sparse(monkeypatch):
     detected = [(d.x, d.y) for d in starlist.detections]
     n_matched, _ = _centroid_rms(detected, truth)
     assert n_matched >= 0.9 * len(truth)
+
+
+def test_satellite_threshold_search_matches_daostarfinder():
+    """The satellite detector's shared-convolution threshold search must
+    reproduce DAOStarFinder exactly at any threshold. This pins the
+    private-API reimplementation (_StarFinderKernel/_DAOStarFinderCatalog):
+    if a photutils upgrade moves those internals, this fails loudly.
+    """
+    from photutils.detection import DAOStarFinder
+    from photutils.detection.daofinder import _StarFinderKernel
+    from scipy.signal import fftconvolve
+
+    from senpai.engine.detection.point.satellite import (
+        _dao_sources_at_threshold,
+        _local_maxima_above,
+    )
+
+    sigma = 2.2
+    rng = np.random.default_rng(12)
+    data = rng.normal(0.0, 5.0, (512, 512))
+    positions = [(float(x), float(y)) for x in range(40, 480, 45) for y in range(40, 480, 45)]
+    fluxes = rng.uniform(2000.0, 80000.0, len(positions))
+    for (x, y), f in zip(positions, fluxes, strict=True):
+        _add_gaussian(data, x, y, float(f), sigma)
+    data = data.astype(np.float32)
+
+    fwhm = SIGMA_TO_FWHM * sigma
+    std = float(np.std(data[data < np.percentile(data, 90)]))
+    kernel = _StarFinderKernel(float(fwhm), ratio=1.0, theta=0.0, sigma_radius=1.5)
+    convolved = fftconvolve(data, kernel.data.astype(np.float32), mode="same")
+    ys, xs, vals = _local_maxima_above(
+        convolved, kernel.mask.astype(bool), 3.0 * std * kernel.relerr
+    )
+    cand_xy = np.column_stack((xs, ys))
+
+    for thr_sigma in (3.0, 8.0, 25.0):
+        thr = thr_sigma * std
+        ref = DAOStarFinder(
+            fwhm=float(fwhm), threshold=thr, sharplo=0.1, sharphi=1.5,
+            roundlo=-1.5, roundhi=1.5, brightest=None, peakmax=None,
+        )(data)
+        got = _dao_sources_at_threshold(
+            data, convolved, kernel, cand_xy, vals, thr,
+            sharplo=0.1, sharphi=1.5, roundlo=-1.5, roundhi=1.5,
+        )
+        n_ref = 0 if ref is None else len(ref)
+        n_got = 0 if got is None else len(got)
+        assert n_got == n_ref, f"count mismatch at {thr_sigma} sigma: {n_got} != {n_ref}"
+        if n_ref:
+            assert np.allclose(np.sort(np.asarray(got["xcentroid"])), np.sort(np.asarray(ref["xcentroid"])), atol=1e-3)
+            assert np.allclose(np.sort(np.asarray(got["ycentroid"])), np.sort(np.asarray(ref["ycentroid"])), atol=1e-3)

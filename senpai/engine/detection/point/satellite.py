@@ -3,22 +3,116 @@ Satellite point source detection in rate track, assuming WCS already fit
 """
 
 import logging
+import warnings
 from typing import List, Tuple
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.modeling import fitting, models
-from astropy.stats import sigma_clipped_stats
-from photutils.detection import DAOStarFinder
+from photutils.detection.daofinder import _DAOStarFinderCatalog, _StarFinderKernel
+from photutils.utils.exceptions import NoDetectionsWarning
 from scipy.ndimage import median_filter
+from scipy.signal import fftconvolve
 
 from senpai.core.config import get_config
 from senpai.engine.detection.streak.masking import percent_difference
 from senpai.engine.models.senpai import RateTrackFrame
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 from senpai.engine.plotting.images import plot_single_frame
+from senpai.engine.utils.stats import robust_background_stats
 
 logger = logging.getLogger(__name__)
+
+
+def _median_filter_3x3(image: np.ndarray) -> np.ndarray:
+    """3x3 median filter for hot-pixel removal.
+
+    cv2.medianBlur is ~70x faster than scipy.ndimage.median_filter on large
+    float32 frames and interior-identical (only the 1-px border differs:
+    replicate vs reflect padding — border detections are discarded anyway).
+    Falls back to scipy for dtypes cv2 doesn't support.
+    """
+    if image.dtype == np.float32:
+        return cv2.medianBlur(np.ascontiguousarray(image), 3)
+    return median_filter(image, size=3)
+
+
+def _local_maxima_above(
+    convolved: np.ndarray, footprint: np.ndarray, threshold: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(ys, xs, values) of local maxima within ``footprint`` above ``threshold``.
+
+    Matches photutils ``find_peaks`` semantics exactly for positive
+    thresholds — ``(data == maximum_filter(data, footprint,
+    mode='constant', cval=0)) & (data > threshold)`` — but evaluates the
+    neighborhood test only at above-threshold pixels, which is ~30x faster
+    than the full-frame maximum_filter for detection-sized footprints.
+    Out-of-bounds neighbors are the filter's constant zeros, which can
+    never beat an above-(positive-)threshold pixel, so they are skipped.
+    """
+    ys, xs = np.nonzero(convolved > threshold)
+    vals = convolved[ys, xs]
+    h, w = convolved.shape
+    cy, cx = (footprint.shape[0] - 1) // 2, (footprint.shape[1] - 1) // 2
+    fy, fx = np.nonzero(footprint)
+    for dy, dx in zip(fy - cy, fx - cx, strict=True):
+        if (dy == 0 and dx == 0) or ys.size == 0:
+            continue
+        yy, xx = ys + dy, xs + dx
+        keep = np.ones(ys.size, dtype=bool)
+        inbounds = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)
+        keep[inbounds] = vals[inbounds] >= convolved[yy[inbounds], xx[inbounds]]
+        ys, xs, vals = ys[keep], xs[keep], vals[keep]
+    return ys, xs, vals
+
+
+def _dao_sources_at_threshold(
+    data_sub: np.ndarray,
+    convolved: np.ndarray,
+    kernel,
+    candidate_xy: np.ndarray,
+    candidate_vals: np.ndarray,
+    threshold: float,
+    *,
+    sharplo: float,
+    sharphi: float,
+    roundlo: float,
+    roundhi: float,
+):
+    """Exact ``DAOStarFinder(...)(data_sub)`` result at ``threshold``,
+    reusing a shared convolution and precomputed local maxima.
+
+    The adaptive-threshold search varies only the threshold scalar, but
+    ``DAOStarFinder`` recomputes the identical kernel convolution and
+    full-frame peak search on every call. Local maxima above a higher
+    threshold are exactly the precomputed maxima with values above it, so
+    each attempt reduces to a 1D mask plus DAO's per-candidate property
+    filters. Equivalence to DAOStarFinder is pinned by a regression test
+    (photutils is version-locked; the test fails loudly if internals move).
+    """
+    selected = candidate_vals > threshold * kernel.relerr
+    if not np.any(selected):
+        return None
+    catalog = _DAOStarFinderCatalog(
+        data_sub,
+        convolved,
+        candidate_xy[selected],
+        threshold,
+        kernel,
+        sharplo=sharplo,
+        sharphi=sharphi,
+        roundlo=roundlo,
+        roundhi=roundhi,
+        brightest=None,
+        peakmax=None,
+    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=NoDetectionsWarning)
+        catalog = catalog.apply_all_filters()
+    if catalog is None:
+        return None
+    return catalog.to_table()
 
 
 def cutout_gauss(
@@ -359,11 +453,11 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
 
     # Apply 3x3 median filter to remove hot pixels before detection
     # This helps eliminate single-pixel hot pixels that could be mistaken for point sources
-    image_data = median_filter(image_data, size=3)
+    image_data = _median_filter_3x3(image_data)
     logger.debug("Applied 3x3 median filter to remove hot pixels")
 
     # Calculate background statistics using sigma clipping
-    mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
+    mean, median, std = robust_background_stats(image_data)
 
     # Subtract background
     image_data_sub = image_data - median
@@ -382,18 +476,33 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     min_sources = 50
     max_sources = 300  # Adjust this value as needed
 
+    # One kernel convolution and one local-maxima pass serve every threshold
+    # attempt below (see _dao_sources_at_threshold). The FFT convolution is
+    # the same linear operation photutils applies directly; local maxima are
+    # found once at the search's lower threshold bound, and higher-threshold
+    # attempts select from them.
+    kernel = _StarFinderKernel(float(fwhm), ratio=1.0, theta=0.0, sigma_radius=1.5)
+    convolved = fftconvolve(
+        image_data_sub.astype(np.float32), kernel.data.astype(np.float32), mode="same"
+    )
+    cand_ys, cand_xs, cand_vals = _local_maxima_above(
+        convolved, kernel.mask.astype(bool), threshold_min * kernel.relerr
+    )
+    cand_xy = np.column_stack((cand_xs, cand_ys))
+
     while attempts < max_attempts:
-        daofind = DAOStarFinder(
-            fwhm=float(fwhm),
-            threshold=threshold,
+        sources = _dao_sources_at_threshold(
+            image_data_sub,
+            convolved,
+            kernel,
+            cand_xy,
+            cand_vals,
+            threshold,
             sharplo=0.1,
             sharphi=1.5,
             roundlo=-1.5,
             roundhi=1.5,
-            brightest=None,
-            peakmax=None,
         )
-        sources = daofind(image_data_sub)
 
         source_count = 0 if sources is None else len(sources)
         logger.info(
