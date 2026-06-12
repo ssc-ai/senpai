@@ -67,6 +67,11 @@ class FramePhoto:
     fwhm_std_px: float | None = None  # PSF FWHM spread across the field
     sky_adu: float | None = None  # flat-fielded sky level before row/col subtract
     pixel_scale_arcsec: float | None = None  # arcsec/pixel (x_fov / width)
+    # CCD temperature (°C) from the raw header; ccd_warm flags frames taken well
+    # above the night's setpoint (cooldown ramp) — high dark current / hot pixels,
+    # so they're excluded from the trustworthy-photometry set (see _zp_frames).
+    ccd_temp_c: float | None = None
+    ccd_warm: bool = False
 
     # Filter → ZP from the multiband calibration, when present.
     multiband_zps: dict[str, float] = field(default_factory=dict)
@@ -219,6 +224,10 @@ def _extract_frame_photo(
         # No photometry was measured; nothing to aggregate.
         return None
 
+    raw_header = frame_dict.get("original_frame_header") or {}
+    ccd_temp = raw_header.get("CCDTEMP")
+    ccd_temp = float(ccd_temp) if ccd_temp is not None else None
+
     fmd = frame_dict.get("frame_metadata") or {}
     starfield = frame_dict.get("starfield") or {}
     wcs_meta = (starfield or {}).get("wcs_metadata") or {}
@@ -339,6 +348,7 @@ def _extract_frame_photo(
         fwhm_std_px=fwhm_std_px,
         sky_adu=sky_adu,
         pixel_scale_arcsec=pixel_scale_arcsec,
+        ccd_temp_c=ccd_temp,
     )
 
 
@@ -405,6 +415,8 @@ class NightCalibration:
 
         fwhm = _med([f.fwhm_px for f in self.frames])
         fwhm_spread = _med([f.fwhm_std_px for f in self.frames])
+        ccd_temp = _med([f.ccd_temp_c for f in self.frames])
+        n_ccd_warm = sum(1 for f in self.frames if f.ccd_warm)
         sky_adu = _med([f.sky_adu for f in self.frames])
         sky_mu = _med([_sky_mu(f) for f in self.frames])
         moon_sep = _med([f.moon_sep_deg for f in self.frames])
@@ -422,6 +434,8 @@ class NightCalibration:
             "clear_fraction": ext.clear_fraction if ext else None,
             "fwhm_px_median": fwhm,
             "fwhm_px_spread": fwhm_spread,
+            "ccd_temp_median_c": ccd_temp,
+            "n_ccd_warm_frames": n_ccd_warm,
             "sky_adu_median": sky_adu,
             "sky_mag_arcsec2_median": sky_mu,
             "limiting_mag_50_median": lim50,
@@ -470,15 +484,42 @@ def _asdict_safe(obj: Any) -> Any:
 # (extinction coefficient) is unconstrained and any fit is noise.
 _MIN_AIRMASS_RANGE = 0.15
 _FWHM_MIN_PX = 2.0  # below this a "star" is a noise spike, not a real PSF
+# A frame is "CCD-warm" when its sensor temperature sits this many °C above the
+# night's median (the cooler setpoint) — the cooldown ramp at the start of a
+# warm-started night, where dark current / hot pixels are badly elevated.
+_CCD_WARM_MARGIN_C = 5.0
+
+
+def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
+    """Mark frames taken well above the night's CCD setpoint and return a summary
+    (or None when no CCDTEMP telemetry is present). The setpoint is the median
+    temperature — robust as long as warm frames aren't the majority."""
+    import statistics as st
+
+    temps = [f.ccd_temp_c for f in frames if f.ccd_temp_c is not None]
+    if len(temps) < 5:
+        return None
+    median = float(st.median(temps))
+    threshold = median + _CCD_WARM_MARGIN_C
+    n_warm = 0
+    for f in frames:
+        f.ccd_warm = f.ccd_temp_c is not None and f.ccd_temp_c > threshold
+        n_warm += int(f.ccd_warm)
+    return {
+        "median_c": median, "threshold_c": threshold,
+        "n_warm": n_warm, "n_with_temp": len(temps),
+        "max_c": float(max(temps)), "min_c": float(min(temps)),
+    }
 
 
 def _zp_frames(frames: list[FramePhoto]) -> list[FramePhoto]:
     """Frames whose photometry is trustworthy for the night's zero point: the
     sidereal-tracked frames. Rate-tracked frames image stars as streaks, so
     their aperture photometry — and any ZP derived from it — is unreliable and
-    must not define the night's photometric calibration."""
+    must not define the night's photometric calibration. CCD-warm frames (sensor
+    above setpoint, elevated dark current / hot pixels) are excluded too."""
 
-    return [f for f in frames if f.track_mode == "sidereal"]
+    return [f for f in frames if f.track_mode == "sidereal" and not f.ccd_warm]
 
 
 def _isolated_flags(f: FramePhoto) -> list[bool]:
@@ -766,6 +807,12 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         source_dir=str(night_dir),
     )
     _add_moon_geometry(calib)
+    ccd = _flag_ccd_warm(frames)
+    if ccd and ccd["n_warm"]:
+        logger.info(
+            "CCD: setpoint %.1f°C, %d/%d frames above %.1f°C excluded as warm "
+            "(max %.1f°C)", ccd["median_c"], ccd["n_warm"], ccd["n_with_temp"],
+            ccd["threshold_c"], ccd["max_c"])
     calib.zp_per_filter = _summarize_zp(frames)
     calib.extinction_per_filter = _fit_extinction(frames)
     calib.limiting_mag_p50_per_filter = _summarize_limiting_mag(frames, "limiting_magnitude_50")
@@ -1469,6 +1516,14 @@ _PSF_FWHM_SANITY = 2.5    # reject a stack whose cut FWHM exceeds this × the
                           # frame's detection FWHM (cosmic rays / settling-trailed
                           # short frames stack to a meaningless broad blob)
 _PSF_N_BANDS = 3
+# Concentration-vs-time defocus diagnostic. C = central value / peak of the
+# stacked PSF: ~1 when focused (peak at center), low when defocused (donut, peak
+# in a ring → hollow center). Detection FWHM is fooled by donuts (a defocus ring
+# fits to a small FWHM), so it can't flag defocus; this shape metric can.
+_CONC_N_SAMPLE = 60       # frames sampled across the night
+_CONC_MAX_STARS = 40      # stars stacked per sampled frame (lighter than profile)
+_CONC_N_SHOWCASE = 5      # PSF thumbnails shown along the timeline
+_CONC_DEFOCUS = 0.7       # C below this ≈ defocused
 
 
 def _batch_result_paths(source_dir: str) -> dict[str, Path]:
@@ -1503,7 +1558,8 @@ def _sidereal_frame_dict(batch_path: Path, index: int) -> dict | None:
     return None
 
 
-def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int):
+def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int,
+                     max_stars: int = _PSF_MAX_STARS):
     """Median-stacked, peak-normalized PSF stamp from a frame's bright, isolated,
     unsaturated catalog stars. Returns (stamp2d, n_stars) or (None, 0)."""
     import numpy as np
@@ -1527,7 +1583,7 @@ def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int
     n = 2 * half + 1
     stamps = []
     for i in np.argsort(mags):              # brightest first
-        if len(stamps) >= _PSF_MAX_STARS:
+        if len(stamps) >= max_stars:
             break
         x, y = xy[i]
         if not (half + 2 < x < w - half - 2 and half + 2 < y < h - half - 2):
@@ -1584,20 +1640,48 @@ def _radial_profile(stamp, half, np, rstep=0.5):
     return np.array(r), prof
 
 
-def _cut_fwhm(profile, np) -> float:
-    """FWHM from half-max crossings of a 1D cut through the peak."""
+def _cut_width(profile, np, level: float = 0.5) -> float:
+    """Full width at ``level`` × peak, from the outermost interpolated crossings
+    of a 1D cut through the peak."""
     profile = np.asarray(profile)
-    half = profile.max() / 2.0
-    above = np.where(profile >= half)[0]
+    thr = profile.max() * level
+    above = np.where(profile >= thr)[0]
     if len(above) < 2:
         return float("nan")
     lo, hi = int(above[0]), int(above[-1])
-    left = (lo - (profile[lo] - half) / (profile[lo] - profile[lo - 1])
+    left = (lo - (profile[lo] - thr) / (profile[lo] - profile[lo - 1])
             if lo > 0 and profile[lo] != profile[lo - 1] else float(lo))
-    right = (hi + (profile[hi] - half) / (profile[hi] - profile[hi + 1])
+    right = (hi + (profile[hi] - thr) / (profile[hi] - profile[hi + 1])
              if hi < len(profile) - 1 and profile[hi] != profile[hi + 1]
              else float(hi))
     return float(right - left)
+
+
+def _cut_fwhm(profile, np) -> float:
+    """FWHM (full width at half max) of a 1D cut through the peak."""
+    return _cut_width(profile, np, 0.5)
+
+
+# For a Gaussian the width ratios are fixed: FW¼M/FWHM = √2, FW¾M/FWHM = 0.644.
+_GAUSS_W25_OVER_W50 = math.sqrt(math.log(4) / math.log(2))  # = √2
+
+
+def _profile_shape(profile, np) -> dict:
+    """Multi-level widths + a Gaussianity ``spike_index`` for a 1D PSF cut.
+
+    spike_index = (FW¼M/FWHM) / √2:  ≈1 Gaussian (focused), ≫1 a narrow core on
+    a broad halo (half-max FWHM is then spurious — it latches the spike), <1 a
+    flat-top / donut. When the index is high, ``robust_fwhm`` (FW¼M/√2, the
+    Gaussian-equivalent width from the quarter-max level) better reflects the
+    real PSF extent than the half-max width."""
+    w50 = _cut_width(profile, np, 0.5)
+    w25 = _cut_width(profile, np, 0.25)
+    w75 = _cut_width(profile, np, 0.75)
+    ok = np.isfinite(w50) and w50 > 0 and np.isfinite(w25)
+    index = float((w25 / w50) / _GAUSS_W25_OVER_W50) if ok else float("nan")
+    robust = float(w25 / _GAUSS_W25_OVER_W50) if (ok and index > 1.0) else w50
+    return {"fwhm": w50, "fwqm": w25, "fw3qm": w75,
+            "spike_index": index, "robust_fwhm": robust}
 
 
 def _wcs_sky_axes(wcs_dict: dict):
@@ -1652,8 +1736,9 @@ def _data_psf_profile(calib: NightCalibration):
     if not calib.source_dir:
         return None
     cands = [f for f in calib.frames
-             if f.track_mode == "sidereal" and f.fwhm_px and f.zero_point
-             and f.batch_id and f.frame_index is not None and f.frame_index >= 0
+             if f.track_mode == "sidereal" and not f.ccd_warm and f.fwhm_px
+             and f.zero_point and f.batch_id
+             and f.frame_index is not None and f.frame_index >= 0
              and (f.n_stars or 0) >= _PSF_MIN_STARS_FRAME]
     if len(cands) < 2 * _PSF_N_BANDS:
         return None
@@ -1705,8 +1790,9 @@ def _data_psf_profile(calib: NightCalibration):
                 cut_ra = stamp[half, :]
                 cut_dec = stamp[:, half]
                 axes_kind = "pixel"
-            fwhm_ra = _cut_fwhm(cut_ra, np)
-            fwhm_dec = _cut_fwhm(cut_dec, np)
+            shape_ra = _profile_shape(cut_ra, np)
+            shape_dec = _profile_shape(cut_dec, np)
+            fwhm_ra, fwhm_dec = shape_ra["fwhm"], shape_dec["fwhm"]
             # Reject implausible stacks (cosmic rays / settling-trailed short
             # frames) so the band falls through to a clean frame.
             if not (np.isfinite(fwhm_ra) and np.isfinite(fwhm_dec)
@@ -1716,6 +1802,11 @@ def _data_psf_profile(calib: NightCalibration):
             picked = {
                 "fwhm_lo": lo, "fwhm_hi": hi, "fwhm_det": float(f.fwhm_px),
                 "fwhm_ra": float(fwhm_ra), "fwhm_dec": float(fwhm_dec),
+                "fwqm_ra": shape_ra["fwqm"], "fwqm_dec": shape_dec["fwqm"],
+                "spike_ra": shape_ra["spike_index"],
+                "spike_dec": shape_dec["spike_index"],
+                "robust_ra": shape_ra["robust_fwhm"],
+                "robust_dec": shape_dec["robust_fwhm"],
                 "axes_kind": axes_kind,
                 "n_stars": int(n), "zp": float(f.zero_point),
                 "exposure": f.exposure_time,
@@ -1786,8 +1877,12 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     axr = fig.add_subplot(gs[1, :nb])
     axc = fig.add_subplot(gs[1, nb:])
     for b, c in zip(bands, colors):
+        spike = max(b.get("spike_ra") or 0, b.get("spike_dec") or 0)
+        # Flag when half-max FWHM is unreliable (narrow core on a broad halo).
+        flag = f"  ⚠spike {spike:.1f}× → FW¼M {b.get('fwqm_ra', 0):.0f}/" \
+               f"{b.get('fwqm_dec', 0):.0f}px" if spike >= 1.3 else ""
         lbl = (f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px  "
-               f"{a_name}/{b_name}={b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px")
+               f"{a_name}/{b_name}={b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px{flag}")
         axr.plot(b["r"], np.clip(b["radial"], 1e-4, None), color=c, lw=2, label=lbl)
         axc.plot(b["axis"], b["cut_ra"], color=c, lw=2.0, ls="-")
         axc.plot(b["axis"], b["cut_dec"], color=c, lw=1.5, ls="--")
@@ -1801,7 +1896,11 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     axr.grid(True, which="both", alpha=0.3)
     axr.legend(fontsize=8, loc="upper right")
 
-    axc.axhline(0.5, color="gray", ls=":", lw=1)
+    # Half-, quarter- and three-quarter-max levels: a Gaussian sits at fixed width
+    # ratios across these; a narrow core on a broad halo balloons at ¼-max.
+    for lv, txt in ((0.75, "¾max"), (0.5, "½max"), (0.25, "¼max")):
+        axc.axhline(lv, color="gray", ls=":", lw=0.8, alpha=0.6)
+        axc.text(win * 0.98, lv + 0.01, txt, fontsize=7, color="gray", ha="right")
     axc.set_xlim(-win, win)
     axc.set_ylim(-0.05, 1.05)
     axc.set_xlabel("Δ from center along sky axis (px)" if sky
@@ -1820,6 +1919,176 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "psf_profile.png")
 
 
+def _data_ccd_temperature(calib: NightCalibration):
+    import statistics as st
+
+    pts = [(f.timestamp, f.ccd_temp_c, bool(f.ccd_warm)) for f in calib.frames
+           if f.timestamp is not None and f.ccd_temp_c is not None]
+    if len(pts) < 5:
+        return None
+    pts.sort(key=lambda p: p[0])
+    t0 = pts[0][0]
+    temps = [p[1] for p in pts]
+    median = float(st.median(temps))
+    return {
+        "minutes": [(p[0] - t0).total_seconds() / 60.0 for p in pts],
+        "temp": temps,
+        "warm": [p[2] for p in pts],
+        "median_c": median,
+        "threshold_c": median + _CCD_WARM_MARGIN_C,
+        "n_warm": sum(1 for p in pts if p[2]),
+        "n_total": len(pts),
+        "max_c": float(max(temps)),
+    }
+
+
+def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
+    m = np.array(d["minutes"])
+    t = np.array(d["temp"])
+    warm = np.array(d["warm"], dtype=bool)
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.scatter(m[~warm], t[~warm], s=10, color="steelblue", alpha=0.6,
+               label=f"used ({int((~warm).sum())})")
+    if warm.any():
+        ax.scatter(m[warm], t[warm], s=16, color="firebrick", alpha=0.85,
+                   label=f"excluded warm ({int(warm.sum())})")
+    ax.axhline(d["median_c"], color="gray", ls="--", lw=1.2,
+               label=f"setpoint (median) {d['median_c']:.1f}°C")
+    ax.axhline(d["threshold_c"], color="firebrick", ls=":", lw=1.2,
+               label=f"warm cut > {d['threshold_c']:.1f}°C")
+    ax.set_xlabel("minutes into night")
+    ax.set_ylabel("CCD temperature (°C)")
+    ax.set_title(f"{meta['night_id']}: CCD temperature vs time "
+                 f"({d['n_warm']} of {d['n_total']} frames excluded as warm; "
+                 f"max {d['max_c']:.1f}°C)")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=9, loc="upper right")
+    return _save(fig, output_dir / "ccd_temperature.png")
+
+
+def _data_psf_concentration(calib: NightCalibration):
+    import numpy as np
+
+    if not calib.source_dir:
+        return None
+    cands = [f for f in calib.frames
+             if f.track_mode == "sidereal" and not f.ccd_warm and f.fwhm_px
+             and f.zero_point and f.batch_id and f.timestamp is not None
+             and f.frame_index is not None and f.frame_index >= 0
+             and (f.n_stars or 0) >= 100]
+    if len(cands) < 2 * _CONC_N_SHOWCASE:
+        return None
+    try:
+        batch_paths = _batch_result_paths(calib.source_dir)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not batch_paths:
+        return None
+
+    cands.sort(key=lambda f: f.timestamp)
+    t0 = cands[0].timestamp
+    sel = sorted(set(np.linspace(0, len(cands) - 1,
+                 min(len(cands), _CONC_N_SAMPLE)).round().astype(int).tolist()))
+    half = _PSF_STAMP_HALF
+    series = []
+    for i in sel:
+        f = cands[i]
+        bp = batch_paths.get(f.batch_id)
+        if not bp or not bp.is_file():
+            continue
+        fd = _sidereal_frame_dict(bp, f.frame_index)
+        if not fd:
+            continue
+        fp = fd.get("original_frame_path")
+        stars = (fd.get("starfield") or {}).get("catalog_stars") or []
+        if not fp or not Path(fp).is_file() or len(stars) < 100:
+            continue
+        stamp, n = _psf_stack_stamp(fp, stars, f.fwhm_px, half,
+                                    max_stars=_CONC_MAX_STARS)
+        if stamp is None or stamp.max() <= 0:
+            continue
+        stamp = stamp / stamp.max()
+        # C = central value / peak: ~1 focused (peak at center), low for a donut.
+        series.append({
+            "minutes": (f.timestamp - t0).total_seconds() / 60.0,
+            "C": float(stamp[half, half]), "fwhm_det": float(f.fwhm_px),
+            "stamp": stamp,
+        })
+    if len(series) < _CONC_N_SHOWCASE:
+        return None
+
+    # Showcase frames: evenly spaced in time, plus the best and worst C.
+    n = len(series)
+    idx = set(np.linspace(0, n - 1, _CONC_N_SHOWCASE).round().astype(int).tolist())
+    idx.add(min(range(n), key=lambda k: series[k]["C"]))
+    idx.add(max(range(n), key=lambda k: series[k]["C"]))
+    showcase = [{
+        "minutes": series[k]["minutes"], "C": series[k]["C"],
+        "fwhm_det": series[k]["fwhm_det"],
+        "stamp2d": np.round(series[k]["stamp"], 4).tolist(),
+    } for k in sorted(idx)]
+    return {
+        "half": half, "defocus_c": _CONC_DEFOCUS,
+        "minutes": [s["minutes"] for s in series],
+        "C": [s["C"] for s in series],
+        "fwhm_det": [s["fwhm_det"] for s in series],
+        "n_defocused": int(sum(1 for s in series if s["C"] < _CONC_DEFOCUS)),
+        "n_sampled": n, "showcase": showcase,
+    }
+
+
+def _render_psf_concentration(d, meta, output_dir, plt, np) -> Path:
+    show = d["showcase"]
+    half = d["half"]
+    thr = d["defocus_c"]
+    ns = len(show)
+    win = 22
+    fig = plt.figure(figsize=(max(13.0, 2.7 * ns), 8.6))
+    gs = fig.add_gridspec(2, ns, height_ratios=[1.0, 1.1])
+    for i, s in enumerate(show):
+        ax = fig.add_subplot(gs[0, i])
+        stamp = np.asarray(s["stamp2d"])
+        grid = np.linspace(-half, half, stamp.shape[0])
+        ax.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower",
+                  extent=[-half, half, -half, half], cmap="inferno")
+        ax.contour(grid, grid, stamp, levels=[0.5], colors="cyan", linewidths=0.8)
+        ax.set_xlim(-win, win)
+        ax.set_ylim(-win, win)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        focused = s["C"] >= thr
+        ax.set_title(f"#{i+1}  t+{s['minutes']:.0f}m   C={s['C']:.2f}"
+                     f"{'' if focused else '  defocus'}", fontsize=9,
+                     color="black" if focused else "firebrick")
+        for sp in ax.spines.values():
+            sp.set_color("seagreen" if focused else "firebrick")
+            sp.set_linewidth(2.2)
+
+    axb = fig.add_subplot(gs[1, :])
+    m = np.array(d["minutes"])
+    C = np.array(d["C"])
+    axb.plot(m, C, "-", color="gray", lw=1, alpha=0.5, zorder=1)
+    axb.scatter(m, C, c=C, cmap="RdYlGn", vmin=0.3, vmax=1.0, s=32,
+                edgecolor="black", linewidth=0.3, zorder=2)
+    axb.axhline(thr, color="firebrick", ls=":", lw=1.3,
+                label=f"defocus threshold C = {thr}")
+    for i, s in enumerate(show):
+        axb.annotate(f"#{i+1}", (s["minutes"], s["C"]), textcoords="offset points",
+                     xytext=(0, 9), fontsize=9, ha="center", fontweight="bold")
+    axb.set_ylim(0.2, 1.05)
+    axb.set_xlabel("minutes into night")
+    axb.set_ylabel("central concentration  C = center / peak")
+    axb.set_title(f"PSF concentration vs time ({d['n_defocused']} of "
+                  f"{d['n_sampled']} sampled frames below C = {thr})")
+    axb.grid(alpha=0.3)
+    axb.legend(loc="lower right", fontsize=9)
+    fig.suptitle(f"{meta['night_id']}: PSF focus diagnostic — concentration over "
+                 f"the night (green border = focused, red = defocused; "
+                 f"cyan = 50% contour)", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    return _save(fig, output_dir / "psf_concentration.png")
+
+
 _PLOT_BUILDERS.update({
     "extinction_curve": (_data_extinction_curve, _render_extinction_curve),
     "limiting_magnitude_hist": (
@@ -1829,6 +2098,8 @@ _PLOT_BUILDERS.update({
     "search_rate": (_data_search_rate, _render_search_rate),
     "slew_model": (_data_slew_model, _render_slew_model),
     "psf_profile": (_data_psf_profile, _render_psf_profile),
+    "ccd_temperature": (_data_ccd_temperature, _render_ccd_temperature),
+    "psf_concentration": (_data_psf_concentration, _render_psf_concentration),
 })
 
 
