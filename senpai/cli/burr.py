@@ -558,15 +558,29 @@ def cmd_flats(args: argparse.Namespace) -> int:
 # --- sub-command: calibrate ---------------------------------------------------
 
 
+def cmd_nights_summary(args: argparse.Namespace) -> int:
+    """Cross-night conditions table (PSF / sky / extinction vs Moon & weather)."""
+    from senpai.engine.observability.calibration import summarize_nights
+
+    table = summarize_nights(args.root, csv_path=args.csv)
+    print(table)
+    return 0
+
+
 def cmd_calibrate(args: argparse.Namespace) -> int:
     """Aggregate per-batch SenpaiRun JSONs into a per-night calibration."""
 
     from senpai.engine.observability.calibration import (
-        analyze_night, plot_calibration, save_calibration,
+        analyze_night, load_plot_data, plot_calibration, save_calibration,
     )
 
     night_dir = Path(args.processed_night_dir)
     out_dir = Path(args.output_dir) if args.output_dir else (night_dir / "calibration")
+
+    if getattr(args, "from_plot_data", False):
+        # Replot from the saved plotted-data dict — no batch reprocessing.
+        plot_calibration(load_plot_data(out_dir / "plot_data.json"), out_dir)
+        return 0
 
     calib = analyze_night(night_dir)
     save_calibration(calib, out_dir)
@@ -913,7 +927,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-plots", action="store_true",
         help="Skip plot rendering.",
     )
+    p_cal.add_argument(
+        "--from-plot-data", action="store_true",
+        help="Skip reprocessing: render plots from an existing "
+             "<output>/plot_data.json instead of the batch JSONs.",
+    )
     p_cal.set_defaults(func=cmd_calibrate)
+
+    p_ns = sub.add_parser(
+        "nights-summary",
+        help="Cross-night conditions table (PSF/sky/extinction vs Moon & weather).")
+    p_ns.add_argument(
+        "root",
+        help="Processed root containing <sensor>_<night>/calibration/"
+             "night_calibration.json dirs (e.g. .../_full8).")
+    p_ns.add_argument("--csv", default=None, help="Also write the table as CSV.")
+    p_ns.set_defaults(func=cmd_nights_summary)
 
     p_live = sub.add_parser("live", help="(stub) Watch a sensor data dir live.")
     p_live.add_argument("data_dir", help="Sensor data dir, e.g. /burr/Hornet/.")
@@ -932,10 +961,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_plots.add_argument(
         "--kind", action="append", default=None,
-        choices=["all", "review", "photometry", "aperture"],
+        choices=["all", "review", "photometry", "aperture", "psf"],
         help="Plot kind(s); repeatable. 'review' = final_/raw_ overlays + GIFs, "
              "'photometry' = completeness + limiting-mag curves, 'aperture' = "
-             "per-star aperture overlay (re-runs cheap photometry). "
+             "per-star aperture overlay (re-runs cheap photometry), 'psf' = "
+             "per-frame empirical PSF panel (stacked stars / streak). "
              "Default: review + photometry (skips the heavy aperture overlay).",
     )
     p_plots.add_argument(
