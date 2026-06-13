@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -43,9 +43,37 @@ class PlottingConfig(BaseModel):
     )
 
 
+class FastSolveConfig(BaseModel):
+    """Native fast-solve tier settings (solver_mode 'tetra3'/'chain'); never read by 'dotnet'."""
+
+    mirror_dir: str | None = Field(
+        default=None,
+        description="Local Gaia mirror directory (the T0 refine catalog; see astroeasy.catalog.mirror)",
+    )
+    tetra3_db_path: str | None = Field(
+        default=None,
+        description="tetra3 pattern database (.npz) for the T1 lost-in-space matcher",
+    )
+    sensor_profile: str | None = Field(
+        default=None,
+        description="Sensor profile YAML (measured geometry + acceptance-gate thresholds)",
+    )
+
+
 class AstrometryConfig(BaseModel):
     """Astrometry(.net) configuration"""
 
+    solver_mode: Literal["dotnet", "tetra3", "chain"] = Field(
+        default="dotnet",
+        description="Plate-solve engine: 'dotnet' = astrometry.net via astroeasy (the original "
+        "path), 'tetra3' = native catalog tiers only (T0 refine + T1 pattern match, no "
+        "astrometry.net required), 'chain' = full escalation cascade (native tiers first, "
+        "astrometry.net backstop)",
+    )
+    fast_solve: FastSolveConfig = Field(
+        default_factory=FastSolveConfig,
+        description="Settings for the native fast-solve tiers (only read when solver_mode != 'dotnet')",
+    )
     indices_series: str = Field(
         description="Indices series (5200/5200_LITE/5200_SENPAI/4100/5200_LITE_4100/4200/CUSTOM)"
     )

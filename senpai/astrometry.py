@@ -150,12 +150,75 @@ def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarFiel
             image_metadata=sources.image_metadata,
         )
 
+    # solver_mode dispatch (see astroeasy docs/catalog-native-solving-roadmap.md §0.2):
+    # 'dotnet' is the original astrometry.net path; 'tetra3'/'chain' run the
+    # catalog-native cascade (with astrometry.net as chain's backstop).
+    if config.astrometry.solver_mode != "dotnet":
+        return _solve_field_cascade(sources, wcs, config)
+
     ae_config = _build_astroeasy_config()
     detections, metadata = _sources_to_detections(sources)
     existing_wcs = _wcsmodel_to_wcsresult(wcs) if wcs is not None else None
 
     result = astroeasy.solve_field(detections, metadata, ae_config, existing_wcs)
     return _solve_result_to_starfield(result, sources)
+
+
+def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -> StarField:
+    """Run the astroeasy escalation cascade (solver_mode 'tetra3'/'chain').
+
+    'tetra3' = native tiers only (T0 refine + T1 pattern match, no
+    astrometry.net required); 'chain' = native tiers with the existing
+    astrometry.net path as the T3 backstop.
+    """
+    from astroeasy import cascade
+
+    a = config.astrometry
+    mode = a.solver_mode
+    fast = a.fast_solve
+
+    # The catalog cone source: explicit fast_solve.mirror_dir, else reuse the
+    # already-configured local Gaia mirror from star_catalog.
+    mirror_dir = fast.mirror_dir
+    if mirror_dir is None:
+        sc = getattr(config, "star_catalog", None)
+        if sc is not None and getattr(sc, "type", None) == "gaia_local":
+            mirror_dir = sc.path
+    if mirror_dir is None:
+        logger.warning(
+            "solver_mode=%s but no catalog mirror configured "
+            "(astrometry.fast_solve.mirror_dir or star_catalog type gaia_local) — "
+            "native tiers will be skipped", mode,
+        )
+
+    if fast.sensor_profile:
+        profile = cascade.SensorProfile.from_yaml(fast.sensor_profile)
+        if fast.tetra3_db_path:
+            profile.tetra3_db_path = fast.tetra3_db_path
+    else:
+        profile = cascade.SensorProfile(
+            sensor_id="senpai",
+            scale_bounds_degrees=(a.min_width_degrees, a.max_width_degrees),
+            sip_order=a.tweak_order,
+            tetra3_db_path=fast.tetra3_db_path,
+        )
+
+    detections, metadata = _sources_to_detections(sources)
+    prior_wcs = _wcsmodel_to_wcsresult(wcs) if wcs is not None else None
+    tiers = ("T0", "T1") if mode == "tetra3" else ("T0", "T1", "T3")
+    dotnet_config = _build_astroeasy_config() if mode == "chain" else None
+
+    result = cascade.solve(
+        detections, metadata,
+        profile=profile, mirror_dir=mirror_dir,
+        dotnet_config=dotnet_config, prior_wcs=prior_wcs, tiers=tiers,
+    )
+    logger.info(
+        "cascade (%s): %s — attempts: %s", mode,
+        f"solved at {result.tier}" if result.tier else "all tiers failed",
+        [(t.tier, t.status, f"{t.duration_ms:.0f}ms") for t in result.attempts],
+    )
+    return _solve_result_to_starfield(result.solve, sources)
 
 
 def test_astrometry_install() -> bool:

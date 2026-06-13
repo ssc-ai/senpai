@@ -37,13 +37,10 @@ HPX_LEVEL = 4
 HPX_SHIFT = 35 + 2 * (12 - HPX_LEVEL)  # = 51
 GAIA_DR3_NSOURCES = 1_811_709_771  # DR3 gaia_source row count (random_index range)
 
-# Stored columns. ra/dec MUST be f8 (f4 loses arcsec precision at RA~300 deg).
-MIRROR_DTYPE = np.dtype([
-    ("source_id", "i8"),
-    ("ra", "f8"), ("dec", "f8"),      # degrees
-    ("g", "f4"), ("bp", "f4"), ("rp", "f4"),
-    ("pmra", "f4"), ("pmdec", "f4"),  # mas/yr
-])
+# Record layout lives in astroeasy (the readers there and here must agree);
+# re-exported so existing senpai importers keep working.
+from astroeasy.catalog.mirror import MIRROR_DTYPE  # noqa: E402
+
 _GAIA_COLS = [
     "source_id", "ra", "dec",
     "phot_g_mean_mag", "phot_bp_mean_mag", "phot_rp_mean_mag", "pmra", "pmdec",

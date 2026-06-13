@@ -9,31 +9,22 @@ bbox (from index.json) overlaps the requested box — sub-second per field.
 
 from __future__ import annotations
 
-import functools
-import json
 import logging
-import os
 from typing import Any
 
 import numpy as np
-
-from senpai.catalog.gaia_mirror import MIRROR_DTYPE
+from astroeasy.catalog.mirror import query_mirror_box
 
 logger = logging.getLogger(__name__)
 
-
-@functools.lru_cache(maxsize=8)
-def _load_index(mirror_dir: str) -> dict:
-    with open(os.path.join(mirror_dir, "index.json")) as fh:
-        return json.load(fh)
-
-
-def _ra_subranges(min_ra: float, max_ra: float) -> list[tuple[float, float]]:
-    """Normalize the RA box to [0,360), splitting across the 0/360 seam if needed."""
-    lo, hi = np.mod(min_ra, 360.0), np.mod(max_ra, 360.0)
-    if lo <= hi:
-        return [(lo, hi)]
-    return [(lo, 360.0), (0.0, hi)]  # wraps 0
+# Bound dict-building on ultra-dense (galactic-plane) fields: a single frame
+# there can contain millions of stars (observed 2.57M), and building a dict per
+# row then projecting/isolating them all before the caller's magnitude-
+# stratified max_stars_per_frame cap (applied downstream) peaked ~26 GB and
+# drew the OOM killer. Keep the brightest MAX_LOCAL_ROWS here; the downstream
+# stratified cap subsamples this for completeness. The cut is far fainter than
+# any per-frame cap, so normal fields are untouched.
+MAX_LOCAL_ROWS = 200_000
 
 
 def query_by_ra_dec_bounds(
@@ -43,54 +34,20 @@ def query_by_ra_dec_bounds(
 ) -> list[dict[str, Any]]:
     """Stars from the local mirror within the RA/Dec box and magnitude limits.
 
-    Returns the same dict shape as the online query so it's a transparent
-    substitute (see module docstring)."""
+    Tile selection and reading are delegated to astroeasy's mirror reader
+    (astroeasy.catalog.mirror); this wrapper applies senpai's defaults and
+    builds senpai's star dicts (see module docstring)."""
     if faint_lim is None:
         faint_lim = 20.0
     if bright_lim is None:
         bright_lim = -32.0
 
-    index = _load_index(mirror_dir)
-    ra_ranges = _ra_subranges(min_ra, max_ra)
-
-    # Pick tiles whose bbox overlaps the (possibly seam-split) box.
-    chosen = []
-    for meta in index["tiles"].values():
-        if meta["dec_max"] < min_dec or meta["dec_min"] > max_dec:
-            continue
-        if any(not (meta["ra_max"] < r0 or meta["ra_min"] > r1) for r0, r1 in ra_ranges):
-            chosen.append(meta)
-    if not chosen:
-        logger.info("Gaia local: no tiles overlap the requested box")
-        return []
-
-    parts = [np.fromfile(os.path.join(mirror_dir, m["file"]), dtype=MIRROR_DTYPE) for m in chosen]
-    a = np.concatenate(parts) if len(parts) > 1 else parts[0]
-
-    mask = (a["g"] >= bright_lim) & (a["g"] <= faint_lim) & \
-           (a["dec"] >= min_dec) & (a["dec"] <= max_dec)
-    ra_mask = np.zeros(len(a), dtype=bool)
-    for r0, r1 in ra_ranges:
-        ra_mask |= (a["ra"] >= r0) & (a["ra"] <= r1)
-    a = a[mask & ra_mask]
-
-    # Bound dict-building on ultra-dense (galactic-plane) fields: a single
-    # frame there can contain millions of stars (observed 2.57M), and building
-    # a dict per row then projecting/isolating them all before the caller's
-    # magnitude-stratified max_stars_per_frame cap (applied downstream) peaked
-    # ~26 GB and drew the OOM killer. Keep the brightest MAX_LOCAL_ROWS here;
-    # the downstream stratified cap subsamples this for completeness. The cut is
-    # far fainter than any per-frame cap, so normal fields are untouched.
-    MAX_LOCAL_ROWS = 200_000
-    n_raw = len(a)
-    if n_raw > MAX_LOCAL_ROWS:
-        idx = np.argpartition(a["g"], MAX_LOCAL_ROWS)[:MAX_LOCAL_ROWS]
-        a = a[idx]
-
-    logger.info(
-        "Gaia local: %d stars from %d tiles (box RA[%.3f,%.3f] Dec[%.3f,%.3f] G<=%.1f)%s",
-        len(a), len(chosen), min_ra, max_ra, min_dec, max_dec, faint_lim,
-        f" [capped from {n_raw} brightest-{MAX_LOCAL_ROWS}]" if n_raw > MAX_LOCAL_ROWS else "",
+    a = query_mirror_box(
+        min_ra, max_ra, min_dec, max_dec,
+        mirror_dir=mirror_dir,
+        faint_limit=faint_lim,
+        bright_limit=bright_lim,
+        max_rows=MAX_LOCAL_ROWS,
     )
     return [_to_star(r, primary_filter, faint_lim) for r in a]
 
