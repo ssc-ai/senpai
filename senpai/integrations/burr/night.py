@@ -136,6 +136,18 @@ class FrameBatch:
     def has_intended_rate_frames(self) -> bool:
         return any(f.intended_tracking_mode == "rate" for f in self.frames)
 
+    @property
+    def seq_id(self) -> str | None:
+        """The logical-set id (the ``seq_key`` FITS header value, e.g. TASKID /
+        BURRSEQ) these frames were grouped on, when seq-key batching was used —
+        the raw value the frames were combined on. None for command/orphan
+        batches. The ``batch_id`` only carries this value's first 8 chars, so
+        this property is the only place the full grouping key survives."""
+        for f in self.frames:
+            if f.seq_id:
+                return f.seq_id
+        return None
+
 
 class BurrNight(BaseModel):
     """One night of burr data for one sensor."""

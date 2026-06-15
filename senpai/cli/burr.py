@@ -136,6 +136,7 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
     elapsed = time.time() - t0
     return {
         "batch_id": batch.batch_id,
+        "seq_id": batch.seq_id,
         "task": batch.task,
         "num_frames": len(batch.frames),
         "command": batch.command.command if batch.command else None,
@@ -149,46 +150,51 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
 
 
 def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
-    """Patch in-memory FITS headers to reflect burr's *intended* per-frame
-    tracking mode, derived from the command log (calsats) or the filename's
-    target token (coverage, photometric_standards, twilight_flats).
+    """Fill in tracking mode ONLY for frames whose header carries no usable
+    ``TRKMODE`` — never overwrite a present one.
 
-    Why: burr writes ``TRKMODE: rate`` for every frame in a multi-frame
-    collection, including the f3 leg of a calsat sequence and the AltAzTarget
-    sub-exposure of a coverage point — those are *intended sidereal* but the
-    header alone would route them to senpai's rate-only WCS path (blind-solve
-    on streak centroids), which gives an inferior anchor than a true sidereal
-    point-source solve. We set TRKMODE per intent and zero the rate keys for
-    sidereal frames so both senpai's classifier paths agree.
+    ``TRKMODE`` is authoritative: burr records sidereal vs rate as the mount
+    *actually tracked*, and writes ``sidereal`` when it tracked sidereal (a raw
+    scan of DAO01 shows coverage/photometric frames carrying both ``sidereal``
+    and ``rate``, and every calsat leg ``rate``). So senpai's metadata classifier
+    (TRKMODE first, then the RA/DEC-rate magnitude) already routes correctly from
+    the header alone.
 
-    Frames with no intent (UUID-named, unattributed orphans with non-semantic
-    targets) are left untouched.
+    The burr ``intended`` hint (``command.tracking_modes[frame_index]``) must NOT
+    override that: the filename ``_fN`` is a sub-frame index that stops indexing
+    the per-collection ``tracking_modes`` vector once a collection is split across
+    batches (e.g. by TASKID), so the hint mislabels real rate frames as sidereal.
+    We keep it only as a last resort for a frame with no TRKMODE at all.
     """
+    from senpai.engine.utils.fits_io import extract_header_value
 
+    mode_keys = get_config().headers.tracking.track_mode_keys or ["TRKMODE"]
     path_to_intent: dict[str, str | None] = {
         str(r.path): r.intended_tracking_mode for r in batch.frames
     }
+    filled: dict[str, str] = {}
     for img in file_list:
         file_path = getattr(img, "file_path", None)
         if not file_path:
             continue
+        header = img.header
+        # Authoritative TRKMODE present -> trust it, leave the frame untouched.
+        if any(extract_header_value(header, k) for k in mode_keys):
+            continue
         intent = path_to_intent.get(str(file_path))
         if intent not in ("sidereal", "rate"):
             continue
-        header = img.header
-        header["TRKMODE"] = intent
+        header[mode_keys[0]] = intent
         if intent == "sidereal":
-            # Burr's residual rates on the sidereal leg (~15"/s for calsat f3)
-            # would otherwise push the rate-magnitude fallback back to RATE,
-            # so we zero them out — the *intent* is to track sidereal.
             for k in ("RA_RATE", "DEC_RATE", "ALT_RATE", "AZ_RATE"):
                 if k in header:
                     header[k] = 0.0
-    logger.debug(
-        "Applied per-frame TRKMODE overrides for batch %s: %s",
-        batch.batch_id,
-        {Path(p).name: m for p, m in path_to_intent.items() if m},
-    )
+        filled[Path(file_path).name] = intent
+    if filled:
+        logger.info(
+            "Filled TRKMODE from intent for %d header-less frame(s) in batch %s: %s",
+            len(filled), batch.batch_id, filled,
+        )
 
 
 def _write_manifest(night_root: Path, night: BurrNight, entries: list[dict]) -> Path:
@@ -318,6 +324,7 @@ def _worker_init(
 def _failed_entry(batch: FrameBatch, exc: Exception) -> dict:
     return {
         "batch_id": batch.batch_id,
+        "seq_id": batch.seq_id,
         "task": batch.task,
         "num_frames": len(batch.frames),
         "error": str(exc),
@@ -337,8 +344,10 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
     night_root.mkdir(parents=True, exist_ok=True)
     jobs = max(1, getattr(args, "jobs", 1))
     logger.info(
-        "BurrNight %s: %d batches to process (tasks=%s, limit=%s, jobs=%d)",
+        "BurrNight %s: %d batches to process (tasks=%s, limit=%s, jobs=%d, "
+        "grouped on seq_key=%s)",
         night.night_id, len(batches), args.task or "all", args.limit, jobs,
+        args.seq_key or "command/filename",
     )
 
     entries: list[dict] = []
@@ -358,6 +367,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
             logger.info("skip (existing): %s", batch.batch_id)
             entries.append({
                 "batch_id": batch.batch_id,
+                "seq_id": batch.seq_id,
                 "task": batch.task,
                 "num_frames": len(batch.frames),
                 "skipped": True,
@@ -371,8 +381,9 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
     n_total = len(todo)
     if jobs == 1 or n_total <= 1:
         for i, (batch, batch_dir) in enumerate(todo, start=1):
-            logger.info("[%d/%d] batch %s (%s, %d frames)",
-                        i, n_total, batch.batch_id, batch.task, len(batch.frames))
+            logger.info("[%d/%d] batch %s [seq_id=%s] (%s, %d frames)",
+                        i, n_total, batch.batch_id, batch.seq_id or "none",
+                        batch.task, len(batch.frames))
             try:
                 entry = _run_batch(batch, batch_dir)
             except Exception as e:
@@ -435,8 +446,9 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
                         n_failed += 1
                     else:
                         n_done += 1
-                        logger.info("[%d/%d done] batch %s (%s)",
-                                    n, n_total, batch.batch_id, batch.task)
+                        logger.info("[%d/%d done] batch %s [seq_id=%s] (%s)",
+                                    n, n_total, batch.batch_id,
+                                    batch.seq_id or "none", batch.task)
                     entries.append(entry)
                     if n % MANIFEST_FLUSH_EVERY == 0:
                         _write_manifest(night_root, night, entries)
