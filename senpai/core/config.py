@@ -308,6 +308,18 @@ class TrackingConfig(BaseModel):
     track_ra_rate_unit: str = Field(default="arcseconds/second", description="Unit for RA tracking rate")
     track_dec_rate_unit: str = Field(default="arcseconds/second", description="Unit for DEC tracking rate")
     track_mode_keys: list[str] = Field(default_factory=list, description="FITS header keys for tracking mode")
+    data_fallback_enabled: bool = Field(
+        default=True,
+        description="When a frame has no usable TRKMODE, look at the pixels (round "
+        "sources -> sidereal, streaked+aligned -> rate) to settle sidereal-vs-rate. "
+        "Only runs when the header can't decide, so it costs nothing on metadata-tagged "
+        "frames; set false to fall back to rate magnitude alone.",
+    )
+    sidereal_rate_threshold_arcsec_per_second: float = Field(
+        default=1.0,
+        description="When classifying by RA/DEC rate magnitude (no TRKMODE), |rate| at or "
+        "below this is treated as sidereal, above as rate.",
+    )
 
 
 class HeadersConfig(BaseModel):

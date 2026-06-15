@@ -282,41 +282,41 @@ class SenpaiRun(BaseModel):
             frame_metadata.log_missing_capabilities(logger, label=f"Frame {fname}")
 
             header_track_type = frame_metadata.track_mode
+            fname = Path(frame.file_path).name if frame.file_path else "?"
             if force_track_mode is not None:
-                if header_track_type is not None and header_track_type != force_track_mode:
-                    fname = Path(frame.file_path).name if frame.file_path else "?"
+                if (header_track_type not in (None, TrackMode.UNKNOWN)
+                        and header_track_type != force_track_mode):
                     logger.warning(
                         "Frame %d (%s): header reports %s but CLI forced %s — processing as %s",
                         index, fname, header_track_type.value, force_track_mode.value, force_track_mode.value,
                     )
-                frame_metadata.track_mode = force_track_mode
-            track_type = frame_metadata.track_mode
+                track_type, src, detail = force_track_mode, "forced", ""
+            else:
+                # Layered classification: authoritative TRKMODE first, then (only
+                # when the header can't decide) RA/DEC rates with a pixel arbiter.
+                from senpai.core.config import get_config
+                from senpai.engine.detection.track_mode import classify_track_mode
+
+                decision = classify_track_mode(frame.header, frame.data, get_config())
+                track_type, src, detail = decision.mode, decision.source, decision.detail
+                if track_type == TrackMode.UNKNOWN:
+                    # No metadata and the pixels couldn't tell -> safe default.
+                    track_type, src = TrackMode.SIDEREAL, "default-sidereal"
+
+            frame_metadata.track_mode = track_type
+            # Surface anything that didn't come straight from TRKMODE, so a
+            # rate/pixel-derived routing is visible in the log.
+            if src != "trkmode":
+                logger.info("Frame %d (%s): track mode -> %s via %s%s",
+                            index, fname, track_type.value, src,
+                            f" [{detail}]" if detail else "")
 
             if track_type == TrackMode.RATE:
                 model = RateTrackFrame
                 framelist = rate_track_frames
-            elif track_type == TrackMode.SIDEREAL:
+            else:
                 model = SiderealFrame
                 framelist = sidereal_frames
-            else:
-                logger.debug(f"unknown track type: {track_type}")
-                if frame_metadata.track_rate_ra_arcsec_per_second and frame_metadata.track_rate_dec_arcsec_per_second:
-                    overall_rate = (
-                        frame_metadata.track_rate_ra_arcsec_per_second**2
-                        + frame_metadata.track_rate_dec_arcsec_per_second**2
-                    ) ** 0.5
-                    if overall_rate > 1.0:
-                        logger.debug("track rates are high, defaulting to rate track")
-                        model = RateTrackFrame
-                        framelist = rate_track_frames
-                    else:
-                        logger.debug("track rates are too low, defaulting to sidereal")
-                        model = SiderealFrame
-                        framelist = sidereal_frames
-                else:
-                    logger.debug("no track rates, defaulting to sidereal")
-                    model = SiderealFrame
-                    framelist = sidereal_frames
 
             framelist.append(
                 model(
