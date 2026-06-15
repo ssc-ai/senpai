@@ -568,25 +568,21 @@ def cmd_nights_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
-    """Aggregate per-batch SenpaiRun JSONs into a per-night calibration."""
+    """Aggregate per-batch SenpaiRun JSONs into a per-night calibration.
 
-    from senpai.engine.observability.calibration import (
-        analyze_night, load_plot_data, plot_calibration, save_calibration,
-    )
+    Thin alias for the standalone ``senpai.cli.calibrate`` (calibration is not
+    burr-specific); kept so ``senpai-burr calibrate`` keeps working.
+    """
+    from senpai.cli.calibrate import main as calibrate_main
 
-    night_dir = Path(args.processed_night_dir)
-    out_dir = Path(args.output_dir) if args.output_dir else (night_dir / "calibration")
-
+    argv = [str(args.processed_night_dir)]
+    if args.output_dir:
+        argv += ["-o", str(args.output_dir)]
+    if args.no_plots:
+        argv.append("--no-plots")
     if getattr(args, "from_plot_data", False):
-        # Replot from the saved plotted-data dict — no batch reprocessing.
-        plot_calibration(load_plot_data(out_dir / "plot_data.json"), out_dir)
-        return 0
-
-    calib = analyze_night(night_dir)
-    save_calibration(calib, out_dir)
-    if not args.no_plots:
-        plot_calibration(calib, out_dir)
-    return 0
+        argv.append("--from-plot-data")
+    return calibrate_main(argv)
 
 
 # --- sub-command: live (scaffold) ---------------------------------------------
