@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 SAT_PEAK = 40000.0      # raw ADU; reject saturated stars (below the 65535 clip)
 MAX_STARS = 200         # stamps to stack
 MIN_STAMPS = 15         # min stacked stars for a usable panel
-MIN_PEAK_SNR = 20.0     # per-stamp peak/background-noise floor
+MIN_PEAK_SNR = 20.0     # preferred per-stamp peak/noise; used when enough stars clear it
+MIN_PEAK_SNR_FLOOR = 5.0  # detection-grade floor; fall back to these on low-SNR frames
 SIDEREAL_HALF = 30      # sidereal stamp is (2*half+1)^2 px
 _GAUSS_W25_OVER_W50 = math.sqrt(math.log(4) / math.log(2))  # = sqrt(2)
 
@@ -123,6 +124,21 @@ def _sample_line(stamp, half, unit):
 # --------------------------------------------------------------------------
 # stacking
 # --------------------------------------------------------------------------
+def _ring_noise(ring) -> float:
+    """MAD-based sky scatter for a stamp's border ring.
+
+    ``np.std`` is the wrong tool here: a bright star's own diffraction wings or a
+    faint neighbor landing in the 4px border inflates the std by ~10x (measured:
+    6500 vs a true scatter of ~500 ADU), which collapses the peak/noise ratio and
+    makes every star fail the SNR gate — the panel then silently vanishes on
+    perfectly good, bright frames. The MAD ignores those few contaminated pixels
+    and recovers the real sky scatter."""
+    ring = np.asarray(ring, dtype=float)
+    med = np.median(ring)
+    mad = float(np.median(np.abs(ring - med)))
+    return 1.4826 * mad if mad > 0 else float(np.std(ring))
+
+
 def _isolated_order(xy, mags, iso_radius):
     """Brightest-first indices of stars with no brighter-or-comparable neighbor
     within ``iso_radius``."""
@@ -156,9 +172,9 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
     mags = np.array([s[2] for s in keep])
     h, w = data.shape
     n = 2 * half + 1
-    stamps = []
+    candidates = []  # (peak_snr, stamp), collected brightest-first
     for i in _isolated_order(xy, mags, isolation):
-        if len(stamps) >= max_stars:
+        if len(candidates) >= max_stars:
             break
         x, y = xy[i]
         if not (half + 2 < x < w - half - 2 and half + 2 < y < h - half - 2):
@@ -169,11 +185,17 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
             continue
         ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(),
                                st[:, 0:4].ravel(), st[:, -4:].ravel()])
-        noise = float(np.std(ring))
+        noise = _ring_noise(ring)
         st = st - np.median(ring)
         sm = ndimage.median_filter(st, size=3)
         peak = float(sm.max())
-        if peak <= 0 or peak > SAT_PEAK or noise <= 0 or peak < MIN_PEAK_SNR * noise:
+        # Reject saturated stars and pure noise, but do NOT demand a *high* SNR
+        # per stamp: the median stack of N marginal stamps recovers a clean PSF
+        # (~sqrt(N) gain), so a hard SNR>=20 gate buys little quality while
+        # silently deleting the whole panel on faint/low-SNR frames where every
+        # unsaturated star sits below it. Keep everything above a detection-grade
+        # floor; the high-SNR subset is preferred below when it exists.
+        if peak <= 0 or peak > SAT_PEAK or noise <= 0 or peak < MIN_PEAK_SNR_FLOOR * noise:
             continue
         cy, cx = ndimage.center_of_mass(np.clip(sm, 0, None))
         if not (np.isfinite(cx) and np.isfinite(cy)):
@@ -182,13 +204,20 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
             continue
         st = ndimage.shift(st, (half - cy, half - cx), order=3, mode="nearest")
         st /= peak
-        stamps.append(st)
-    if len(stamps) < MIN_STAMPS:
+        candidates.append((peak / noise, st))
+    # Prefer high-SNR stamps; fall back to the best available so a low-SNR frame
+    # still yields a (noisier) panel instead of silently vanishing.
+    strong = [s for snr, s in candidates if snr >= MIN_PEAK_SNR]
+    chosen = strong if len(strong) >= MIN_STAMPS else [s for _, s in candidates]
+    if len(chosen) < MIN_STAMPS:
         return None, 0
-    stamp = np.median(np.stack(stamps), axis=0)
+    if len(strong) < MIN_STAMPS:
+        logger.info("psf: sidereal stack from %d low-SNR stars (only %d >= SNR %g)",
+                    len(chosen), len(strong), MIN_PEAK_SNR)
+    stamp = np.median(np.stack(chosen), axis=0)
     if stamp.max() > 0:
         stamp = stamp / stamp.max()
-    return stamp, len(stamps)
+    return stamp, len(chosen)
 
 
 def _oriented_stamp(data, x, y, cos_a, sin_a, half_a, half_p):
@@ -211,8 +240,14 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
 
     Each catalog star is a streak; stack oriented stamps centered on the bright
     isolated ones. Returns (stamp[perp, along], half_along, half_perp, n)."""
-    half_a = int(min(90, max(8, round(length / 2 + 4 * fwhm))))
-    half_p = int(min(40, max(5, round(3 * fwhm))))
+    # The stamp must contain the whole streak *plus* a clean sky margin on every
+    # side: the along ends should roll fully into background (so a 183px trail
+    # reads off with sky on either side, not clipped flush to the border) and
+    # the perpendicular edges are what set the noise / peak-SNR gate. Size both
+    # axes off the fitted geometry; the caps are only a memory guard for
+    # pathologically long streaks, set far above the typical footprint.
+    half_a = int(min(400, max(20, round(length / 2 + 6 * fwhm))))
+    half_p = int(min(120, max(12, round(5 * fwhm))))
     keep = [(s[0], s[1], s[2] if s[2] is not None else np.inf) for s in stars
             if s[0] is not None and s[1] is not None]
     if len(keep) < 20:
@@ -222,19 +257,22 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
     cos_a = math.cos(math.radians(angle_deg))
     sin_a = math.sin(math.radians(angle_deg))
     iso = max(60.0, length + 4 * fwhm)
-    stamps = []
+    candidates = []  # (peak_snr, stamp), collected brightest-first
     for i in _isolated_order(xy, mags, iso):
-        if len(stamps) >= max_stars:
+        if len(candidates) >= max_stars:
             break
         st = _oriented_stamp(data, xy[i][0], xy[i][1], cos_a, sin_a, half_a, half_p)
         if st is None:
             continue
         ring = np.concatenate([st[0:2].ravel(), st[-2:].ravel()])  # perp edges
-        noise = float(np.std(ring))
+        noise = _ring_noise(ring)
         st = st - np.median(ring)
         sm = ndimage.median_filter(st, size=3)
         peak = float(sm.max())
-        if peak <= 0 or peak > SAT_PEAK or noise <= 0 or peak < MIN_PEAK_SNR * noise:
+        # Detection-grade floor only; the median stack recovers SNR, so a hard
+        # SNR>=20 gate would needlessly drop the panel on faint streaks. The
+        # high-SNR subset is preferred below when there are enough of them.
+        if peak <= 0 or peak > SAT_PEAK or noise <= 0 or peak < MIN_PEAK_SNR_FLOOR * noise:
             continue
         # Center perpendicular only (along position varies with where the catalog
         # point falls on the trail; the across profile is what we want centered).
@@ -244,13 +282,18 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
             continue
         st = ndimage.shift(st, (half_p - cy, 0.0), order=3, mode="nearest")
         st /= peak
-        stamps.append(st)
-    if len(stamps) < MIN_STAMPS:
+        candidates.append((peak / noise, st))
+    strong = [s for snr, s in candidates if snr >= MIN_PEAK_SNR]
+    chosen = strong if len(strong) >= MIN_STAMPS else [s for _, s in candidates]
+    if len(chosen) < MIN_STAMPS:
         return None, half_a, half_p, 0
-    stamp = np.median(np.stack(stamps), axis=0)
+    if len(strong) < MIN_STAMPS:
+        logger.info("psf: streak stack from %d low-SNR streaks (only %d >= SNR %g)",
+                    len(chosen), len(strong), MIN_PEAK_SNR)
+    stamp = np.median(np.stack(chosen), axis=0)
     if stamp.max() > 0:
         stamp = stamp / stamp.max()
-    return stamp, half_a, half_p, len(stamps)
+    return stamp, half_a, half_p, len(chosen)
 
 
 # --------------------------------------------------------------------------
@@ -276,6 +319,10 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
     sh_ra, sh_dec = profile_shape(cut_ra), profile_shape(cut_dec)
     r, rad = radial_profile(stamp, half)
     win = min(half, max(10.0, 3.0 * max(sh_ra["fwhm"], sh_dec["fwhm"])))
+    # TEMP: lock the 2D stamp panel to a fixed +/-21px window so panels are
+    # directly comparable across frames. Revert to `win` (the adaptive window)
+    # to restore auto-scaling.
+    stamp_view = 21.0
 
     fig = Figure(figsize=(13, 4.6))
     ax0, ax1, ax2 = fig.subplots(1, 3)
@@ -285,13 +332,13 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
     ax0.contour(grid, grid, stamp, levels=[0.5], colors="cyan", linewidths=0.9)
     if axes is not None:
         for u, name, col in ((north, "N", "white"), (east, "E", "deepskyblue")):
-            L = 0.7 * win
+            L = 0.7 * stamp_view
             ax0.annotate("", xy=(L * u[0], L * u[1]), xytext=(0, 0),
                          arrowprops=dict(arrowstyle="->", color=col, lw=1.4))
             ax0.text(L * 1.13 * u[0], L * 1.13 * u[1], name, color=col, fontsize=9,
                      ha="center", va="center")
-    ax0.set_xlim(-win, win)
-    ax0.set_ylim(-win, win)
+    ax0.set_xlim(-stamp_view, stamp_view)
+    ax0.set_ylim(-stamp_view, stamp_view)
     ax0.set_title("stacked PSF (50% contour)")
     ax0.set_xlabel("Δx (px)")
     ax0.set_ylabel("Δy (px)")
@@ -311,7 +358,7 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
              ls="--", label=f"{b} FWHM {sh_dec['fwhm']:.1f}px")
     for lv in (0.25, 0.5, 0.75):
         ax2.axhline(lv, color="gray", ls=":", lw=0.7, alpha=0.6)
-    ax2.set_xlim(-win, win)
+    ax2.set_xlim(-stamp_view, stamp_view)  # TEMP: match the locked stamp window
     ax2.set_ylim(-0.05, 1.05)
     ax2.set_xlabel("Δ from center (px)")
     ax2.set_title(f"{a} (solid) / {b} (dashed) cuts")

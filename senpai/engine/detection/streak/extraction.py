@@ -553,11 +553,11 @@ def refine_robust_streak(
         fwhm=refined_width,
     )
 
-    # Plot the PSF/refinement diagnostic. Gated on the dedicated `streak` flag
+    # Plot the PSF/refinement diagnostic. Gated on the dedicated `psfs` flag
     # (small, ~<1MB) OR the broad `debug` flag (which also emits the heavy
     # kernel/CC plots) — so these can be kept on inline without the brutal ones.
     _plt_cfg = getattr(get_config(), "plotting", None)
-    if _plt_cfg is not None and (_plt_cfg.streak or _plt_cfg.debug):
+    if _plt_cfg is not None and (_plt_cfg.psfs or _plt_cfg.debug):
         import matplotlib.pyplot as plt
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
