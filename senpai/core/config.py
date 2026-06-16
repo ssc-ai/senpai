@@ -44,6 +44,13 @@ class PlottingConfig(BaseModel):
         ".npy stamp is saved alongside so the panels regenerate after the fact.",
         validation_alias=AliasChoices("psfs", "streak"),
     )
+    paper_ready: bool = Field(
+        default=False,
+        description="Also emit a title-less '<name>_clean.<ext>' copy of each saved "
+        "figure (PSF panels + night calibration/observability plots), for dropping "
+        "into a paper where the caption replaces the on-figure title. The normal "
+        "titled figure is still written.",
+    )
 
 
 class FastSolveConfig(BaseModel):

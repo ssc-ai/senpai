@@ -299,9 +299,38 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
 # --------------------------------------------------------------------------
 # renderers
 # --------------------------------------------------------------------------
+def paper_ready_enabled() -> bool:
+    """True when ``config.plotting.paper_ready`` is set — emit title-less copies."""
+    try:
+        from senpai.core.config import get_config
+        return bool(getattr(get_config().plotting, "paper_ready", False))
+    except Exception:
+        return False
+
+
+def strip_titles(fig) -> None:
+    """Blank the figure suptitle and every axes title for a caption-ready copy
+    (the figure caption replaces the on-figure title in a paper)."""
+    st = getattr(fig, "_suptitle", None)
+    if st is not None:
+        st.set_text("")
+    for ax in fig.axes:
+        if ax.get_title():
+            ax.set_title("")
+
+
+def clean_copy_path(path):
+    """``foo.png`` -> ``foo_clean.png`` (the title-less paper copy)."""
+    path = Path(path)
+    return path.with_name(f"{path.stem}_clean{path.suffix}")
+
+
 def _save(fig, png_path):
     FigureCanvasAgg(fig)
     fig.savefig(str(png_path), dpi=130)
+    if paper_ready_enabled():
+        strip_titles(fig)
+        fig.savefig(str(clean_copy_path(png_path)), dpi=130, bbox_inches="tight")
 
 
 def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
