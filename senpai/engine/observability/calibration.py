@@ -106,6 +106,34 @@ class FramePhoto:
         return self.ra_center_deg is not None and self.dec_center_deg is not None
 
 
+@dataclass(slots=True)
+class FrameTiming:
+    """Minimal timing + pointing record kept for EVERY frame in the night,
+    including frames that produced no photometry (dome closed, cloud, failed
+    plate-solve). Inter-frame overhead — readout + settle + slew — is mount
+    mechanics and frame cadence, independent of whether the photometry was
+    usable, so the overhead model is fit from this complete timeline rather than
+    only the minority of frames with trustworthy photometry.
+
+    Pointing is the *commanded* boresight (telescope) RA/Dec converted to alt/az:
+    it is present even when no WCS solved, and a commanded slew distance is the
+    right quantity for a slew-time model. ``fov_sq_deg`` is filled only when a
+    WCS solved (non-fit frames have no measured FoV); it feeds the contiguous-
+    grid step size, not the separations.
+
+    Carries the same attribute names (``timestamp``, ``exposure_time``,
+    ``altitude_deg``, ``azimuth_deg``, ``fov_sq_deg``) that ``_fit_slew_model``
+    reads, so the fit operates on a list of these unchanged.
+    """
+
+    timestamp: datetime | None
+    exposure_time: float | None
+    track_mode: str | None
+    altitude_deg: float | None
+    azimuth_deg: float | None
+    fov_sq_deg: float | None = None
+
+
 def _safe_iso(ts: str | None) -> datetime | None:
     if not ts:
         return None
@@ -352,6 +380,86 @@ def _extract_frame_photo(
     )
 
 
+def _extract_frame_timing(
+    frame_dict: dict[str, Any], track_mode_default: str
+) -> tuple[FrameTiming, float, float] | None:
+    """Timestamp + exposure + commanded boresight pointing for ONE frame, for the
+    inter-frame overhead (slew/settle/readout) model.
+
+    Unlike :func:`_extract_frame_photo` this keeps frames with no photometry —
+    slew/settle is mount mechanics, independent of the photometry — and reads the
+    *commanded* boresight RA/Dec (present even when no WCS solved) rather than the
+    plate-solved field center. ``fov_sq_deg`` is taken only when a WCS solved, so
+    the contiguous-grid step uses a measured FoV from good frames only.
+
+    alt/az is left unset here and filled later in a single vectorized astropy pass
+    (see :func:`_fill_timing_altaz`); the boresight RA/Dec is returned alongside
+    the record for that pass. Returns None when timestamp, exposure, or pointing
+    is missing (the frame can't be placed on the slew timeline)."""
+
+    fmd = frame_dict.get("frame_metadata") or {}
+    ts = _safe_iso(frame_dict.get("timestamp") or fmd.get("observation_time"))
+    exposure = fmd.get("exposure_time_seconds")
+    ra = fmd.get("boresight_ra_degrees")
+    dec = fmd.get("boresight_dec_degrees")
+    if ts is None or not exposure or ra is None or dec is None:
+        return None
+
+    # FoV (deg²) only when a WCS solved — non-fit frames have no measured FoV, and
+    # the contiguous-grid step size must come from good (solved) frames only.
+    wcs_meta = ((frame_dict.get("starfield") or {}).get("wcs_metadata")) or {}
+    fov_x = wcs_meta.get("x_fov_degrees")
+    fov_y = wcs_meta.get("y_fov_degrees")
+    fov_sq_deg = float(fov_x) * float(fov_y) if fov_x and fov_y else None
+
+    timing = FrameTiming(
+        timestamp=ts,
+        exposure_time=float(exposure),
+        track_mode=fmd.get("track_mode") or track_mode_default,
+        altitude_deg=None,
+        azimuth_deg=None,
+        fov_sq_deg=fov_sq_deg,
+    )
+    return timing, float(ra), float(dec)
+
+
+def _fill_timing_altaz(
+    timings: list[FrameTiming],
+    ras: list[float],
+    decs: list[float],
+    site: dict[str, Any] | None,
+) -> None:
+    """Fill boresight alt/az on the timing records in place, in one vectorized
+    astropy call (mirrors :func:`_add_moon_geometry`). No-op when astropy or the
+    site is unavailable — alt/az stays None and the overhead model simply finds
+    no usable pairs and falls back."""
+
+    if not timings:
+        return
+    if not site or site.get("latitude") is None or site.get("longitude") is None:
+        return
+    try:
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+        from astropy.time import Time
+        from astropy import units as u
+        import numpy as np
+    except ImportError:
+        logger.debug("astropy unavailable; skipping boresight alt/az")
+        return
+
+    loc = EarthLocation(
+        lat=site["latitude"] * u.deg, lon=site["longitude"] * u.deg,
+        height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m)
+    times = Time([t.timestamp for t in timings], scale="utc")
+    sky = SkyCoord(ra=np.asarray(ras) * u.deg, dec=np.asarray(decs) * u.deg)
+    aa = sky.transform_to(AltAz(obstime=times, location=loc))
+    alt = np.atleast_1d(aa.alt.deg)
+    az = np.atleast_1d(aa.az.deg)
+    for t, al, a in zip(timings, alt, az):
+        t.altitude_deg = float(al)
+        t.azimuth_deg = float(a)
+
+
 # --- aggregates ---------------------------------------------------------------
 
 
@@ -394,6 +502,10 @@ class NightCalibration:
     n_frames_with_photometry: int
     n_frames_with_wcs: int
     frames: list[FramePhoto] = field(default_factory=list)
+    # Timing + boresight pointing for EVERY frame (incl. non-photometry), for the
+    # inter-frame overhead / slew-time model. Not a calibration product, so it is
+    # intentionally excluded from to_dict() (like source_dir).
+    frame_timings: list[FrameTiming] = field(default_factory=list)
     zp_per_filter: dict[str, ZeroPointStat] = field(default_factory=dict)
     extinction_per_filter: dict[str, ExtinctionFit] = field(default_factory=dict)
     limiting_mag_p50_per_filter: dict[str, float] = field(default_factory=dict)
@@ -764,6 +876,9 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
     manifest = json.loads(manifest_path.read_text())
 
     frames: list[FramePhoto] = []
+    timings: list[FrameTiming] = []
+    timing_ras: list[float] = []
+    timing_decs: list[float] = []
     n_total = 0
     for entry in manifest.get("batches", []):
         # A skipped batch (resumed --skip-existing run) still has valid output;
@@ -784,17 +899,24 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         except json.JSONDecodeError as e:
             logger.warning("Skipping unreadable %s: %s", path, e)
             continue
-        for fd in run.get("sidereal_frames", []):
-            n_total += 1
-            fp = _extract_frame_photo(fd, batch_id, manifest.get("site"), "sidereal")
-            if fp is not None:
-                frames.append(fp)
-        for fd in run.get("rate_track_frames", []):
-            n_total += 1
-            fp = _extract_frame_photo(fd, batch_id, manifest.get("site"), "rate")
-            if fp is not None:
-                frames.append(fp)
+        for kind, default_mode in (("sidereal_frames", "sidereal"),
+                                   ("rate_track_frames", "rate")):
+            for fd in run.get(kind, []):
+                n_total += 1
+                fp = _extract_frame_photo(
+                    fd, batch_id, manifest.get("site"), default_mode)
+                if fp is not None:
+                    frames.append(fp)
+                # Timing/pointing is kept for EVERY frame (the non-fit ones too)
+                # for the slew-time model — see _extract_frame_timing.
+                tret = _extract_frame_timing(fd, default_mode)
+                if tret is not None:
+                    timing, ra, dec = tret
+                    timings.append(timing)
+                    timing_ras.append(ra)
+                    timing_decs.append(dec)
 
+    _fill_timing_altaz(timings, timing_ras, timing_decs, manifest.get("site"))
     n_with_wcs = sum(1 for f in frames if f.has_wcs)
     calib = NightCalibration(
         night_id=manifest.get("night_id", night_dir.name),
@@ -804,6 +926,7 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         n_frames_with_photometry=len(frames),
         n_frames_with_wcs=n_with_wcs,
         frames=frames,
+        frame_timings=timings,
         source_dir=str(night_dir),
     )
     _add_moon_geometry(calib)
@@ -818,11 +941,13 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
     calib.limiting_mag_p50_per_filter = _summarize_limiting_mag(frames, "limiting_magnitude_50")
     calib.limiting_mag_p90_per_filter = _summarize_limiting_mag(frames, "limiting_magnitude_90")
 
+    n_placed = sum(1 for t in timings if t.altitude_deg is not None)
     logger.info(
-        "NightCalibration %s: %d/%d frames had photometry, %d had WCS; "
+        "NightCalibration %s: %d/%d frames had photometry, %d had WCS, "
+        "%d/%d frames placed on the slew timeline (boresight); "
         "filters with ZP: %s; extinction fits: %s",
         calib.night_id, calib.n_frames_with_photometry, calib.n_frames_total,
-        calib.n_frames_with_wcs,
+        calib.n_frames_with_wcs, n_placed, len(timings),
         sorted(calib.zp_per_filter.keys()),
         sorted(calib.extinction_per_filter.keys()),
     )
@@ -1016,8 +1141,18 @@ def plot_calibration(source, output_dir: str | Path,
 def _save(fig, path: Path) -> Path:
     import matplotlib.pyplot as plt
 
+    from senpai.engine.plotting.psf import (
+        clean_copy_path, paper_ready_enabled, strip_titles,
+    )
+
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")
+    # Paper-ready: also drop a title-less copy beside it for figure captions.
+    if paper_ready_enabled():
+        strip_titles(fig)
+        clean = clean_copy_path(path)
+        fig.savefig(clean, dpi=150, bbox_inches="tight")
+        logger.info("Wrote %s", clean)
     plt.close(fig)
     logger.info("Wrote %s", path)
     return path
@@ -1245,24 +1380,19 @@ def _angsep_deg(alt1, az1, alt2, az2) -> float:
     return math.degrees(2 * math.asin(min(1.0, math.sqrt(d))))
 
 
-def _fit_slew_model(frames: list[FramePhoto]) -> dict | None:
-    """Fit the inter-frame overhead model (readout + settle + slew) from the
-    night's time-ordered frames.
+def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
+    """Time-consecutive (separation_deg, overhead_s) pairs shared by the slew fit
+    and its empirical fallback, so both see the same gap/clock filtering.
 
     Pairs are consecutive in time across ALL frames (sidereal and rate) — sorting
     a single track mode would skip over interleaved frames and inflate the gaps.
-    The lower-envelope (per-bin p10) fit is robust to the minority of pairs whose
-    separation is rate-track motion rather than a slew, and to contingent delays
-    (plate-solve retries, downloads) that only ever sit *above* the floor.
-
-    Returns the fitted scalars, the contiguous-grid cadence overhead (one
-    FoV-width slew), and the raw (separation, overhead) cloud + envelope for
-    plotting; or None if there aren't enough usable pairs.
-    """
-    import numpy as np
+    ``timings`` is any sequence of records exposing ``timestamp``,
+    ``exposure_time``, ``altitude_deg``, ``azimuth_deg`` (FrameTiming for the
+    full timeline; FramePhoto works too). Returns the sorted, usable records plus
+    parallel separation/overhead lists."""
 
     fr = sorted(
-        (f for f in frames
+        (f for f in timings
          if f.timestamp and f.exposure_time
          and f.altitude_deg is not None and f.azimuth_deg is not None),
         key=lambda f: f.timestamp,
@@ -1276,6 +1406,54 @@ def _fit_slew_model(frames: list[FramePhoto]) -> dict | None:
         dist.append(_angsep_deg(a.altitude_deg, a.azimuth_deg,
                                 b.altitude_deg, b.azimuth_deg))
         over.append(ov)
+    return fr, dist, over
+
+
+def _empirical_overhead(timings) -> tuple[float | None, str]:
+    """Best-effort inter-frame overhead when the full two-regime fit can't be
+    constrained (too few distinct slew distances — e.g. a night that parked on a
+    handful of fields). Uses the night's *observed* cadence rather than a flat
+    guess: the median overhead of pairs that actually slewed (≥ _SLEW_MIN_DEG —
+    readout + settle + slew, the cadence-relevant quantity), or, when too few of
+    those exist, the median over all usable pairs (at least readout + settle).
+    Returns (overhead_s, label), or (None, "") when there's no usable timing at
+    all so the caller can apply its last-resort default."""
+    import numpy as np
+
+    _fr, dist, over = _slew_pairs(timings)
+    if not over:
+        return None, ""
+    dist, over = np.array(dist), np.array(over)
+    slewed = dist >= _SLEW_MIN_DEG
+    if int(slewed.sum()) >= _SLEW_ENV_MIN_PTS:
+        return float(np.median(over[slewed])), "median observed slew cadence"
+    return float(np.median(over)), "median observed inter-frame gap"
+
+
+def _fit_slew_model(timings) -> dict | None:
+    """Fit the inter-frame overhead model (readout + settle + slew) from the
+    night's time-ordered frames.
+
+    ``timings`` is the night's per-frame timing+pointing records (FrameTiming),
+    which cover EVERY frame — including the non-photometry ones (dome closed,
+    cloud, failed plate-solve) — via the commanded boresight pointing. Slew and
+    settle are mount mechanics, independent of photometry, so fitting from the
+    full timeline rather than only the ~photometric frames both sharpens the fit
+    and lets it succeed on nights where the photometric subset alone undersamples
+    the slew-distance bins.
+
+    The lower-envelope (per-bin p10) fit is robust to the minority of pairs whose
+    separation is rate-track motion rather than a slew, and to contingent delays
+    (plate-solve retries, downloads) that only ever sit *above* the floor.
+
+    Returns the fitted scalars, the contiguous-grid cadence overhead (one
+    FoV-width slew), and the raw (separation, overhead) cloud + envelope for
+    plotting; or None if there aren't enough usable pairs (the caller then uses
+    _empirical_overhead).
+    """
+    import numpy as np
+
+    fr, dist, over = _slew_pairs(timings)
     if len(dist) < 2 * _SLEW_ENV_MIN_PTS:
         return None
     dist, over = np.array(dist), np.array(over)
@@ -1353,10 +1531,21 @@ def _data_search_rate(calib: NightCalibration):
     #
     # The per-field cadence is exposure + inter-frame overhead, where the overhead
     # is the fitted contiguous-grid value (readout + settle + one-FoV-width slew)
-    # rather than a flat guess; it falls back to 1.0s if the slew fit is unusable.
+    # rather than a flat guess. The fit (and its fallback) run on the night's full
+    # frame_timings — every frame, incl. non-photometric ones, via boresight
+    # pointing — since slew/settle is mount mechanics independent of photometry.
+    # If the two-regime fit can't be constrained we fall back to the night's
+    # observed cadence (median slew overhead), and only to a flat 1.0s when there
+    # is no usable timing at all.
     target_snr, min_exposure_s = 3.0, 0.1
-    slew = _fit_slew_model(calib.frames)
-    overhead_s = slew["grid_overhead_s"] if slew else 1.0
+    timings = calib.frame_timings or calib.frames  # latter: legacy/test calibs
+    slew = _fit_slew_model(timings)
+    if slew:
+        overhead_s, overhead_src = slew["grid_overhead_s"], None
+    else:
+        overhead_s, overhead_src = _empirical_overhead(timings)
+        if overhead_s is None:
+            overhead_s, overhead_src = 1.0, "default"
 
     m_l, s_l, e_l, fov_l, lim_l, lim50s = [], [], [], [], [], []
     for f in _zp_frames(calib.frames):
@@ -1414,6 +1603,7 @@ def _data_search_rate(calib: NightCalibration):
         "n_stars": int(len(mags)), "target_snr": target_snr,
         "noise_floor_snr": s_noise,
         "overhead_s": overhead_s,
+        "overhead_src": overhead_src,  # None when the full fit was used
         "overhead_model": None if slew is None else {
             "readout_s": slew["readout_s"], "settle_s": slew["settle_s"],
             "slew_rate_deg_s": slew["slew_rate_deg_s"],
@@ -1445,7 +1635,9 @@ def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
                   f"+ {om['fov_width_deg']:.1f}° slew @ "
                   f"{om['slew_rate_deg_s']:.1f}°/s")
     else:
-        oh_txt = f"overhead {d['overhead_s']:.1f}s (default; slew fit unavailable)"
+        src = d.get("overhead_src") or "default"
+        oh_txt = (f"overhead {d['overhead_s']:.1f}s "
+                  f"({src}; slew fit unavailable)")
     ax.set_title(f"{meta['night_id']}: search rate vs magnitude "
                  f"({d['n_stars']} isolated stars, sidereal; SNR debiased by "
                  f"{d.get('noise_floor_snr', 0):.2f}σ noise floor, scaled to "
@@ -1456,7 +1648,7 @@ def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_slew_model(calib: NightCalibration):
-    return _fit_slew_model(calib.frames)
+    return _fit_slew_model(calib.frame_timings or calib.frames)
 
 
 def _render_slew_model(d, meta, output_dir, plt, np) -> Path:
@@ -2788,9 +2980,141 @@ def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "sky_background_vs_moon.png")
 
 
+def _data_sky_background_altaz(calib: NightCalibration):
+    """Sky brightness as a function of where the telescope was pointed (alt/az)
+    rather than Moon separation — the diagnostic that still works on a new-Moon
+    night, where the Moon-separation plot is uninformative.
+
+    Two signals: (1) the zenith trend — natural sky brightens toward the horizon
+    (longer airglow/atmosphere path), so μ should rise toward zenith; (2)
+    directional light pollution — a city/ground dome shows as a localized
+    brightening at a fixed azimuth and low elevation, visible as a bright lobe in
+    the all-sky map.
+
+    Brightness is the per-pixel surface brightness μ (mag/arcsec², exposure- and
+    plate-scale-normalized; lower = brighter); frames lacking the inputs for μ
+    fall back to the exposure-normalized sky rate (ADU/s) so different exposure
+    times stay comparable. Below-horizon pointings (alt < 0, slew/edge artifacts)
+    are dropped."""
+    import numpy as np
+
+    rows = []  # (alt, az, mu_or_nan, rate_or_nan)
+    for f in calib.frames:
+        if (f.altitude_deg is None or f.azimuth_deg is None
+                or f.altitude_deg < 0):
+            continue
+        mu = _sky_mu(f)
+        rate = (f.sky_adu / f.exposure_time) \
+            if (f.sky_adu and f.exposure_time) else None
+        if mu is None and rate is None:
+            continue
+        rows.append((float(f.altitude_deg), float(f.azimuth_deg),
+                     float(mu) if mu is not None else float("nan"),
+                     float(rate) if rate is not None else float("nan")))
+    if len(rows) < 10:
+        return None
+    alt = np.array([r[0] for r in rows])
+    az = np.array([r[1] for r in rows])
+    mu = np.array([r[2] for r in rows])
+    rate = np.array([r[3] for r in rows])
+
+    has_mu = bool(np.isfinite(mu).sum() >= 10)
+    y = mu if has_mu else rate
+    keep = np.isfinite(y)
+    alt, az, y = alt[keep], az[keep], y[keep]
+
+    # Median trend in elevation bins (the zenith-darkening curve).
+    edges = np.arange(0, 91, 10)
+    ex, ey, e_lo, e_hi = [], [], [], []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        v = y[(alt >= lo) & (alt < hi)]
+        if len(v) >= 5:
+            md = float(np.median(v))
+            ex.append((lo + hi) / 2)
+            ey.append(md)
+            e_lo.append(md - float(np.percentile(v, 16)))
+            e_hi.append(float(np.percentile(v, 84)) - md)
+    return {
+        "alt": list(alt), "az": list(az), "y": list(y), "has_mu": has_mu,
+        "elev_binned": {"x": ex, "y": ey, "e_lo": e_lo, "e_hi": e_hi},
+        "median": float(np.median(y)), "n": int(len(y)),
+    }
+
+
+def _render_sky_background_altaz(d, meta, output_dir, plt, np) -> Path:
+    has_mu = d["has_mu"]
+    alt = np.array(d["alt"])
+    az = np.array(d["az"])
+    y = np.array(d["y"])
+    ylabel = "sky surface brightness (mag/arcsec²)" if has_mu \
+        else "sky rate (ADU/s)"
+    # Make contamination (a brighter sky) pop: with μ a *low* value is bright, so
+    # reverse the map (magma_r) → bright sky = bright yellow; with the ADU/s
+    # fallback a *high* value is bright, so magma already maps bright → yellow.
+    sky_cmap = "magma_r" if has_mu else "magma"
+
+    fig = plt.figure(figsize=(15, 6.8))
+
+    # Panel 1 — all-sky map: az around the ring, zenith at the centre. A bright
+    # lobe at one azimuth near the rim (low elevation) is a directional dome.
+    ax1 = fig.add_subplot(1, 2, 1, projection="polar")
+    ax1.set_theta_zero_location("N")
+    ax1.set_theta_direction(-1)
+    sc1 = ax1.scatter(np.radians(az), 90 - alt, c=y, cmap=sky_cmap, s=24,
+                      alpha=0.85, edgecolors="none")
+    ax1.set_ylim(0, 90)
+    ax1.set_yticks([15, 30, 45, 60, 75])
+    ax1.set_yticklabels([f"{90 - r}°" for r in [15, 30, 45, 60, 75]],
+                        fontsize=8)
+    # Keep the cardinal letters for orientation, but also show the azimuth in
+    # degrees (every 45°) so the ring lines up with the azimuth colour scale on
+    # the elevation panel.
+    _az_ticks = list(range(0, 360, 45))
+    _cardinal = {0: "N", 90: "E", 180: "S", 270: "W"}
+    ax1.set_thetagrids(
+        _az_ticks,
+        labels=[f"{_cardinal[a]}\n{a}°" if a in _cardinal else f"{a}°"
+                for a in _az_ticks],
+        fontsize=8)
+    cb1 = fig.colorbar(sc1, ax=ax1, pad=0.10, shrink=0.8)
+    cb1.set_label(ylabel + ("  (↓ = brighter sky)" if has_mu else ""))
+    ax1.set_title("all-sky map (zenith at centre, horizon at rim)\n"
+                  "bright lobe near rim = directional light dome", fontsize=10)
+
+    # Panel 2 — brightness vs elevation: the zenith-darkening trend, coloured by
+    # azimuth (cyclic) so a direction that rides systematically bright is visible.
+    ax2 = fig.add_subplot(1, 2, 2)
+    sc2 = ax2.scatter(alt, y, c=az, cmap="twilight", s=16, alpha=0.65,
+                      vmin=0, vmax=360)
+    b = d["elev_binned"]
+    if b["x"]:
+        ax2.errorbar(b["x"], b["y"], yerr=[b["e_lo"], b["e_hi"]], fmt="o-",
+                     color="black", ms=7, capsize=4, capthick=1.5,
+                     elinewidth=1.5, zorder=5, label="binned median ± 16/84%")
+    if has_mu:
+        ax2.invert_yaxis()  # brighter sky (smaller mag) at the top
+    cb2 = fig.colorbar(sc2, ax=ax2)
+    cb2.set_label("azimuth (deg)")
+    ax2.set_xlabel("elevation (deg)  —  toward zenith →")
+    ax2.set_ylabel(ylabel + ("  (lower = brighter)" if has_mu else ""))
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="best", fontsize=9)
+
+    mi = meta.get("moon_illumination")
+    illum = f"Moon {100 * mi:.0f}%" if mi is not None else ""
+    med_txt = (f"median {d['median']:.2f} mag/arcsec²" if has_mu
+               else f"median {d['median']:.0f} ADU/s")
+    fig.suptitle(f"{meta['night_id']}: sky background vs pointing "
+                 f"({d['n']} frames; {illum}; {med_txt})", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    return _save(fig, output_dir / "sky_background_vs_altaz.png")
+
+
 _PLOT_BUILDERS.update({
     "fwhm_vs_time": (_data_fwhm, _render_fwhm),
     "sky_background_vs_moon": (_data_sky_background, _render_sky_background),
+    "sky_background_vs_altaz": (
+        _data_sky_background_altaz, _render_sky_background_altaz),
 })
 
 

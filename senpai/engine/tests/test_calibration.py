@@ -8,11 +8,17 @@ import math
 
 import pytest
 
+from datetime import datetime, timedelta, timezone
+
 from senpai.engine.observability.calibration import (
     FramePhoto,
+    FrameTiming,
     _airmass,
+    _empirical_overhead,
     _extract_frame_photo,
+    _extract_frame_timing,
     _fit_extinction,
+    _fit_slew_model,
     _percentile,
     _summarize_limiting_mag,
     _summarize_zp,
@@ -261,3 +267,130 @@ def test_summarize_limiting_mag_excludes_rate_frames():
     ]
     out = _summarize_limiting_mag(frames, "limiting_magnitude_50")
     assert out["V"] == pytest.approx(19.1)  # median of the two sidereal only
+
+
+# --- inter-frame overhead (slew/settle) model ---------------------------------
+
+
+class TestExtractFrameTiming:
+    """Timing+pointing is kept for EVERY frame (incl. non-photometric ones) via
+    the commanded boresight, since slew/settle is mount mechanics independent of
+    photometry — see _extract_frame_timing."""
+
+    def _frame(self, **overrides):
+        base = {
+            "timestamp": "2026-05-27T07:00:00+00:00",
+            "frame_metadata": {
+                "exposure_time_seconds": 5.0,
+                "track_mode": "rate",
+                "boresight_ra_degrees": 180.0,
+                "boresight_dec_degrees": 30.0,
+            },
+            "photometry_summary": None,  # non-fit frame: no photometry at all
+        }
+        base.update(overrides)
+        return base
+
+    def test_keeps_frame_without_photometry(self):
+        # _extract_frame_photo would drop this frame; timing must still keep it.
+        assert _extract_frame_photo(self._frame(), "b", None, "rate") is None
+        ret = _extract_frame_timing(self._frame(), "rate")
+        assert ret is not None
+        timing, ra, dec = ret
+        assert (ra, dec) == (180.0, 30.0)
+        assert timing.exposure_time == 5.0
+        assert timing.track_mode == "rate"
+        assert timing.altitude_deg is None  # filled later, vectorized
+        assert timing.fov_sq_deg is None    # no WCS solve → no measured FoV
+
+    def test_none_without_boresight(self):
+        frame = self._frame()
+        frame["frame_metadata"] = {"exposure_time_seconds": 5.0}
+        assert _extract_frame_timing(frame, "rate") is None
+
+    def test_none_without_exposure(self):
+        frame = self._frame()
+        frame["frame_metadata"]["exposure_time_seconds"] = None
+        assert _extract_frame_timing(frame, "rate") is None
+
+    def test_fov_only_from_solved_frames(self):
+        # Only when a WCS solved does the record carry a (measured) FoV — used
+        # for the contiguous-grid step, which must come from good frames only.
+        frame = self._frame()
+        frame["starfield"] = {"wcs_metadata": {
+            "x_fov_degrees": 2.0, "y_fov_degrees": 1.5}}
+        timing, _ra, _dec = _extract_frame_timing(frame, "sidereal")
+        assert timing.fov_sq_deg == pytest.approx(3.0)
+
+
+def _timing(t0, secs, exposure, alt, az, fov=None):
+    return FrameTiming(
+        timestamp=t0 + timedelta(seconds=secs),
+        exposure_time=exposure, track_mode="sidereal",
+        altitude_deg=alt, azimuth_deg=az, fov_sq_deg=fov,
+    )
+
+
+class TestEmpiricalOverhead:
+    """Fallback overhead when the full two-regime fit can't be constrained:
+    the night's observed cadence, not a flat guess."""
+
+    def test_no_pairs_returns_none(self):
+        # Fewer than two placeable frames → no pairs → caller uses its default.
+        assert _empirical_overhead([]) == (None, "")
+
+    def test_prefers_observed_slew_cadence(self):
+        # A run that parks on two fields, alternating with a big (~90°) slew at a
+        # steady ~9 s overhead. Too few distinct distances for the line fit, but
+        # the median slewed-pair overhead is exactly what we want as a fallback.
+        t0 = datetime(2026, 5, 27, 7, tzinfo=timezone.utc)
+        timings, t = [], 0.0
+        for i in range(20):
+            alt, az = (60.0, 10.0) if i % 2 == 0 else (60.0, 100.0)
+            timings.append(_timing(t0, t, 5.0, alt, az))
+            t += 14.0  # 5 s exposure + ~9 s overhead
+        overhead, label = _empirical_overhead(timings)
+        assert overhead == pytest.approx(9.0, abs=0.5)
+        assert "slew" in label
+
+    def test_full_fit_unusable_falls_back_not_crashes(self):
+        # Same single-distance data: the strict fit can't constrain the slope.
+        t0 = datetime(2026, 5, 27, 7, tzinfo=timezone.utc)
+        timings, t = [], 0.0
+        for i in range(20):
+            alt, az = (60.0, 10.0) if i % 2 == 0 else (60.0, 100.0)
+            timings.append(_timing(t0, t, 5.0, alt, az))
+            t += 14.0
+        assert _fit_slew_model(timings) is None
+        overhead, _label = _empirical_overhead(timings)
+        assert overhead and overhead > 1.0
+
+
+class TestFitSlewModelOnTimings:
+    def test_fits_two_regime_model_from_timings(self):
+        # Synthetic night: repeat exposures (readout-only) interleaved with slews
+        # of varied separation at a known rate, so the readout floor and a rising
+        # slew line are both well sampled across several distance bins. The slew
+        # is in ALTITUDE at fixed azimuth, where Δalt equals the on-sky
+        # separation exactly (no cos(alt) compression), and the slew time goes in
+        # the gap BEFORE the slewed frame — Δt(i→i+1)=exposure+readout+slew.
+        t0 = datetime(2026, 5, 27, 7, tzinfo=timezone.utc)
+        rate, readout, exposure, az = 10.0, 2.0, 5.0, 10.0  # deg/s, s, s, deg
+        base, seps = 45.0, [0.5, 1.0, 3.0, 6.0, 12.0, 30.0]
+        # alt sequence: two repeats at base (a readout-only pair to anchor the
+        # floor) then a slew of `sep` to base+sep.
+        alts = [base]
+        for _block in range(8):
+            for sep in seps:
+                alts += [base, base, base + sep]
+        timings, t = [_timing(t0, 0.0, exposure, alts[0], az, fov=4.0)], 0.0
+        for prev, alt in zip(alts, alts[1:]):
+            t += exposure + readout + abs(alt - prev) / rate
+            timings.append(_timing(t0, t, exposure, alt, az, fov=4.0))
+        d = _fit_slew_model(timings)
+        assert d is not None
+        assert d["readout_s"] == pytest.approx(readout, abs=0.5)
+        assert d["slew_rate_deg_s"] == pytest.approx(rate, rel=0.2)
+        # grid step = sqrt(median fov) = 2°, so cadence overhead ≈ bias + 2/rate.
+        assert d["fov_width_deg"] == pytest.approx(2.0, abs=0.01)
+        assert d["grid_overhead_s"] > d["readout_s"]
