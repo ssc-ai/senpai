@@ -118,6 +118,14 @@ class SimplePhotometrySummary:
     # then the blend's, not this star's — the dominant fake-faint-SNR source).
     # Downstream plots/aggregates should drop non-isolated stars.
     stars_isolated: list[bool] | None = None
+    # Literal aperture/annulus geometry (pixels) actually used on this frame —
+    # the PSF-factor policy resolved against this frame's measured FWHM, kept so
+    # a reader needn't re-derive it from FWHM × factors (lossy for rate frames).
+    # 'circle' (sidereal): aperture_radius_px + bg_inner_px/bg_outer_px.
+    # 'rectangle' (rate): width_px/length_px + bg_width/length_in/out_px + theta_rad.
+    # None on the no-photometry early-return paths. The constant factors behind
+    # these are recorded once per run in the result's top-level `photometry` block.
+    aperture_geometry: dict | None = None
 
     def __post_init__(self):
         self.median_snr = round(self.median_snr, 2)
@@ -628,6 +636,16 @@ def measure_simple_starfield_photometry(
     # Calculate summary statistics
     summary = _calculate_simple_photometry_summary(results, starfield, config, frame_index=frame_index)
 
+    # Record the literal circular aperture/annulus pixel dims used here, so the
+    # geometry is recoverable per frame without re-deriving FWHM × factors.
+    summary.aperture_geometry = {
+        "shape": "circle",
+        "fwhm_px": round(float(fwhm), 3),
+        "aperture_radius_px": round(float(aperture_radius), 3),
+        "bg_inner_px": round(float(bg_inner), 3),
+        "bg_outer_px": round(float(bg_outer), 3),
+    }
+
     logger.info(f"Measured photometry for {len(results)}/{len(catalog_stars)} catalog stars")
 
     # Diagnostic limiting-mag plot for the sidereal path. The rate-track path
@@ -962,6 +980,21 @@ def measure_rate_starfield_photometry(
 
     # Calculate summary statistics (same function as circular version)
     summary = _calculate_simple_photometry_summary(results, starfield, config, frame_index=frame_index)
+
+    # Record the literal rectangular aperture/annulus pixel dims used here. The
+    # rate box is streak-aligned (theta_rad) and can't be reconstructed from
+    # FWHM × factors alone, so the resolved values are kept per frame.
+    summary.aperture_geometry = {
+        "shape": "rectangle",
+        "fwhm_px": round(float(fwhm), 3),
+        "width_px": round(float(width_pixels), 3),
+        "length_px": round(float(length_pixels), 3),
+        "bg_width_in_px": round(float(bg_width_in), 3),
+        "bg_width_out_px": round(float(bg_width_out), 3),
+        "bg_length_in_px": round(float(bg_length_in), 3),
+        "bg_length_out_px": round(float(bg_length_out), 3),
+        "theta_rad": round(float(theta), 5),
+    }
 
     logger.info(
         f"Measured rate-track photometry for {len(results)}/{len(catalog_stars)} catalog stars "

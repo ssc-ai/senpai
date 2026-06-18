@@ -213,6 +213,12 @@ class SenpaiRunResult(BaseModel):
     senpai_version: str = senpai.__version__
     error_message: str | None = None
     scale_factor: float | None = None  # Store the actual scale factor used for the entire run
+    # Run-level aperture/annulus definition: the constant PSF-factor policy that
+    # sized every frame's apertures (aperture_radius_factor, bg_inner_factor,
+    # bg_outer_factor) plus a human-readable definition. None when the run did no
+    # photometry. The per-frame *literal* pixel dims live in each
+    # photometry_summary.aperture_geometry; this records the factors once.
+    photometry: dict | None = None
     frame_shifts: list[FrameShift] = []
     frame_shifts_failed: list[FrameShift] = []
     sidereal_frames: list[SiderealFrameSerializable] = []
@@ -766,12 +772,45 @@ class SenpaiRun(BaseModel):
             )
             rate_track_frames_serializable.append(serializable)
 
+        # Run-level aperture/annulus definition — the constant PSF-factor policy
+        # that sized every frame's apertures, recorded once (per-frame literal
+        # pixel dims live in each photometry_summary.aperture_geometry). Only
+        # emitted when the run actually measured photometry. Reads the same
+        # global PhotometryConfig the measurement used; defensively skipped if
+        # config isn't initialized (e.g. a unit test building a run directly).
+        photometry_block = None
+        if any(f.photometry_summary for f in self.sidereal_frames) or any(
+            f.photometry_summary for f in self.rate_track_frames
+        ):
+            try:
+                from senpai.core.config import get_config
+
+                pcfg = get_config().photometry
+                photometry_block = {
+                    "aperture_radius_factor": pcfg.aperture_radius_factor,
+                    "bg_inner_factor": pcfg.bg_inner_factor,
+                    "bg_outer_factor": pcfg.bg_outer_factor,
+                    "definition": (
+                        "Aperture/annulus radii are multiples of each frame's measured "
+                        "PSF FWHM. Circular (sidereal): aperture_radius = "
+                        "aperture_radius_factor·FWHM, background annulus = "
+                        "[bg_inner_factor, bg_outer_factor]·FWHM. Rectangular (rate): "
+                        "width = 2·aperture_radius_factor·FWHM, length = streak_length + "
+                        "2·FWHM, with the background annulus padded by [bg_inner_factor, "
+                        "bg_outer_factor]·FWHM on each side. Per-frame literal pixel "
+                        "values: photometry_summary.aperture_geometry."
+                    ),
+                }
+            except RuntimeError:
+                logger.debug("Config not initialized; omitting run photometry block")
+
         # Create and return the result
         return SenpaiRunResult(
             id=self.id,
             num_frames=self.num_frames,
             collect_metadata=self.collect_metadata,
             compute_seconds=self.compute_seconds,
+            photometry=photometry_block,
             frame_shifts=self.frame_shifts,
             frame_shifts_failed=self.frame_shifts_failed,
             sidereal_frames=sidereal_frames_serializable,

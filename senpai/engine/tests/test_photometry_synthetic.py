@@ -251,6 +251,57 @@ def test_starfield_summary_counts_and_snr():
     assert len(summary.stars_mag) == len(summary.stars_snr)
 
 
+def test_starfield_records_circular_aperture_geometry():
+    """The summary carries the literal circular aperture/annulus pixel dims:
+    radius/inner/outer = factor × FWHM, so a reader needn't re-derive them."""
+    img, sf = _field_image_and_starfield()
+    _, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
+    geo = summary.aperture_geometry
+    assert geo is not None and geo["shape"] == "circle"
+    assert geo["fwhm_px"] == pytest.approx(FWHM)
+    assert geo["aperture_radius_px"] == pytest.approx(2.0 * FWHM)  # aperture_radius_factor
+    assert geo["bg_inner_px"] == pytest.approx(3.0 * FWHM)  # bg_inner_factor
+    assert geo["bg_outer_px"] == pytest.approx(5.0 * FWHM)  # bg_outer_factor
+
+
+def test_run_result_records_aperture_policy():
+    """to_result() emits a run-level `photometry` block carrying the PSF-factor
+    policy when the run measured photometry, so the output JSON documents how
+    apertures were sized without the original config.yaml."""
+    from senpai.engine.models.metadata import CollectionMetadata
+    from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
+
+    frame = SiderealFrame(
+        frame=_image(np.zeros((50, 50))),
+        index=0,
+        photometry_summary={"n_stars": 3, "aperture_geometry": {"shape": "circle"}},
+    )
+    run = SenpaiRun(
+        id="t", num_frames=1, collect_metadata=CollectionMetadata(),
+        sidereal_frames=[frame],
+    )
+    block = run.to_result().photometry
+    pcfg = get_config().photometry
+    assert block is not None
+    assert block["aperture_radius_factor"] == pcfg.aperture_radius_factor
+    assert block["bg_inner_factor"] == pcfg.bg_inner_factor
+    assert block["bg_outer_factor"] == pcfg.bg_outer_factor
+    assert "definition" in block
+
+
+def test_run_result_omits_photometry_block_without_photometry():
+    """A run that measured no photometry omits the run-level block entirely."""
+    from senpai.engine.models.metadata import CollectionMetadata
+    from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
+
+    frame = SiderealFrame(frame=_image(np.zeros((50, 50))), index=0, photometry_summary=None)
+    run = SenpaiRun(
+        id="t", num_frames=1, collect_metadata=CollectionMetadata(),
+        sidereal_frames=[frame],
+    )
+    assert run.to_result().photometry is None
+
+
 def test_starfield_no_fwhm_returns_empty():
     img, sf = _field_image_and_starfield()
     sf_no_fwhm = StarField.model_construct(
