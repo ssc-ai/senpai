@@ -2459,7 +2459,6 @@ def calculate_star_snrs_with_aperture_photometry(
         CircularAperture,
         RectangularAnnulus,
         RectangularAperture,
-        aperture_photometry,
     )
 
     # Determine frame type

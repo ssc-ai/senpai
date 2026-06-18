@@ -42,7 +42,10 @@ def test_create_app_uses_config_version(patched_app_env, _init_config):
 
 def test_create_app_registers_expected_routes(patched_app_env, _init_config):
     app = patched_app_env.create_app(_init_config)
-    paths = {route.path for route in app.routes}
+    # Assert against the OpenAPI path set (the stable public contract) rather than
+    # introspecting app.routes: FastAPI 0.137 keeps lazy _IncludedRouter wrappers
+    # in app.routes (no .path), so a {route.path ...} comprehension breaks there.
+    paths = set(app.openapi()["paths"])
     assert "/senpai/" in paths
     assert "/senpai/detect" in paths
     assert "/senpai/detect/upload" in paths
