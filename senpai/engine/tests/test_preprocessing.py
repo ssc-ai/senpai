@@ -19,6 +19,7 @@ from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
 from senpai.engine.models.metadata import FWHMMetadata, ImageMetadata
 from senpai.engine.utils.preprocessing import (
+    estimate_gain_from_sky,
     measure_background,
     preprocess_image,
     remove_background,
@@ -360,3 +361,51 @@ class TestPreprocessImage:
         steps = {m.step_type for m in out.processing_history}
         assert ProcessingStep.COLUMN_MEDIAN_SUBTRACT not in steps
         assert ProcessingStep.BACKGROUND_SUBTRACT not in steps
+
+
+# --- gain estimate from sky shot noise (photon transfer) ---------------------
+
+
+def _poisson_sky(sky_adu: float, gain: float, shape=(1500, 1500), seed=0):
+    """Flat-fielded sky frame whose shot noise encodes a known gain (e-/ADU).
+
+    sky electrons ~ Poisson(sky_adu * gain); ADU = electrons / gain, so
+    var(ADU) = sky_adu / gain and the true gain is recoverable as
+    sky_adu / var(ADU).
+    """
+    rng = np.random.default_rng(seed)
+    electrons = rng.poisson(sky_adu * gain, size=shape).astype(np.float64)
+    return electrons / gain
+
+
+class TestEstimateGainFromSky:
+    def test_recovers_known_gain(self):
+        for gain in (0.5, 1.0, 2.5):
+            adu = _poisson_sky(1200.0, gain)
+            est = estimate_gain_from_sky(adu, float(np.median(adu)))
+            assert est == pytest.approx(gain, rel=0.10)
+
+    def test_robust_to_gradient_and_stars(self):
+        gain = 1.6
+        adu = _poisson_sky(1200.0, gain)
+        # Smooth gradient (adjacent-column differencing should cancel it) and
+        # bright stars (MAD should reject them).
+        yy, xx = np.mgrid[0:adu.shape[0], 0:adu.shape[1]]
+        adu = adu + 0.003 * 1200.0 * (xx / adu.shape[1])
+        adu[::150, ::150] += 40000.0
+        est = estimate_gain_from_sky(adu, float(np.median(adu)))
+        assert est == pytest.approx(gain, rel=0.12)
+
+    def test_degenerate_inputs_return_none(self):
+        assert estimate_gain_from_sky(np.zeros((50, 50)), 0.0) is None
+        assert estimate_gain_from_sky(np.ones((20, 20)), 5.0) is None  # no noise
+        assert estimate_gain_from_sky(np.zeros((50, 50)), None) is None
+
+    def test_metadata_carries_gain(self):
+        """remove_column_and_row_medians records the measured gain alongside sky."""
+        img = _make_image(_poisson_sky(1200.0, 2.0))
+        out = remove_column_and_row_medians(img)
+        col_step = next(m for m in out.processing_history
+                        if m.step_type == ProcessingStep.COLUMN_MEDIAN_SUBTRACT)
+        g = col_step.parameters["gain_e_per_adu"]
+        assert g == pytest.approx(2.0, rel=0.10)

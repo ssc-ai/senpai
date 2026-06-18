@@ -52,6 +52,42 @@ def handle_negative_values(image: ProcessedFitsImage) -> ProcessedFitsImage:
     return image
 
 
+def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
+                           row_stride: int = 8) -> float | None:
+    """Photon-transfer gain (electrons per ADU) from sky shot noise in one frame.
+
+    For a sky-dominated frame the per-pixel ADU variance is the sky electron
+    count over gain²: ``var_ADU = sky_e/gain² = sky_ADU/gain`` (read noise
+    neglected — small when the sky is bright), so ``gain = sky_ADU / var_ADU``.
+    The per-pixel variance is measured from the MAD of *adjacent-column
+    differences*, which cancels smooth flat-field structure and sky gradients a
+    plain pixel std would mistake for noise (``var_ADU = var(diff)/2``); MAD is
+    robust to stars. ``sky_level_adu`` is the pre-subtraction sky median.
+
+    Returns ``None`` for a degenerate frame or non-physical result. Caveat: this
+    is a single-frame estimate, so per-pixel flat-field residuals still inflate
+    the variance and bias the gain slightly low. A two-frame difference PTC would
+    cancel that, but needs paired same-field frames the per-frame pipeline does
+    not currently hold — so this is the best measured gain available per frame,
+    and the night aggregate (median over all frames) tightens it.
+    """
+    if sky_level_adu is None or sky_level_adu <= 0.0:
+        return None
+    sub = array[::max(int(row_stride), 1), :]
+    diff = sub[:, :-1].astype(np.float64) - sub[:, 1:].astype(np.float64)
+    diff = diff[np.isfinite(diff)]
+    if diff.size < 1000:
+        return None
+    sigma_diff = float(np.median(np.abs(diff - np.median(diff))) * 1.4826)
+    var_adu = 0.5 * sigma_diff * sigma_diff
+    if var_adu <= 0.0:
+        return None
+    gain = float(sky_level_adu) / var_adu
+    if not np.isfinite(gain) or gain <= 0.0:
+        return None
+    return gain
+
+
 def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates: bool = False) -> ProcessedFitsImage:
     """Remove the median value of each column and row from the image"""
     from senpai.engine.models.images import ProcessingMetadata
@@ -71,12 +107,23 @@ def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates
     # it survives serialization for the calibration sky-background plot.
     sky_median_adu = float(np.median(array))
 
+    # Measure the detector gain (e-/ADU) from the sky shot noise while the raw
+    # sky level and its per-pixel noise are both still present (row/col subtract
+    # erases the level, not the variance, but we capture the gain here next to
+    # the sky level so both ride the same step metadata to calibration).
+    gain_e_per_adu = estimate_gain_from_sky(array, sky_median_adu)
+
     # Subtract column medians (shape: (1, n_cols))
     column_medians = np.median(array, axis=0)[np.newaxis, :]
     array -= column_medians
+    # ProcessingMetadata.parameters values are int|float|str (no None), so omit
+    # the gain key entirely when the estimate is unavailable (degenerate frame).
+    col_params = {"sky_median_adu": sky_median_adu}
+    if gain_e_per_adu is not None:
+        col_params["gain_e_per_adu"] = gain_e_per_adu
     col_metadata = ProcessingMetadata(
         step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT,
-        parameters={"sky_median_adu": sky_median_adu})
+        parameters=col_params)
     image.processing_history.append(col_metadata)
 
     # Subtract row medians (shape: (n_rows, 1))
