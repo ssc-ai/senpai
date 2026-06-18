@@ -38,7 +38,7 @@ _MAX_SOURCES = 60          # measure at most this many (brightest first)
 _ELONG_ROUND_MAX = 1.5     # median axis ratio <= this -> round -> sidereal
 _ELONG_STREAK_MIN = 1.8    # median axis ratio >= this (and aligned) -> rate
 _PA_ALIGN_MIN = 0.6        # axial concentration of streak position angles (0..1)
-# Calibrated on DAO01 1s frames (median source axis ratio): sidereal ~1.08,
+# Calibrated on DAO-01 1s frames (median source axis ratio): sidereal ~1.08,
 # slow-rate coverage ~1.22 (apparent motion < a pixel -> reads round, fine to
 # treat as sidereal), moderate-rate coverage ~2.17, fast calsat streak ~20. The
 # 1.5/1.8 band leaves the ambiguous slow-rate case as "round" and only calls

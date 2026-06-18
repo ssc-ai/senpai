@@ -155,7 +155,7 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
 
     ``TRKMODE`` is authoritative: burr records sidereal vs rate as the mount
     *actually tracked*, and writes ``sidereal`` when it tracked sidereal (a raw
-    scan of DAO01 shows coverage/photometric frames carrying both ``sidereal``
+    scan of DAO-01 shows coverage/photometric frames carrying both ``sidereal``
     and ``rate``, and every calsat leg ``rate``). So senpai's metadata classifier
     (TRKMODE first, then the RA/DEC-rate magnitude) already routes correctly from
     the header alone.

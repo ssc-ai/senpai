@@ -29,10 +29,10 @@ app:
   calibrations:
     auto_apply_darks: false
     # Per-night master flats from twilight_flats sequences (senpai-burr flats).
-    # The DAO01 response has a +10%/-12% centered dome — without division it
+    # The DAO-01 response has a +10%/-12% centered dome — without division it
     # puts a t-linear structured-background term in the photometric noise
     # (depth stopped improving past ~5s) and a ~0.1 mag position-dependent
-    # star-flux error. BINNING-only matching: DAO01 writes no FILTER keyword,
+    # star-flux error. BINNING-only matching: DAO-01 writes no FILTER keyword,
     # and listing it makes the matcher fail (flat never applied).
     auto_apply_flats: true
     auto_remove_column_median: true
@@ -50,7 +50,7 @@ app:
     flat_matching_headers:
     - BINNING
     master_darks_dir: null
-    master_flats_dir: /stars/data/processed/burr/calib
+    master_flats_dir: /path/to/master_flats
     max_dark_exposure_ratio: 1.5
     negative_clip_threshold: -1000
     oversample_threshold: 4.0
