@@ -10,10 +10,13 @@ import pytest
 
 from datetime import datetime, timedelta, timezone
 
+from types import SimpleNamespace
+
 from senpai.engine.observability.calibration import (
     FramePhoto,
     FrameTiming,
     _airmass,
+    _data_gain,
     _empirical_overhead,
     _extract_frame_photo,
     _extract_frame_timing,
@@ -116,6 +119,21 @@ class TestExtractFramePhoto:
         }
         fp = _extract_frame_photo(frame, "b", None, "sidereal")
         assert fp.multiband_zps == {"g": 24.6, "r": 24.3}
+
+    def test_aperture_geometry_lifted_from_summary(self):
+        frame = self._frame()
+        frame["photometry_summary"]["aperture_geometry"] = {
+            "shape": "circle", "fwhm_px": 3.5,
+            "aperture_radius_px": 7.0, "bg_inner_px": 10.5, "bg_outer_px": 17.5,
+        }
+        fp = _extract_frame_photo(frame, "b", None, "sidereal")
+        assert fp.aperture_geometry["shape"] == "circle"
+        assert fp.aperture_geometry["aperture_radius_px"] == 7.0
+
+    def test_aperture_geometry_none_on_legacy_summary(self):
+        # A summary predating aperture_geometry retention leaves the field None.
+        fp = _extract_frame_photo(self._frame(), "b", None, "sidereal")
+        assert fp.aperture_geometry is None
 
 
 # --- percentile + ZP summary --------------------------------------------------
@@ -394,3 +412,41 @@ class TestFitSlewModelOnTimings:
         # grid step = sqrt(median fov) = 2°, so cadence overhead ≈ bias + 2/rate.
         assert d["fov_width_deg"] == pytest.approx(2.0, abs=0.01)
         assert d["grid_overhead_s"] > d["readout_s"]
+
+
+# --- detector gain plot data (photon transfer from sky) ----------------------
+
+
+class TestGainPlotData:
+    def _frame(self, sky, gain):
+        f = _fp("V", 24.0)
+        f.sky_adu = sky
+        f.gain_e_per_adu = gain
+        return f
+
+    def _calib(self, frames):
+        return SimpleNamespace(frames=frames)
+
+    def test_collects_pairs_and_summarizes(self):
+        frames = [self._frame(s, g) for s, g in
+                  [(400.0, 2.0), (800.0, 2.1), (1200.0, 1.9), (1600.0, 2.0)]]
+        d = _data_gain(self._calib(frames))
+        assert d["n"] == 4
+        assert len(d["sky_adu"]) == 4 and len(d["gain"]) == 4
+        assert d["median"] == pytest.approx(2.0, abs=0.05)
+        assert d["std"] >= 0.0
+
+    def test_skips_frames_missing_gain_or_sky(self):
+        frames = [
+            self._frame(500.0, 2.0),
+            self._frame(600.0, None),   # no gain -> skipped
+            self._frame(None, 2.1),     # no sky  -> skipped
+            self._frame(700.0, 1.9),
+            self._frame(800.0, 2.2),
+        ]
+        d = _data_gain(self._calib(frames))
+        assert d["n"] == 3
+
+    def test_returns_none_with_too_few_points(self):
+        frames = [self._frame(500.0, 2.0), self._frame(600.0, 2.1)]
+        assert _data_gain(self._calib(frames)) is None

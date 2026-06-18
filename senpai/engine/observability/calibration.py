@@ -66,6 +66,9 @@ class FramePhoto:
     fwhm_px: float | None = None  # sidereal PSF FWHM median (detection_metadata)
     fwhm_std_px: float | None = None  # PSF FWHM spread across the field
     sky_adu: float | None = None  # flat-fielded sky level before row/col subtract
+    # Gain (e-/ADU) measured per frame from the sky shot noise (photon transfer);
+    # None on older runs predating the estimate. See estimate_gain_from_sky.
+    gain_e_per_adu: float | None = None
     pixel_scale_arcsec: float | None = None  # arcsec/pixel (x_fov / width)
     # CCD temperature (°C) from the raw header; ccd_warm flags frames taken well
     # above the night's setpoint (cooldown ramp) — high dark current / hot pixels,
@@ -100,6 +103,11 @@ class FramePhoto:
     streak_fwhm_px: float | None = None
     pixel_track_rate: float | None = None  # px/s
     track_rate_arcsec_per_s: float | None = None  # on-sky |rate|, plate-scale independent
+
+    # Literal aperture/annulus pixel dims used to measure this frame, lifted
+    # verbatim from photometry_summary.aperture_geometry (circle for sidereal,
+    # rectangle for rate). None on runs predating its retention.
+    aperture_geometry: dict[str, Any] | None = None
 
     @property
     def has_wcs(self) -> bool:
@@ -321,10 +329,13 @@ def _extract_frame_photo(
     # column-median step metadata (only present on runs after that capture
     # landed; older runs leave this None and the sky plot is skipped).
     sky_adu = None
+    gain_e_per_adu = None
     for step in (frame_dict.get("processing_history") or []):
         if isinstance(step, dict) and "column_median_subtract" in str(
                 step.get("step_type", "")).lower():
-            sky_adu = (step.get("parameters") or {}).get("sky_median_adu")
+            params = step.get("parameters") or {}
+            sky_adu = params.get("sky_median_adu")
+            gain_e_per_adu = params.get("gain_e_per_adu")
             break
 
     # Rate-track geometry — only meaningful on rate frames. (Burr leaves a
@@ -375,8 +386,10 @@ def _extract_frame_photo(
         fwhm_px=fwhm_px,
         fwhm_std_px=fwhm_std_px,
         sky_adu=sky_adu,
+        gain_e_per_adu=gain_e_per_adu,
         pixel_scale_arcsec=pixel_scale_arcsec,
         ccd_temp_c=ccd_temp,
+        aperture_geometry=summary.get("aperture_geometry"),
     )
 
 
@@ -511,6 +524,11 @@ class NightCalibration:
     limiting_mag_p50_per_filter: dict[str, float] = field(default_factory=dict)
     limiting_mag_p90_per_filter: dict[str, float] = field(default_factory=dict)
     moon_illumination: float | None = None  # 0–1 fraction at mid-night
+    # Aperture/annulus definition (PSF factors + human-readable note), lifted
+    # from a batch result's top-level `photometry` block so a standalone
+    # plot_data.json / night_calibration.json carries the photometry policy
+    # without the original config.yaml. None on runs predating its retention.
+    photometry: dict[str, Any] | None = None
     # Night output dir (holds manifest.json + batches/). Kept so pixel-level
     # plots (PSF profile) can re-read the few frames they need + their raw FITS;
     # not a calibration product, so it is intentionally excluded from to_dict().
@@ -532,9 +550,24 @@ class NightCalibration:
         sky_adu = _med([f.sky_adu for f in self.frames])
         sky_mu = _med([_sky_mu(f) for f in self.frames])
         moon_sep = _med([f.moon_sep_deg for f in self.frames])
+        # Detector gain (e-/ADU), measured per frame from sky shot noise. The
+        # night median over many frames beats any single frame; the spread flags
+        # an unreliable estimate (e.g. crowded fields or poor flat-fielding).
+        gains = [f.gain_e_per_adu for f in self.frames
+                 if f.gain_e_per_adu is not None]
+        gain_med = float(st.median(gains)) if gains else None
+        gain_std = float(st.pstdev(gains)) if len(gains) > 1 else None
         # Dominant-filter extinction (most frames).
         ext = max(self.extinction_per_filter.values(), key=lambda x: x.n,
                   default=None)
+        # Zenith transmission from first-order extinction, 10^(-0.4 k). Only emit
+        # it when physical (k >= 0 -> T <= 1). A negative fitted k -- sources
+        # "brightening" with airmass -- means the extinction fit is non-
+        # photometric (cloud-opacity swings swamped the airmass trend), so the
+        # transmission is unknown, not >1; report None rather than a bogus T > 1.
+        zen_trans = (10 ** (-0.4 * ext.k)) if ext else None
+        if zen_trans is not None and zen_trans > 1.0:
+            zen_trans = None
         lim50 = _med(list(self.limiting_mag_p50_per_filter.values())) \
             if self.limiting_mag_p50_per_filter else None
         return {
@@ -542,7 +575,7 @@ class NightCalibration:
             "moon_sep_median_deg": moon_sep,
             "extinction_k": ext.k if ext else None,
             "extinction_k_err": ext.k_err if ext else None,
-            "zenith_transmission": (10 ** (-0.4 * ext.k)) if ext else None,
+            "zenith_transmission": zen_trans,
             "clear_fraction": ext.clear_fraction if ext else None,
             "fwhm_px_median": fwhm,
             "fwhm_px_spread": fwhm_spread,
@@ -550,6 +583,9 @@ class NightCalibration:
             "n_ccd_warm_frames": n_ccd_warm,
             "sky_adu_median": sky_adu,
             "sky_mag_arcsec2_median": sky_mu,
+            "gain_e_per_adu_median": gain_med,
+            "gain_e_per_adu_std": gain_std,
+            "n_frames_gain": len(gains),
             "limiting_mag_50_median": lim50,
             "n_frames_photometry": self.n_frames_with_photometry,
         }
@@ -560,6 +596,7 @@ class NightCalibration:
             "sensor": self.sensor,
             "site": self.site,
             "moon_illumination": self.moon_illumination,
+            "photometry": self.photometry,
             "n_frames_total": self.n_frames_total,
             "n_frames_with_photometry": self.n_frames_with_photometry,
             "n_frames_with_wcs": self.n_frames_with_wcs,
@@ -690,6 +727,21 @@ def _clear_sky_zp_band(frames: list[FramePhoto]) -> tuple[float, float] | None:
     near = zps[np.abs(zps - mode) <= 0.4]
     sigma = float(np.std(near)) if len(near) >= 3 else 0.2
     return mode, sigma
+
+
+# Photometry is *forced* at every catalog star's WCS position (see
+# measure_simple_starfield_photometry), so a star's SNR is measured whether or
+# not it would have been independently *detected*. The SNR-vs-{magnitude,
+# exposure} curves therefore keep every positive-SNR forced measurement instead
+# of cutting at the nominal detection threshold (SNR≈3): cutting there imposes
+# survivorship bias — in a faint bin only the stars that happened to scatter
+# above 3 survive, so the binned median floors at ~3 instead of falling to the
+# true per-pixel noise floor (~0.9, the s_noise measured in _data_search_rate).
+# Upstream already drops snr<=0, so 0.0 here means "all forced measurements".
+# (The Moon ΔSNR plots keep the SNR≥3 cut: they compute a *ratio* at a fixed
+# reference magnitude and need well-measured flux on both sides, and they don't
+# exhibit the floor-at-3 artifact.)
+_PLOT_SNR_FLOOR = 0.0
 
 
 def _snr_consistent(snr: float, mag: float, f: FramePhoto,
@@ -879,6 +931,7 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
     timings: list[FrameTiming] = []
     timing_ras: list[float] = []
     timing_decs: list[float] = []
+    photometry_block: dict[str, Any] | None = None
     n_total = 0
     for entry in manifest.get("batches", []):
         # A skipped batch (resumed --skip-existing run) still has valid output;
@@ -899,6 +952,10 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         except json.JSONDecodeError as e:
             logger.warning("Skipping unreadable %s: %s", path, e)
             continue
+        # The aperture/annulus policy is a per-run constant; take it from the
+        # first batch that recorded one (all batches in a night share config).
+        if photometry_block is None and run.get("photometry"):
+            photometry_block = run["photometry"]
         for kind, default_mode in (("sidereal_frames", "sidereal"),
                                    ("rate_track_frames", "rate")):
             for fd in run.get(kind, []):
@@ -927,6 +984,7 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         n_frames_with_wcs=n_with_wcs,
         frames=frames,
         frame_timings=timings,
+        photometry=photometry_block,
         source_dir=str(night_dir),
     )
     _add_moon_geometry(calib)
@@ -1007,6 +1065,7 @@ def build_plot_data(calib: NightCalibration) -> dict:
         "night_id": calib.night_id,
         "site": calib.site,
         "moon_illumination": calib.moon_illumination,
+        "photometry": calib.photometry,
     }
     plots: dict[str, Any] = {}
     for name, (analysis, _render) in _PLOT_BUILDERS.items():
@@ -1355,6 +1414,53 @@ def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "zp_drift.png")
 
 
+# --- detector gain (photon transfer from sky shot noise) ----------------------
+# Per-frame gain (e-/ADU) measured from the sky background's shot noise (see
+# preprocessing.estimate_gain_from_sky). Plotting gain vs sky level is the method
+# self-check: the photon-transfer gain is a detector constant, so the points
+# should sit on a FLAT line. A systematic downward slope toward bright sky is the
+# fingerprint of flat-field residual (variance ∝ sky² biases the single-frame
+# gain low), telling you to trust the dark-sky end and/or move to a frame-
+# difference PTC. The night median (used downstream to convert the ADU zero point
+# to electrons) is drawn with its ±1σ spread.
+
+
+def _data_gain(calib: "NightCalibration"):
+    pts = [(f.sky_adu, f.gain_e_per_adu) for f in calib.frames
+           if f.gain_e_per_adu is not None and f.sky_adu is not None]
+    if len(pts) < 3:
+        return None
+    import statistics as st
+    gains = [g for _, g in pts]
+    return {
+        "sky_adu": [s for s, _ in pts],
+        "gain": gains,
+        "median": float(st.median(gains)),
+        "std": float(st.pstdev(gains)) if len(gains) > 1 else 0.0,
+        "n": len(gains),
+    }
+
+
+def _render_gain(d, meta, output_dir, plt, np) -> Path:
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.scatter(d["sky_adu"], d["gain"], s=12, alpha=0.5, color="tab:blue",
+               label=f"per-frame (n={d['n']})")
+    med, std = d["median"], d["std"]
+    ax.axhline(med, color="black", lw=1.8,
+               label=f"median = {med:.3f} ± {std:.3f} e-/ADU")
+    ax.axhspan(med - std, med + std, color="black", alpha=0.10)
+    ax.set_xlabel("sky level (ADU)")
+    ax.set_ylabel("gain (e-/ADU)")
+    ax.set_title(f"{meta['night_id']}: detector gain from sky shot noise\n"
+                 "flat vs sky ⇒ trustworthy; downward trend ⇒ flat-field residual")
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    return _save(fig, output_dir / "gain.png")
+
+
+_PLOT_BUILDERS.update({"gain": (_data_gain, _render_gain)})
+
+
 # --- inter-frame overhead (slew + settle + readout) model ---------------------
 # DATE-OBS is the exposure START, so for time-ordered frames i -> i+1 the gap
 # between successive starts decomposes as
@@ -1564,6 +1670,12 @@ def _data_search_rate(calib: NightCalibration):
     mg = np.array(m_l); sn = np.array(s_l); ex = np.array(e_l)
     fv = np.array(fov_l); lim = np.array(lim_l)
     median_lim50 = float(np.median(lim50s)) if lim50s else None
+    # 16/84 spread of the per-frame 50%-limiting magnitude, for the ± band on
+    # the limiting-mag line (mirrors snr_vs_mag_weathermasked).
+    lim50_band = ({"med": median_lim50,
+                   "lo": float(np.percentile(lim50s, 16)),
+                   "hi": float(np.percentile(lim50s, 84))}
+                  if lim50s else None)
 
     # Noise-floor SNR: median SNR of stars ≥2.5 mag past the limit (pure noise).
     faint = (mg > median_lim50 + 2.5) if median_lim50 is not None \
@@ -1600,6 +1712,7 @@ def _data_search_rate(calib: NightCalibration):
         "mags": mags, "rates": rates,
         "binned": {"x": centers, "y": medians, "err_lo": err_lo, "err_hi": err_hi},
         "median_lim50": median_lim50,
+        "lim50": lim50_band,
         "n_stars": int(len(mags)), "target_snr": target_snr,
         "noise_floor_snr": s_noise,
         "overhead_s": overhead_s,
@@ -1622,11 +1735,19 @@ def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
                     color="black", markersize=7, capsize=4, capthick=1.5,
                     elinewidth=1.5, alpha=0.85,
                     label="Binned data (median ± 1σ percentiles)")
-    if d["median_lim50"] is not None:
+    lim = d.get("lim50")
+    if lim is not None:
+        ax.axvspan(lim["lo"], lim["hi"], color="firebrick", alpha=0.10)
+        ax.axvline(lim["lo"], color="firebrick", ls=":", lw=1, alpha=0.6)
+        ax.axvline(lim["hi"], color="firebrick", ls=":", lw=1, alpha=0.6)
+        ax.axvline(lim["med"], color="firebrick", ls="--", lw=1.8, alpha=0.8,
+                   label=f"Limiting Mag (G={lim['med']:.2f}, "
+                         f"16/84: {lim['lo']:.2f}–{lim['hi']:.2f})")
+    elif d["median_lim50"] is not None:
         ax.axvline(d["median_lim50"], color="firebrick", linestyle="--",
                    linewidth=1.5, alpha=0.8,
-                   label=f"median lim. mag (50%) = {d['median_lim50']:.1f}")
-    ax.set_xlabel("Apparent Magnitude (Catalog)")
+                   label=f"Limiting Mag (G={d['median_lim50']:.2f})")
+    ax.set_xlabel("Gaia G magnitude (catalog)")
     ax.set_ylabel(f"Search Rate (deg²/hour to TARGET {d['target_snr']:.0f}σ)")
     om = d.get("overhead_model")
     if om and om.get("fov_width_deg"):
@@ -2304,7 +2425,6 @@ def _data_snr_vs_exposure(calib: NightCalibration):
     zp_mode, zp_sig = band
     ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
     k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
-    min_meas_snr = 3.0
     by_task: dict[str, list] = {}
     for f in _zp_frames(calib.frames):
         if (f.zero_point is None or not f.exposure_time or not f.stars_mag
@@ -2316,7 +2436,7 @@ def _data_snr_vs_exposure(calib: NightCalibration):
         by_task.setdefault(_frame_task(f), []).extend(
             (f.exposure_time, m, s * corr)
             for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
-            if s >= min_meas_snr and iso and _snr_consistent(s, m, f)
+            if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     order = [t for t in ("coverage", "photometric", "calsats", "other")
              if by_task.get(t)]
@@ -2427,7 +2547,10 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
     zp_mode, zp_sig = band
     ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
     k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
-    min_meas_snr = 3.0
+    # Nominal detection threshold — drawn as a reference line only; the curve
+    # data is no longer cut here (see _PLOT_SNR_FLOOR). Faint-end points now
+    # fall below this line toward the noise floor instead of asymptoting at 3.
+    ref_snr = 3.0
     cal_tasks = ("coverage", "photometric")
     mag_pts = []
     for f in _zp_frames(calib.frames):
@@ -2441,7 +2564,7 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
         mag_pts.extend(
             (f.exposure_time, m, s * corr)
             for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
-            if s >= min_meas_snr and iso and _snr_consistent(s, m, f)
+            if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     if not mag_pts:
         return None
@@ -2474,7 +2597,7 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
                  "lo": float(np.percentile(lims, 16)),
                  "hi": float(np.percentile(lims, 84))}
     return {"std_exps": std_exps, "lines": lines, "lim50": lim50,
-            "min_meas_snr": min_meas_snr, "zp_mode": zp_mode, "zp_sig": zp_sig}
+            "min_meas_snr": ref_snr, "zp_mode": zp_mode, "zp_sig": zp_sig}
 
 
 def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
@@ -2491,8 +2614,8 @@ def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
         ax.axvline(lim["lo"], color="red", ls=":", lw=1, alpha=0.6)
         ax.axvline(lim["hi"], color="red", ls=":", lw=1, alpha=0.6)
         ax.axvline(lim["med"], color="red", ls="--", lw=1.8,
-                   label=f"lim50 = {lim['med']:.2f} "
-                         f"(16/84: {lim['lo']:.2f}–{lim['hi']:.2f})")
+                   label=f"Limiting Mag (G={lim['med']:.2f}, "
+                         f"16/84: {lim['lo']:.2f}–{lim['hi']:.2f})")
     ax.axhline(d["min_meas_snr"], color="gray", ls=":", lw=1,
                label=f"SNR = {d['min_meas_snr']:.0f}")
     ax.set_yscale("log")
@@ -2705,6 +2828,10 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
     zp_mode, zp_sig = band
     ext_k = {filt: fit.k for filt, fit in calib.extinction_per_filter.items()}
     k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
+    # SNR≥3 anchors *bin selection* to a reliably-detected magnitude (forced
+    # photometry otherwise produces the most catalog stars in the faintest,
+    # noise-dominated bin). The per-bin SNR-vs-exposure points below keep all
+    # forced measurements (_PLOT_SNR_FLOOR), like the other SNR curves.
     min_meas_snr = 3.0
     usable = _usable_cal_frames(calib, zp_mode, zp_sig)
     best_mag = _best_sampled_mag(usable, min_meas_snr)
@@ -2719,7 +2846,7 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
                        * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
         ex = round(f.exposure_time)
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
-            if (iso and m and s and s >= min_meas_snr
+            if (iso and m and s > _PLOT_SNR_FLOOR
                     and _snr_consistent(s, m, f) and best_mag <= m < best_mag + 1):
                 prog[tk].setdefault(ex, []).append(s * corr)
     if not any(len(dd) >= 2 for dd in prog.values()):
