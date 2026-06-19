@@ -50,16 +50,25 @@ class DatasetSplitter:
         annotation_pattern: str = "*_point_sat.json",
         exclude_sidereal_from_lines: bool = True,  # Add parameter to control sidereal exclusion
         temporal_split: bool = True,  # Add parameter to control temporal vs random splitting
+        link: bool = False,  # Symlink images into split dirs instead of copying
+        train_cap: int = 0,  # Cap train to the most-recent N frames (0 = use all)
     ) -> Dict[str, List[str]]:
         """Split a COCO dataset into train/val/test sets.
 
         Args:
-            input_dir: Directory containing COCO files
+            input_dir: Directory containing COCO files (the "ready data" pool)
             output_dir: Output directory for split datasets
             image_pattern: Pattern to match image files
             annotation_pattern: Pattern to match annotation files
             exclude_sidereal_from_lines: Whether to exclude sidereal frames from lines dataset
             temporal_split: Whether to split temporally (True) or randomly (False)
+            link: Symlink each image into its split dir instead of copying. Lets a
+                fixed pool be re-split many times (e.g. data-scaling ablations) in
+                seconds with ~0 extra disk; the split owns only the annotations.
+            train_cap: When > 0 (temporal split only), cap the train set to the
+                most-recent ``train_cap`` frames *before* the held-out val/test
+                tail. val/test stay pinned to the end of the global timeline, so
+                their boundary does not move as the train size is varied.
 
         Returns:
             Dictionary mapping split names to lists of image IDs
@@ -201,14 +210,21 @@ class DatasetSplitter:
             random.shuffle(image_ids)
             logger.info(f"Found {len(image_ids)} unique images to split randomly")
 
-        # Calculate split sizes
+        # Calculate split sizes. val/test are PINNED to the end of the (temporal)
+        # order — the held-out "future" — so the train/val boundary is fixed by
+        # the val+test fractions and does NOT move when train is capped. train is
+        # everything before that holdout, optionally capped to the most-recent
+        # `train_cap` frames for data-scaling ablations (0 = use all).
         n_total = len(image_ids)
-        n_train = int(n_total * self.split.train)
         n_val = int(n_total * self.split.val)
-
-        train_ids = set(image_ids[:n_train])
-        val_ids = set(image_ids[n_train : n_train + n_val])
-        test_ids = set(image_ids[n_train + n_val :])
+        n_test = int(n_total * self.split.test)
+        holdout = n_val + n_test
+        train_pool = image_ids[: n_total - holdout]
+        if temporal_split and train_cap and train_cap > 0:
+            train_pool = train_pool[-train_cap:]  # most-recent N before holdout
+        train_ids = set(train_pool)
+        val_ids = set(image_ids[n_total - holdout : n_total - n_test])
+        test_ids = set(image_ids[n_total - n_test :])
 
         splits = {
             "train": train_ids,
@@ -219,12 +235,14 @@ class DatasetSplitter:
         split_type = "temporally" if temporal_split else "randomly"
         logger.info(f"Split {n_total} images {split_type}: {len(train_ids)} train, {len(val_ids)} val, {len(test_ids)} test")
         
-        # Log temporal range information if using temporal splitting
+        # Log temporal range information if using temporal splitting. Derive the
+        # per-split image lists from the assigned id sets (the boundaries are
+        # pinned-from-the-end + train_cap, not a simple front slice).
         if temporal_split and all_images:
-            train_images = [img for img in all_images[:n_train]]
-            val_images = [img for img in all_images[n_train:n_train + n_val]]
-            test_images = [img for img in all_images[n_train + n_val:]]
-            
+            train_images = [img for img in all_images if img["id"] in train_ids]
+            val_images = [img for img in all_images if img["id"] in val_ids]
+            test_images = [img for img in all_images if img["id"] in test_ids]
+
             if train_images:
                 train_start = extract_datetime(train_images[0])
                 train_end = extract_datetime(train_images[-1])
@@ -262,13 +280,20 @@ class DatasetSplitter:
             # Filter line annotations for this split
             split_line_annotations = [ann for ann in line_annotations if ann["image_id"] in split_image_ids]
 
-            # Copy image files to split directory (all images go to main directory)
+            # Place image files into the split directory. `link` symlinks them
+            # back to the pool (instant, ~0 disk — for re-splittable pools);
+            # otherwise copy a standalone snapshot.
             for img in split_images:
                 img_filename = img["file_name"]
                 src_path = input_dir / img_filename
                 if src_path.exists():
                     dst_path = output_dir / split_name / src_path.name
-                    shutil.copy2(src_path, dst_path)
+                    if link:
+                        if dst_path.is_symlink() or dst_path.exists():
+                            dst_path.unlink()
+                        dst_path.symlink_to(src_path.resolve())
+                    else:
+                        shutil.copy2(src_path, dst_path)
                 else:
                     logger.warning(f"Image file not found: {src_path}")
 

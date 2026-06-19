@@ -641,44 +641,68 @@ def cmd_plots(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- sub-command: build-dataset (scaffold) ------------------------------------
+# --- sub-command: build-dataset / split-dataset -------------------------------
+
+
+def _export_worker_init(config_path: str) -> None:
+    """Per-worker config init for parallel dataset export — spawned workers start
+    with no config singleton, so each loads it (the exporter may consult config
+    when rebuilding a processed frame in place from raw)."""
+    initialize_config(Path(config_path))
+
+
+def _export_one_batch(task: tuple) -> tuple:
+    """Export one batch's SenpaiRunResult into the shared pool dir. Each call
+    writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json``
+    + FITS), so concurrent workers never collide. Returns (batch_id, ok, error)."""
+    from senpai.engine.models.senpai import SenpaiRunResult
+    from senpai.export.coco import SenpaiCocoExporter
+
+    (result_path, batch_id, pool_dir, snr_cut, max_streak_length,
+     process_sidereal) = task
+    exporter = SenpaiCocoExporter(
+        output_dir=Path(pool_dir), write_fits=True, write_png=False,
+        snr_cut=snr_cut, max_streak_length=max_streak_length,
+        process_sidereal=process_sidereal,
+    )
+    try:
+        result = SenpaiRunResult.model_validate_json(Path(result_path).read_text())
+    except Exception as e:
+        return (batch_id, False, f"parse: {e}")
+    try:
+        exporter.export_senpai_run(result, collect_id=batch_id)
+        return (batch_id, True, None)
+    except Exception as e:
+        return (batch_id, False, str(e))
 
 
 def cmd_build_dataset(args: argparse.Namespace) -> int:
-    """Aggregate per-night SenpaiRun outputs into a starcsp-ready COCO dataset.
+    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool, then
+    (optionally) split it.
 
-    Steps:
+    1. Collect every non-skipped batch's ``SenpaiRunResult`` across the nights.
+    2. Export each via :class:`SenpaiCocoExporter` into ONE pool dir (per-frame
+       ``*_point_sat.json`` + ``*_line_star.json`` + FITS). With ``-j N`` this
+       runs across N worker processes — the export is the expensive, embarrassingly
+       parallel step.
+    3. Unless ``--export-only``, hand the pool to :class:`DatasetSplitter`, which
+       writes ``{train,val,test}/`` + ``annotations/{points,lines}_{split}.json``.
 
-    1. For each processed night dir, load its manifest and each non-skipped
-       batch's ``SenpaiRunResult`` JSON.
-    2. Feed each ``SenpaiRunResult`` to :class:`SenpaiCocoExporter`, which
-       writes per-frame ``*_point_sat.json`` + ``*_line_star.json`` and copies
-       the FITS image into one staging dir.
-    3. Hand the staging dir to :class:`DatasetSplitter`, which writes
-       ``<dataset_dir>/{train,val,test}/`` + ``<dataset_dir>/annotations/
-       {points,lines}_{split}.json`` — the format starcsp ingests.
+    ``--export-only`` keeps the pool as the "ready data" and skips the split, so
+    it can be split repeatedly later (``split-dataset``) — e.g. data-scaling
+    ablations against a fixed val/test — without re-exporting.
     """
-
-    from senpai.export.coco import SenpaiCocoExporter
     from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
-    from senpai.engine.models.senpai import SenpaiRunResult
 
     output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_dataset")
-    staging_dir = output_dir / "_staging"
-    staging_dir.mkdir(parents=True, exist_ok=True)
+    # With --export-only the output dir IS the ready-data pool (a flat dir of FITS
+    # + per-frame JSONs). Otherwise export into a _staging subdir and split into
+    # the output dir as before.
+    pool_dir = output_dir if args.export_only else output_dir / "_staging"
+    pool_dir.mkdir(parents=True, exist_ok=True)
 
-    exporter = SenpaiCocoExporter(
-        output_dir=staging_dir,
-        write_fits=True,
-        write_png=False,
-        snr_cut=args.snr_cut,
-        max_streak_length=args.max_streak_length,
-        process_sidereal=args.include_sidereal,
-    )
-
+    tasks: list[tuple] = []
     n_nights = 0
-    n_batches_total = 0
-    n_batches_exported = 0
     for night_dir_str in args.night_dirs:
         night_dir = Path(night_dir_str)
         manifest_path = night_dir / "manifest.json"
@@ -687,68 +711,128 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
             continue
         manifest = json.loads(manifest_path.read_text())
         n_nights += 1
-        logger.info(
-            "Exporting night %s (%d batches)", manifest.get("night_id"),
-            len(manifest.get("batches", [])),
-        )
         for entry in manifest.get("batches", []):
-            n_batches_total += 1
             result_path = entry.get("result_path")
-            if not result_path:
-                continue
-            if not Path(result_path).is_file():
-                # A failed batch may have left no JSON behind.
-                continue
-            try:
-                result = SenpaiRunResult.model_validate_json(Path(result_path).read_text())
-            except Exception as e:
-                logger.warning("Failed to parse %s: %s", result_path, e)
-                continue
-            try:
-                exporter.export_senpai_run(result, collect_id=entry["batch_id"])
-                n_batches_exported += 1
-            except Exception as e:
-                logger.exception(
-                    "Exporter failed on batch %s: %s", entry["batch_id"], e,
-                )
+            if not result_path or not Path(result_path).is_file():
+                continue  # skipped/failed batch left no JSON
+            tasks.append((
+                result_path, entry["batch_id"], str(pool_dir),
+                args.snr_cut, args.max_streak_length, args.include_sidereal,
+            ))
 
-    n_annotation_files = sum(
-        1 for _ in staging_dir.glob("*_point_sat.json")
-    ) + sum(
-        1 for _ in staging_dir.glob("*_line_star.json")
+    jobs = max(1, getattr(args, "jobs", 1))
+    logger.info("Exporting %d batches from %d nights into %s (jobs=%d)",
+                len(tasks), n_nights, pool_dir, jobs)
+
+    n_ok = n_fail = 0
+    if jobs == 1 or len(tasks) <= 1:
+        for t in tasks:
+            bid, ok, err = _export_one_batch(t)
+            if ok:
+                n_ok += 1
+            else:
+                n_fail += 1
+                logger.warning("Exporter failed on batch %s: %s", bid, err)
+    else:
+        import concurrent.futures
+        import multiprocessing as mp
+
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                    "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+            os.environ.setdefault(var, "1")
+        ctx = mp.get_context("spawn")
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=jobs, mp_context=ctx,
+            initializer=_export_worker_init, initargs=(str(args.config),),
+        ) as ex:
+            futs = [ex.submit(_export_one_batch, t) for t in tasks]
+            for i, fut in enumerate(concurrent.futures.as_completed(futs), 1):
+                bid, ok, err = fut.result()
+                if ok:
+                    n_ok += 1
+                else:
+                    n_fail += 1
+                    logger.warning("Exporter failed on batch %s: %s", bid, err)
+                if i % 200 == 0:
+                    logger.info("  exported %d/%d batches", i, len(tasks))
+
+    n_annotation_files = (
+        sum(1 for _ in pool_dir.glob("*_point_sat.json"))
+        + sum(1 for _ in pool_dir.glob("*_line_star.json"))
     )
-    logger.info(
-        "Exported %d/%d batches across %d nights into %s (%d annotation files)",
-        n_batches_exported, n_batches_total, n_nights, staging_dir,
-        n_annotation_files,
-    )
+    logger.info("Export done: %d ok, %d failed; %d annotation files in %s",
+                n_ok, n_fail, n_annotation_files, pool_dir)
 
     if n_annotation_files == 0:
         logger.warning(
-            "No annotation files written — staging dir is empty, skipping "
-            "split. Check that the input nights have non-skipped, WCS-solved "
-            "batches with --detect enabled."
+            "No annotation files written — pool is empty. Check that the input "
+            "nights have non-skipped, WCS-solved batches processed with -D."
         )
         return 2
+
+    if args.export_only:
+        logger.info(
+            "Ready-data pool built at %s (export-only). Split later with: "
+            "senpai-burr split-dataset %s -o <out> [--link] [--train-cap N]",
+            pool_dir, pool_dir,
+        )
+        return 0
 
     split = DatasetSplit(
         train=args.splits[0], val=args.splits[1], test=args.splits[2],
     )
     splitter = DatasetSplitter(split, random_seed=args.seed)
     splitter.split_coco_dataset(
-        input_dir=staging_dir,
+        input_dir=pool_dir,
         output_dir=output_dir,
         temporal_split=not args.random_split,
         exclude_sidereal_from_lines=True,
+        link=args.link,
+        train_cap=args.train_cap,
     )
 
     if args.keep_staging:
-        logger.info("Staging dir kept at %s", staging_dir)
+        logger.info("Staging dir kept at %s", pool_dir)
     else:
         import shutil
-        shutil.rmtree(staging_dir)
+        shutil.rmtree(pool_dir)
         logger.info("Removed staging dir")
 
+    return 0
+
+
+def cmd_split_dataset(args: argparse.Namespace) -> int:
+    """Split a ready-data pool (``build-dataset --export-only``) into
+    train/val/test + annotations. Cheap and re-runnable: ``--link`` symlinks the
+    images back into the pool, so the same pool can be re-split many times (e.g.
+    data-scaling ablations via ``--train-cap``) in seconds and ~0 extra disk.
+
+    val/test are pinned to the end of the global temporal order (the held-out
+    "future"); ``--train-cap N`` varies only the train size, leaving the val/test
+    boundary fixed."""
+    from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
+
+    pool_dir = Path(args.pool_dir)
+    if not pool_dir.is_dir():
+        raise SystemExit(f"pool dir not found: {pool_dir}")
+    output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_split")
+
+    split = DatasetSplit(
+        train=args.splits[0], val=args.splits[1], test=args.splits[2],
+    )
+    splitter = DatasetSplitter(split, random_seed=args.seed)
+    result = splitter.split_coco_dataset(
+        input_dir=pool_dir,
+        output_dir=output_dir,
+        temporal_split=not args.random_split,
+        exclude_sidereal_from_lines=True,
+        link=args.link,
+        train_cap=args.train_cap,
+    )
+    for name, ids in result.items():
+        logger.info("  %s: %d images", name, len(ids))
+    logger.info("Split written to %s (link=%s, train_cap=%s)",
+                output_dir, args.link, args.train_cap or "all")
     return 0
 
 
@@ -1032,8 +1116,71 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep the intermediate _staging/ dir of per-frame COCO files for "
              "debugging.",
     )
+    p_ds.add_argument(
+        "-j", "--jobs", type=int, default=1,
+        help="Export this many batches in parallel (default 1). The per-batch "
+             "export (read processed FITS, project catalog annotations, write "
+             "FITS) is independent, so this scales well; rule of thumb ~cores/2 "
+             "(it's I/O-heavy). Each worker is pinned to 1 BLAS thread.",
+    )
+    p_ds.add_argument(
+        "--export-only", action="store_true",
+        help="Build the 'ready data' pool (all FITS + per-frame JSONs) into -o "
+             "and STOP — no split. Split it later (repeatedly) with "
+             "`senpai-burr split-dataset`.",
+    )
+    p_ds.add_argument(
+        "--link", action="store_true",
+        help="When splitting, symlink images into train/val/test instead of "
+             "copying (instant, ~0 extra disk; for re-splittable pools).",
+    )
+    p_ds.add_argument(
+        "--train-cap", type=int, default=0,
+        help="Cap train to the most-recent N frames before the held-out "
+             "val/test tail (0 = use all). Temporal split only.",
+    )
     _add_common_args(p_ds)
     p_ds.set_defaults(func=cmd_build_dataset)
+
+    p_split = sub.add_parser(
+        "split-dataset",
+        help="Split a ready-data pool (build-dataset --export-only) into "
+             "train/val/test + annotations. Cheap + re-runnable for ablations.",
+    )
+    p_split.add_argument(
+        "pool_dir",
+        help="The ready-data pool dir (a build-dataset --export-only output: "
+             "flat dir of *.fits + *_point_sat.json + *_line_star.json).",
+    )
+    p_split.add_argument(
+        "-o", "--output_dir", default="burr_split",
+        help="Output dir for {train,val,test}/ + annotations/ (default burr_split/).",
+    )
+    p_split.add_argument(
+        "--splits", nargs=3, type=float, default=(0.7, 0.2, 0.1),
+        metavar=("TRAIN", "VAL", "TEST"),
+        help="Train/val/test fractions (default 0.7 0.2 0.1). val+test are taken "
+             "from the END of the global temporal order (the held-out future).",
+    )
+    p_split.add_argument(
+        "--random-split", action="store_true",
+        help="Random split instead of the default temporal split.",
+    )
+    p_split.add_argument(
+        "--seed", type=int, default=None, help="Random seed (for --random-split).",
+    )
+    p_split.add_argument(
+        "--link", action="store_true",
+        help="Symlink images into train/val/test instead of copying (instant, "
+             "~0 extra disk — re-split the same pool freely).",
+    )
+    p_split.add_argument(
+        "--train-cap", type=int, default=0,
+        help="Cap train to the most-recent N frames before the held-out val/test "
+             "tail (0 = use all). val/test boundary stays fixed as N varies — "
+             "for data-scaling ablations.",
+    )
+    p_split.set_defaults(func=cmd_split_dataset)
 
     return parser
 
