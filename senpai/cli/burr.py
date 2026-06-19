@@ -659,11 +659,11 @@ def _export_one_batch(task: tuple) -> tuple:
     from senpai.export.coco import SenpaiCocoExporter
 
     (result_path, batch_id, pool_dir, snr_cut, max_streak_length,
-     process_sidereal) = task
+     process_sidereal, link_source) = task
     exporter = SenpaiCocoExporter(
         output_dir=Path(pool_dir), write_fits=True, write_png=False,
         snr_cut=snr_cut, max_streak_length=max_streak_length,
-        process_sidereal=process_sidereal,
+        process_sidereal=process_sidereal, link_source=link_source,
     )
     try:
         result = SenpaiRunResult.model_validate_json(Path(result_path).read_text())
@@ -718,6 +718,7 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
             tasks.append((
                 result_path, entry["batch_id"], str(pool_dir),
                 args.snr_cut, args.max_streak_length, args.include_sidereal,
+                args.link_source,
             ))
 
     jobs = max(1, getattr(args, "jobs", 1))
@@ -1128,6 +1129,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build the 'ready data' pool (all FITS + per-frame JSONs) into -o "
              "and STOP — no split. Split it later (repeatedly) with "
              "`senpai-burr split-dataset`.",
+    )
+    p_ds.add_argument(
+        "--link-source", action="store_true",
+        help="Symlink each frame's existing *_processed.fits into the pool "
+             "instead of rewriting the (identical) image — ~halves export I/O "
+             "and disk. The dataset then references the processed FITS, so those "
+             "must stay in place. No WCS 'answer' extension is added in this mode.",
     )
     p_ds.add_argument(
         "--link", action="store_true",

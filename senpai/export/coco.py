@@ -32,6 +32,7 @@ class SenpaiCocoExporter:
         mask_radius: Optional[float] = None,
         max_streak_length: Optional[float] = None,
         process_sidereal: bool = True,  # Add parameter to control sidereal processing
+        link_source: bool = False,  # Symlink the source *_processed.fits instead of rewriting
     ):
         """Initialize the COCO exporter.
 
@@ -47,6 +48,12 @@ class SenpaiCocoExporter:
             mask_radius: Radius to mask around center (pixels)
             max_streak_length: Maximum streak length to include
             process_sidereal: Whether to process sidereal frames
+            link_source: When the on-disk ``*_processed.fits`` exists, SYMLINK it
+                into the dataset instead of rewriting the (identical) image. Avoids
+                a full re-copy of every frame (~halves dataset I/O + disk); the
+                dataset then references the processed FITS, so those must stay in
+                place. No WCS 'answer' extension is added in this mode (the
+                processed frame is single-HDU; starcsp reads hdul[0]).
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +68,7 @@ class SenpaiCocoExporter:
         self.mask_radius = mask_radius
         self.max_streak_length = max_streak_length
         self.process_sidereal = process_sidereal  # Store the parameter
+        self.link_source = link_source
 
     def export_senpai_run(
         self,
@@ -593,6 +601,15 @@ class SenpaiCocoExporter:
 
         if self.write_fits:
             output_image_file = str(self.output_dir / f"{image_id}.fits")
+            # Fast path: symlink the already-on-disk processed frame instead of
+            # rewriting the identical image (halves dataset I/O + disk). Only when
+            # link_source is set AND the source *_processed.fits actually exists
+            # (file_path is None / raw when the frame was rebuilt in memory).
+            if self.link_source and file_path and os.path.exists(file_path):
+                if os.path.islink(output_image_file) or os.path.exists(output_image_file):
+                    os.remove(output_image_file)
+                os.symlink(os.path.abspath(file_path), output_image_file)
+                return output_image_file
             # Always create new FITS file with processed data (which may have calibrations applied)
             hdu = fits.PrimaryHDU(frame_data, header)
             # Add WCS as a second 'WCS' ImageHDU, but HEADER-ONLY (data=None).
