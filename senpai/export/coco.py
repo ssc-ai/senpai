@@ -595,26 +595,28 @@ class SenpaiCocoExporter:
             output_image_file = str(self.output_dir / f"{image_id}.fits")
             # Always create new FITS file with processed data (which may have calibrations applied)
             hdu = fits.PrimaryHDU(frame_data, header)
-            # Add WCS as second ImageHDU if available in starfield
-            if starfield is not None and hasattr(starfield, 'wcs') and starfield.wcs is not None:
+            # Add WCS as a second 'WCS' ImageHDU, but HEADER-ONLY (data=None).
+            # The previous path stored a zeros_like(frame_data) array as this HDU's
+            # data, which DOUBLED every frame on disk (+264 MB/frame at 8120^2,
+            # ~1.7 TB over a full dataset) for nothing — a WCS is only header
+            # cards. Keeping the named extension (same shape of the file, but no
+            # data array) preserves the on-disk format for any consumer that reads
+            # hdul['WCS'] / getheader(file, 'WCS'), at ~0 extra bytes.
+            if starfield is not None and getattr(starfield, "wcs", None) is not None:
                 try:
                     # Convert SENPAI WCS to Astropy WCS
                     astropy_wcs = starfield.wcs.to_astropy_wcs()
-                    
-                    # Create a dummy data array for the WCS HDU (same shape as original)
-                    wcs_data = np.zeros_like(frame_data)
-                    
-                    # Create ImageHDU with WCS header
-                    wcs_hdu = fits.ImageHDU(data=wcs_data, header=astropy_wcs.to_header(), name='WCS')
-                    
-                    # Append WCS HDU to the FITS file
+                    wcs_hdu = fits.ImageHDU(
+                        data=None,
+                        header=astropy_wcs.to_header(relax=True),
+                        name="WCS",
+                    )
                     hdu = fits.HDUList([hdu, wcs_hdu])
-                    
-                    logger.debug(f"Added WCS as second ImageHDU for {image_id}")
+                    logger.debug(f"Added header-only WCS extension for {image_id}")
                 except Exception as e:
-                    logger.warning(f"Failed to add WCS as second ImageHDU for {image_id}: {str(e)}")
+                    logger.warning(f"Failed to add WCS extension for {image_id}: {str(e)}")
                     # Continue without WCS HDU if conversion fails
-            
+
             hdu.writeto(output_image_file, overwrite=True)
 
         return output_image_file
