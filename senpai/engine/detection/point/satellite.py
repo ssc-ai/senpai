@@ -345,8 +345,16 @@ def filter_point_sources(
         try:
             fx, fy, fcomb = cutout_gauss(cutout, pixel_seeing, plot=False)
 
-            # Check if PSF is too narrow
-            if fx < pixel_seeing / 2.5 or fy < pixel_seeing / 2.5:
+            # Check if PSF is too narrow.  pixel_seeing comes from fits to
+            # STARS, which on a rate frame are smeared by tracking motion —
+            # the true point PSF can be substantially sharper (a tracked
+            # target measured ~4.2 px against a star-derived 10 px on rme03),
+            # so the old seeing/2.5 cut sat exactly on the target width and
+            # dropped it on ~half the frames.  /3.5 keeps genuine point
+            # sources; the absolute floor still rejects hot pixels and
+            # cosmic-ray hits (~1-2 px).
+            narrow_limit = max(pixel_seeing / 3.5, 1.2)
+            if fx < narrow_limit or fy < narrow_limit:
                 if config.detection.verbose:
                     logger.warning(
                         f"[{idx + 1}] [FILTERING] PSF too narrow (FWHM={fcomb:.2f}) compared to seeing={pixel_seeing:.2f}"
@@ -444,6 +452,8 @@ def veto_catalog_star_detections(
     detections: list,
     pixel_seeing: float,
     depth_margin: float = 2.0,
+    image_sub: np.ndarray | None = None,
+    noise_std: float | None = None,
 ) -> list:
     """Drop detections that coincide with known catalog stars.
 
@@ -455,6 +465,14 @@ def veto_catalog_star_detections(
     magnitude. Fainter catalog entries are not visible in the frame, and
     vetoing on them would needlessly kill a real target that happens to sit
     near one.
+
+    When ``image_sub``/``noise_std`` are provided, position alone is not
+    enough to veto: the star must also be plausibly BRIGHT enough to have
+    produced the detection.  On a trailed frame a star's flux is spread over
+    the trail (diluting its point-equivalent brightness by ~trail/seeing),
+    so a faint star whose trail sweeps past a bright tracked target must not
+    kill it — the target is orders of magnitude brighter than anything that
+    star could deposit at one point.
     """
     starfield = frame.starfield
     if starfield is None or not starfield.catalog_stars:
@@ -507,14 +525,96 @@ def veto_catalog_star_detections(
     # frame corners (measured on abq01), so a pure seeing-based radius lets
     # bright stars leak through as detections. Keeping the depth cut moderate
     # is what makes this wide a radius safe for the target.
-    radius = max(2.0 * pixel_seeing, 8.0)
+    # Geometry: on a trailed frame each star covers a CAPSULE along its
+    # trail, not a disk around its catalog position (the trail ends stick
+    # out ~L/2 beyond any reasonable circular radius, and its knots were
+    # leaking through as detections).
+    streak_model = getattr(frame, "streak", None)
+    trail_len = float(getattr(streak_model, "pixel_length", 0) or 0)
+    cross_fwhm = float(getattr(streak_model, "fwhm", 0) or 0) or pixel_seeing
+    trailed = trail_len > 2.0 * pixel_seeing
+    if trailed:
+        angle = np.arctan2(streak_model.sine_angle, streak_model.cosine_angle)
+        ux, uy = float(np.cos(angle)), float(np.sin(angle))
+        half_trail = trail_len / 2.0
+        # Perpendicular reach: the trail cross-section plus margin for
+        # catalog position error.  Deliberately tighter than the circular
+        # radius — a point source 8+ px off a trail axis is clear of it.
+        radius = max(1.5 * cross_fwhm, 8.0)
+    else:
+        ux = uy = 0.0
+        half_trail = 0.0
+        radius = max(2.0 * pixel_seeing, 8.0)
+
+    h, w = image_sub.shape if image_sub is not None else (0, 0)
+
+    def _peak_snr_at(px: float, py: float, r: int) -> float | None:
+        ipx, ipy = int(round(px)), int(round(py))
+        patch = image_sub[
+            max(0, ipy - r) : min(h, ipy + r + 1),
+            max(0, ipx - r) : min(w, ipx + r + 1),
+        ]
+        return float(patch.max()) / noise_std if patch.size else None
+
+    use_brightness = image_sub is not None and noise_std is not None and noise_std > 0
+
     kept = []
     vetoed = 0
     for detection in detections:
-        distances = np.hypot(
-            star_xy[:, 0] - detection[0], star_xy[:, 1] - detection[1]
-        )
-        if np.min(distances) <= radius:
+        dx = star_xy[:, 0] - detection[0]
+        dy = star_xy[:, 1] - detection[1]
+        if trailed:
+            # Distance from the detection to each star's trail segment
+            t = np.clip(-(dx * ux + dy * uy), -half_trail, half_trail)
+            dist = np.hypot(dx + t * ux, dy + t * uy)
+        else:
+            dist = np.hypot(dx, dy)
+        near_idx = np.nonzero(dist <= radius)[0]
+        if near_idx.size == 0:
+            kept.append(detection)
+            continue
+
+        veto_this = True
+        if use_brightness:
+            # Brightness plausibility, measured from the IMAGE (catalog
+            # magnitudes + the limiting-mag estimate are too unreliable
+            # here): sample each nearby star's trail away from the
+            # detection.  If the trail is nowhere near the detection's
+            # brightness, that star cannot be what we detected — a bright
+            # tracked target must not be vetoed by a faint trail sweeping
+            # past it.
+            det_peak = _peak_snr_at(
+                detection[0], detection[1], max(2, int(round(pixel_seeing / 2)))
+            )
+            veto_this = False
+            for si in near_idx:
+                sx, sy = star_xy[si]
+                offsets = (
+                    [-half_trail, -half_trail / 2, 0.0, half_trail / 2, half_trail]
+                    if trailed
+                    else [0.0]
+                )
+                ref_peaks = []
+                for t_off in offsets:
+                    px, py = sx + t_off * ux, sy + t_off * uy
+                    # Exclude samples contaminated by the detection itself
+                    if np.hypot(px - detection[0], py - detection[1]) < pixel_seeing:
+                        continue
+                    p = _peak_snr_at(px, py, 2)
+                    if p is not None:
+                        ref_peaks.append(p)
+                if not ref_peaks:
+                    # Can't measure the star independently of the detection
+                    # (near-sidereal case: they coincide) — veto as before.
+                    veto_this = True
+                    break
+                # Within ~1.75 mag of the detection => plausibly the same
+                # trail; the factor absorbs knots and saturation structure.
+                if det_peak is None or max(ref_peaks) >= det_peak / 5.0:
+                    veto_this = True
+                    break
+
+        if veto_this:
             vetoed += 1
         else:
             kept.append(detection)
@@ -522,7 +622,9 @@ def veto_catalog_star_detections(
     depth_desc = f"mag <= {depth:.2f}" if depth is not None else "no depth cut"
     logger.info(
         f"Catalog-star veto: removed {vetoed}/{len(detections)} detections within "
-        f"{radius:.1f}px of a catalog star ({depth_desc}, {len(star_xy)} stars)"
+        f"{radius:.1f}px of a catalog star {'trail capsule' if trailed else 'position'} "
+        f"({depth_desc}, {len(star_xy)} stars, brightness gate "
+        f"{'on' if use_brightness else 'off'})"
     )
     return kept
 
@@ -745,9 +847,11 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
 
     # Remove detections that are just catalog stars (essential on
     # near-sidereal rate frames, where stars are point-like and pass the
-    # shape filter below)
+    # shape filter below).  The image and noise enable the brightness gate:
+    # position alone must not veto a bright target under a faint star trail.
     all_detections = veto_catalog_star_detections(
-        frame, all_detections, pixel_seeing
+        frame, all_detections, pixel_seeing,
+        image_sub=image_data_sub, noise_std=float(std),
     )
 
     # Filter out non-point sources
@@ -779,8 +883,21 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
         )
 
     # Convert to StarInImage objects
+    from senpai.engine.detection.point.sidereal import validate_point_detection
+
     stars = []
     for x, y, pixel_fwhm in deduplicated_detections:
+        # Local-significance guard: the global-noise SNR below inflates
+        # detections sitting on amplifier glow or edge glare (their flux is
+        # mostly the elevated local background).  Require the peak to be
+        # significant against its LOCAL surroundings.
+        if not validate_point_detection(image_data, x, y, pixel_seeing):
+            logger.debug(
+                "Rejected detection at (%.1f, %.1f): fails local-significance/shape validation",
+                x, y,
+            )
+            continue
+
         # Calculate SNR
         cutout = generate_cutout(image_data_sub, (x, y), int(pixel_fwhm * 2))
         peak_value = np.max(cutout)
