@@ -517,6 +517,20 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
     streak position/angle in sidereal frames using the tracking rate and WCS.
     Matches against existing streak_candidates, creating or updating
     CorrelatedStreak entries.
+
+    The target MOVES between the two frames: its rate-frame RA/Dec must be
+    extrapolated to the sidereal frame's epoch before comparison (at
+    ~30 arcsec/s and tens of seconds between frames the target travels
+    hundreds of pixels — an unextrapolated comparison can never match).
+
+    The motion is measured from the DATA: rate-frame detections of a
+    tracked target sit at nearly the same pixel position in every frame,
+    so they are clustered by pixel proximity and a linear RA/Dec-vs-time
+    fit gives the target's sky rate directly.  Header track rates are only
+    a fallback for single-frame detections — their sign conventions vary
+    by mount (a real frame set had the Dec rate sign flipped), so all four
+    sign combinations are tried.  A match also resolves the streak's
+    180-degree direction ambiguity.
     """
     config = get_config()
     angle_tol = config.detection.streak_angle_tolerance_deg
@@ -532,85 +546,174 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
             fwhm = f.starfield.detection_metadata.pixel_fwhm
             break
 
-    match_radius = radius_fwhm * fwhm
+    base_radius = radius_fwhm * fwhm
     n_matches = 0
 
+    # ---- 1. Collect rate-frame detections and cluster by pixel position --
+    # (the mount tracks the target, so the same object stays at ~the same
+    # pixel across rate frames)
+    entries = []  # (frame, detection, t_seconds_rel)
+    t_ref = None
     for rate_frame in senpai_run.rate_track_frames:
         if not rate_frame.detections or not rate_frame.detections.detections:
             continue
         if not rate_frame.starfield or not rate_frame.starfield.wcs:
             continue
-        if rate_frame.pixel_track_rate_per_second is None:
+        if rate_frame.timestamp is None:
+            continue
+        if t_ref is None:
+            t_ref = rate_frame.timestamp
+        for det in rate_frame.detections.detections:
+            if det.ra is None or det.dec is None:
+                continue
+            t = (rate_frame.timestamp - t_ref).total_seconds()
+            entries.append((rate_frame, det, t))
+
+    if not entries:
+        logger.info("Rate-to-sidereal correlation: no rate detections to correlate")
+        return
+
+    cluster_radius = 3 * fwhm
+    clusters: list[list[tuple]] = []
+    for entry in entries:
+        _, det, _ = entry
+        for cluster in clusters:
+            cx = np.mean([e[1].x for e in cluster])
+            cy = np.mean([e[1].y for e in cluster])
+            if np.hypot(det.x - cx, det.y - cy) <= cluster_radius:
+                cluster.append(entry)
+                break
+        else:
+            clusters.append([entry])
+
+    # ---- 2. Predict each cluster's position in each sidereal frame -------
+    for cluster in clusters:
+        times = np.array([e[2] for e in cluster])
+        ras = np.array([e[1].ra for e in cluster])
+        decs = np.array([e[1].dec for e in cluster])
+        time_span = times.max() - times.min()
+
+        measured_rate = None  # (dra_deg_per_s, ddec_deg_per_s)
+        if len(cluster) >= 2 and time_span >= 2.0:
+            measured_rate = (
+                float(np.polyfit(times, ras, 1)[0]),
+                float(np.polyfit(times, decs, 1)[0]),
+            )
+
+        # Fallback rates from the header, all four sign conventions
+        fallback_rates = []
+        if measured_rate is None:
+            fm = cluster[0][0].frame_metadata
+            rate_ra = (fm.track_rate_ra_arcsec_per_second or 0) if fm else 0
+            rate_dec = (fm.track_rate_dec_arcsec_per_second or 0) if fm else 0
+            if rate_ra or rate_dec:
+                fallback_rates = [
+                    (sr * rate_ra / 3600.0, sd * rate_dec / 3600.0)
+                    for sr in (1.0, -1.0)
+                    for sd in (1.0, -1.0)
+                ]
+
+        rate_hypotheses = [measured_rate] if measured_rate else fallback_rates
+        if not rate_hypotheses:
             continue
 
-        for detection in rate_frame.detections.detections:
-            if detection.ra is None or detection.dec is None:
+        # Anchor the prediction at the cluster's mean epoch/position
+        t_mean = float(times.mean())
+        ra_mean = float(ras.mean())
+        dec_mean = float(decs.mean())
+        anchor_det = cluster[0][1]
+
+        for sid_frame in senpai_run.sidereal_frames:
+            if not sid_frame.streak_candidates:
+                continue
+            if not sid_frame.starfield or not sid_frame.starfield.wcs:
+                continue
+            if sid_frame.timestamp is None:
                 continue
 
-            # For each sidereal frame, check if this detection matches a streak
-            for sid_frame in senpai_run.sidereal_frames:
-                if not sid_frame.streak_candidates:
-                    continue
-                if not sid_frame.starfield or not sid_frame.starfield.wcs:
-                    continue
+            dt = (sid_frame.timestamp - t_ref).total_seconds() - t_mean
 
-                # Convert rate-frame detection RA/Dec to sidereal frame pixel coords
+            try:
+                sid_wcs = sid_frame.starfield.wcs.to_astropy_wcs()
+            except Exception:  # noqa: S112
+                continue
+
+            ifov = None
+            if sid_frame.starfield.wcs_metadata and hasattr(
+                sid_frame.starfield.wcs_metadata, "x_ifov_arcsec"
+            ):
+                ifov = sid_frame.starfield.wcs_metadata.x_ifov_arcsec
+
+            best = None  # (dist, sc, rate, pred_x, pred_y)
+            for rate in rate_hypotheses:
+                ra_pred = ra_mean + rate[0] * dt
+                dec_pred = dec_mean + rate[1] * dt
                 try:
-                    sid_wcs = sid_frame.starfield.wcs.to_astropy_wcs()
-                    px_coords = sid_wcs.all_world2pix([[detection.ra, detection.dec]], 0)
+                    px_coords = sid_wcs.all_world2pix([[ra_pred, dec_pred]], 0)
                     pred_x, pred_y = float(px_coords[0][0]), float(px_coords[0][1])
                 except Exception:  # noqa: S112
                     continue
 
-                # Predict streak angle from tracking rate direction
-                # The streak angle in the sidereal frame comes from the
-                # tracking rate components mapped through the WCS
-                if rate_frame.frame_metadata:
-                    rate_ra = rate_frame.frame_metadata.track_rate_ra_arcsec_per_second or 0
-                    rate_dec = rate_frame.frame_metadata.track_rate_dec_arcsec_per_second or 0
-                else:
-                    continue
+                # Rate uncertainty grows the position error linearly with
+                # the extrapolated distance: allow 5% on top of the base
+                # match radius.
+                travel_arcsec = float(np.hypot(rate[0], rate[1])) * 3600.0 * abs(dt)
+                travel_px = travel_arcsec / ifov if ifov else 0.0
+                match_radius = base_radius + 0.05 * travel_px
 
-                # Convert rate vector to pixel direction in sidereal frame
-                try:
-                    # Small offset in RA/Dec direction
-                    offset_scale = 0.01  # degrees
-                    rate_mag = np.sqrt(rate_ra**2 + rate_dec**2)
-                    if rate_mag == 0:
-                        continue
-
-                    dra = rate_ra / rate_mag * offset_scale / 3600
-                    ddec = rate_dec / rate_mag * offset_scale / 3600
-                    px2 = sid_wcs.all_world2pix([[detection.ra + dra, detection.dec + ddec]], 0)
-                    dx = float(px2[0][0]) - pred_x
-                    dy = float(px2[0][1]) - pred_y
-                    predicted_angle = float(np.degrees(np.arctan2(dy, dx))) % 180
-                except Exception:  # noqa: S112
-                    continue
-
-                # Match against streak candidates
                 for sc in sid_frame.streak_candidates:
-                    dist = np.sqrt((sc.x - pred_x) ** 2 + (sc.y - pred_y) ** 2)
-                    angle_d = _angle_diff(sc.angle_deg, predicted_angle)
-                    if dist < match_radius and angle_d < angle_tol:
-                        n_matches += 1
-                        logger.info(
-                            "Rate detection (%.1f,%.1f) matches sidereal streak "
-                            "in frame %d at (%.1f,%.1f), dist=%.1f, angle_diff=%.1f",
-                            detection.x,
-                            detection.y,
-                            sid_frame.index,
-                            sc.x,
-                            sc.y,
-                            dist,
-                            angle_d,
-                        )
-                        # Mark matching correlated streak as confirmed
-                        for cs in senpai_run.correlated_streaks:
-                            if sid_frame.index in cs.frame_indices:
-                                for px, py in zip(cs.positions_x, cs.positions_y, strict=False):
-                                    if abs(px - sc.x) < 1 and abs(py - sc.y) < 1:
-                                        cs.confirmed = True
-                                        break
+                    dist = float(np.hypot(sc.x - pred_x, sc.y - pred_y))
+                    if dist < match_radius and (best is None or dist < best[0]):
+                        best = (dist, sc, rate, pred_x, pred_y)
+
+            if best is None:
+                continue
+            dist, sc, rate, pred_x, pred_y = best
+
+            # The streak angle in the sidereal frame must match the motion
+            # direction mapped through the WCS
+            try:
+                step = 1.0  # seconds of motion for the direction vector
+                px2 = sid_wcs.all_world2pix(
+                    [[ra_pred + rate[0] * step, dec_pred + rate[1] * step]], 0
+                )
+                dx = float(px2[0][0]) - pred_x
+                dy = float(px2[0][1]) - pred_y
+                motion_angle = float(np.degrees(np.arctan2(dy, dx)))
+                predicted_angle = motion_angle % 180
+            except Exception:  # noqa: S112
+                continue
+
+            angle_d = _angle_diff(sc.angle_deg, predicted_angle)
+            if angle_d >= angle_tol:
+                continue
+
+            n_matches += 1
+            logger.info(
+                "Rate detection cluster at (%.1f,%.1f) (%d frames, %s rate) "
+                "extrapolated %.1fs matches sidereal streak in frame %d at "
+                "(%.1f,%.1f): dist=%.1f, angle_diff=%.1f",
+                anchor_det.x,
+                anchor_det.y,
+                len(cluster),
+                "measured" if measured_rate else "header",
+                dt,
+                sid_frame.index,
+                sc.x,
+                sc.y,
+                dist,
+                angle_d,
+            )
+            # Mark matching correlated streak as confirmed; the motion
+            # direction that produced the match resolves the streak's
+            # 180-degree direction ambiguity.
+            for cs in senpai_run.correlated_streaks:
+                if sid_frame.index in cs.frame_indices:
+                    for px, py in zip(cs.positions_x, cs.positions_y, strict=False):
+                        if abs(px - sc.x) < 1 and abs(py - sc.y) < 1:
+                            cs.confirmed = True
+                            if cs.direction_deg is None:
+                                cs.direction_deg = motion_angle % 360
+                            break
 
     logger.info("Rate-to-sidereal correlation: %d matches found", n_matches)
