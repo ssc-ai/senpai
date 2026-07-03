@@ -560,3 +560,73 @@ def extract_point_sources(
         sat_level=(float(sat_level) if np.isfinite(sat_level) else None),
     )
     return starlist, fwhm_pixel
+
+
+def validate_point_detection(
+    image: np.ndarray,
+    x: float,
+    y: float,
+    fwhm: float,
+    min_peak_significance: float = 5.0,
+    edge_margin_fwhm: float = 3.0,
+) -> bool:
+    """Validate that a detection is a genuine point source at its LOCAL scale.
+
+    The astrometric source list is tuned for plate solving, where impurities
+    are harmless — the fit just ignores them.  Reporting an unmatched
+    detection as an unknown object is a much stronger claim, and two failure
+    modes dominate:
+
+    * Detections on amplifier glow / edge glare: DAO thresholds against the
+      GLOBAL background noise, so an above-glow noise wiggle looks
+      significant even though it is only ~2 sigma above its LOCAL
+      surroundings (and its measured counts inherit the glow flux).
+    * Detections hanging off the frame edge, where no meaningful shape or
+      background measurement exists at all.
+
+    Checks: edge margin, peak significance against a robust local annulus
+    background, and a loose moment-FWHM sanity band against the frame PSF.
+
+    Returns True if the detection looks like a real point source.
+    """
+    h, w = image.shape
+    r_core = max(3, int(round(fwhm)))
+    r_in = int(round(2 * fwhm))
+    r_out = int(round(3 * fwhm))
+    margin = max(r_out, int(round(edge_margin_fwhm * fwhm)))
+
+    ix, iy = int(round(x)), int(round(y))
+    if not (margin <= ix < w - margin and margin <= iy < h - margin):
+        return False
+
+    # Robust local background from an annulus around the source
+    cut = image[iy - r_out : iy + r_out + 1, ix - r_out : ix + r_out + 1]
+    yy, xx = np.mgrid[-r_out : r_out + 1, -r_out : r_out + 1]
+    rr = np.hypot(xx, yy)
+    annulus = cut[(rr >= r_in) & (rr <= r_out)]
+    if annulus.size < 8:
+        return False
+    local_bg = float(np.median(annulus))
+    local_std = float(1.4826 * np.median(np.abs(annulus - local_bg)))
+    if local_std <= 0:
+        return False
+
+    core = image[iy - r_core : iy + r_core + 1, ix - r_core : ix + r_core + 1] - local_bg
+
+    # Peak must be significant relative to the LOCAL noise, not the global
+    if float(core.max()) < min_peak_significance * local_std:
+        return False
+
+    # Moment FWHM sanity: consistent with the frame PSF (loose band — this
+    # is insurance, the local significance test does the heavy lifting)
+    weights = np.clip(core, 0, None)
+    total = weights.sum()
+    if total <= 0:
+        return False
+    cy, cx = np.mgrid[-r_core : r_core + 1, -r_core : r_core + 1]
+    mx = (weights * cx).sum() / total
+    my = (weights * cy).sum() / total
+    sig_x = np.sqrt(max((weights * (cx - mx) ** 2).sum() / total, 1e-6))
+    sig_y = np.sqrt(max((weights * (cy - my) ** 2).sum() / total, 1e-6))
+    moment_fwhm = 2.355 * (sig_x + sig_y) / 2
+    return 0.3 * fwhm <= moment_fwhm <= 2.0 * fwhm

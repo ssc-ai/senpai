@@ -536,6 +536,21 @@ def process_senpai_collect(
             if det.counts is not None and det.counts >= min_counts
         ]
 
+        # Shape/locality vetting: the brightness threshold above compares
+        # globally background-subtracted counts, so detections sitting on
+        # amplifier glow or edge glare look "bright" while being mere noise
+        # wiggles on an elevated background.  Require each flagged detection
+        # to be a significant point source at its LOCAL scale.
+        n_before_validation = len(non_catalog)
+        from senpai.engine.detection.point.sidereal import validate_point_detection
+
+        frame_data = image_frame.frame.data
+        non_catalog = [
+            det for det in non_catalog
+            if validate_point_detection(frame_data, det.x, det.y, fwhm)
+        ]
+        n_rejected_shape = n_before_validation - len(non_catalog)
+
         if non_catalog:
             satellites = []
             for det in non_catalog:
@@ -565,9 +580,11 @@ def process_senpai_collect(
                 image_frame.detections.detections.extend(satellites)
 
         logger.info(
-            "Sidereal frame %d: %d non-catalog point detections (%d unmatched, %d below brightness threshold, counts_thresh=%.0f)",
+            "Sidereal frame %d: %d non-catalog point detections "
+            "(%d unmatched, %d below brightness threshold, "
+            "%d rejected by shape/local-significance, counts_thresh=%.0f)",
             image_frame.index, len(non_catalog), len(unmatched),
-            len(unmatched) - len(non_catalog), min_counts,
+            len(unmatched) - n_before_validation, n_rejected_shape, min_counts,
         )
 
     # Rate-track frames: rectangular aperture photometry + detection photometry
@@ -647,7 +664,9 @@ def process_senpai_collect(
         for frame in senpai_run.rate_track_frames:
             frame.streak_candidates = []
 
-        # Deduplicate: remove point-type detections that overlap with streak detections
+        # Deduplicate: remove point-type detections that overlap with streak
+        # detections or streak candidates (a streak's peak is usually also
+        # picked up by the point finder; the streak report supersedes it)
         for frame in senpai_run.sidereal_frames + senpai_run.rate_track_frames:
             if frame.detections is None:
                 continue
@@ -655,20 +674,31 @@ def process_senpai_collect(
                 d for d in frame.detections.detections
                 if getattr(d, "detection_type", None) == "streak"
             ]
+            streak_dets.extend(frame.streak_candidates or [])
             if not streak_dets:
                 continue
             fwhm = 4.0
             if frame.starfield and frame.starfield.detection_metadata and frame.starfield.detection_metadata.pixel_fwhm:
                 fwhm = frame.starfield.detection_metadata.pixel_fwhm
-            radius_sq = (2 * fwhm) ** 2
+            radius = 2 * fwhm
+
+            def _near_streak(d, s) -> bool:
+                # Distance from the point to the streak SEGMENT (not just its
+                # center) so detections anywhere along the streak are caught.
+                dx, dy = d.x - s.x, d.y - s.y
+                angle = getattr(s, "angle_deg", None)
+                half_len = (getattr(s, "length_pixels", 0) or 0) / 2
+                if angle is None or half_len <= 0:
+                    return dx * dx + dy * dy < radius * radius
+                angle_rad = np.radians(angle)
+                ux, uy = np.cos(angle_rad), np.sin(angle_rad)
+                along = np.clip(dx * ux + dy * uy, -half_len, half_len)
+                return (dx - along * ux) ** 2 + (dy - along * uy) ** 2 < radius * radius
+
             cleaned = []
             for d in frame.detections.detections:
                 if getattr(d, "detection_type", None) == "point":
-                    near_streak = any(
-                        (d.x - s.x) ** 2 + (d.y - s.y) ** 2 < radius_sq
-                        for s in streak_dets
-                    )
-                    if near_streak:
+                    if any(_near_streak(d, s) for s in streak_dets):
                         continue
                 cleaned.append(d)
             n_removed = len(frame.detections.detections) - len(cleaned)
