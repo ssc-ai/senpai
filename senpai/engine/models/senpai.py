@@ -117,6 +117,8 @@ class FrameSummary(BaseModel):
 
     # WCS
     wcs_status: str | None = None  # WCSStatus value
+    solver_tier: str | None = None  # cascade rung that solved: T0/T1/T3 (chain mode; None else)
+    solve_ms: float | None = None  # total cascade solve wall time (ms)
     wcs: WCSModel | None = None
     wcs_metadata: WCSMetadata | None = None  # FOV, plate scale, center RA/Dec
 
@@ -841,6 +843,8 @@ class SenpaiRun(BaseModel):
         wcs = sf.wcs if sf else None
         wcs_metadata = sf.wcs_metadata if sf else None
         wcs_status = sf.wcs_status.value if sf else None
+        solver_tier = sf.solver_tier if sf else None
+        solve_ms = sf.solve_ms if sf else None
         limiting_magnitude = sf.limiting_magnitude if sf else None
         distortion_metrics = sf.distortion_metrics if sf else None
         num_catalog = len(sf.catalog_stars) if sf and sf.catalog_stars else None
@@ -868,6 +872,8 @@ class SenpaiRun(BaseModel):
             original_frame_path=original_path,
             processed_frame_path=processed_path,
             wcs_status=wcs_status,
+            solver_tier=solver_tier,
+            solve_ms=solve_ms,
             wcs=wcs,
             wcs_metadata=wcs_metadata,
             frame_metadata=frame.frame_metadata.to_serializable() if frame.frame_metadata else None,

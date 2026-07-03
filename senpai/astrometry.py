@@ -218,7 +218,12 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
         f"solved at {result.tier}" if result.tier else "all tiers failed",
         [(t.tier, t.status, f"{t.duration_ms:.0f}ms") for t in result.attempts],
     )
-    return _solve_result_to_starfield(result.solve, sources)
+    starfield = _solve_result_to_starfield(result.solve, sources)
+    # Persist the cascade tier + total solve time so the per-frame summary can report which
+    # rung fired (T0/T1/T3) and how long it took — otherwise this only exists in the log.
+    starfield.solver_tier = result.tier
+    starfield.solve_ms = sum(t.duration_ms for t in result.attempts) if result.attempts else None
+    return starfield
 
 
 def test_astrometry_install() -> bool:

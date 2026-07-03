@@ -167,6 +167,11 @@ class StarField(BaseModel):
     detection_metadata: DetectionMetadata | None = None
     astrometry: ReturnAstrometryConfig | None = None
     wcs_status: WCSStatus = WCSStatus.NO_WCS
+    # Cascade telemetry (solver_mode 'tetra3'/'chain'): which escalation tier produced the
+    # solve (T0 boresight-refine / T1 tetra3 / T3 astrometry.net; None if all failed) and the
+    # total wall time across all attempted tiers. None under 'dotnet'.
+    solver_tier: str | None = None
+    solve_ms: float | None = None
     limiting_magnitude: float | None = None
     fwhm_stats: FWHMMetadata | None = None
     scale_factor: float | None = None  # Track if image has been scaled
