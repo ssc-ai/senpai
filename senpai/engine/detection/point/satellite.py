@@ -439,6 +439,94 @@ def filter_point_sources(
     return filtered_detections
 
 
+def veto_catalog_star_detections(
+    frame: RateTrackFrame,
+    detections: list,
+    pixel_seeing: float,
+    depth_margin: float = 2.0,
+) -> list:
+    """Drop detections that coincide with known catalog stars.
+
+    On a near-sidereal rate frame the stars are point-like, so the shape
+    filter in filter_point_sources cannot reject them and every visible star
+    becomes a candidate detection. Veto anything that lands on a catalog star
+    instead. Only stars bright enough to plausibly appear in the frame are
+    used: down to `depth_margin` magnitudes deeper than the measured limiting
+    magnitude. Fainter catalog entries are not visible in the frame, and
+    vetoing on them would needlessly kill a real target that happens to sit
+    near one.
+    """
+    starfield = frame.starfield
+    if starfield is None or not starfield.catalog_stars:
+        return detections
+
+    depth = None
+    if starfield.limiting_magnitude is not None:
+        depth = starfield.limiting_magnitude + depth_margin
+
+    # Stars with unknown magnitude are kept in the veto list: unknown could
+    # be bright, and a missed veto costs more than a slightly wider net.
+    placed = [
+        star
+        for star in starfield.catalog_stars
+        if star.x is not None and star.y is not None
+    ]
+    veto_stars = [
+        star
+        for star in placed
+        if depth is None or star.magnitude is None or star.magnitude <= depth
+    ]
+
+    # Floor the veto list at the brightest 2x-the-candidate-count stars. The
+    # limiting-magnitude estimate this depth cut rides on comes from early
+    # aperture photometry and can collapse (a frame with a still-poor WCS at
+    # that stage measured 12.0 vs the 16.3 it re-measured later), which
+    # shrinks the veto list to a handful of stars and lets the whole starfield
+    # through as detections. The candidates are overwhelmingly stars, so
+    # 1.5x their count is a sane minimum depth regardless of the estimate
+    # (and comfortably below what a healthy limiting-mag cut yields).
+    min_stars = min(len(placed), int(1.5 * len(detections)))
+    if len(veto_stars) < min_stars:
+        logger.warning(
+            f"Catalog-star veto: depth cut ({len(veto_stars)} stars at "
+            f"mag <= {depth}) looks too shallow for {len(detections)} candidate "
+            f"detections; using the brightest {min_stars} catalog stars instead"
+        )
+        veto_stars = sorted(
+            placed,
+            key=lambda s: s.magnitude if s.magnitude is not None else -np.inf,
+        )[:min_stars]
+        depth = None
+
+    star_xy = np.array([[star.x, star.y] for star in veto_stars])
+    if star_xy.size == 0:
+        return detections
+
+    # The floor absorbs position error in the stored catalog x/y: WCS
+    # distortion residuals plus shift-propagation drift reach ~5-7px in the
+    # frame corners (measured on abq01), so a pure seeing-based radius lets
+    # bright stars leak through as detections. Keeping the depth cut moderate
+    # is what makes this wide a radius safe for the target.
+    radius = max(2.0 * pixel_seeing, 8.0)
+    kept = []
+    vetoed = 0
+    for detection in detections:
+        distances = np.hypot(
+            star_xy[:, 0] - detection[0], star_xy[:, 1] - detection[1]
+        )
+        if np.min(distances) <= radius:
+            vetoed += 1
+        else:
+            kept.append(detection)
+
+    depth_desc = f"mag <= {depth:.2f}" if depth is not None else "no depth cut"
+    logger.info(
+        f"Catalog-star veto: removed {vetoed}/{len(detections)} detections within "
+        f"{radius:.1f}px of a catalog star ({depth_desc}, {len(star_xy)} stars)"
+    )
+    return kept
+
+
 def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     """
     Extract point sources from a rate track frame.
@@ -654,6 +742,13 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
             )
         except Exception as e:
             logger.warning(f"Failed to plot initial detections: {e}")
+
+    # Remove detections that are just catalog stars (essential on
+    # near-sidereal rate frames, where stars are point-like and pass the
+    # shape filter below)
+    all_detections = veto_catalog_star_detections(
+        frame, all_detections, pixel_seeing
+    )
 
     # Filter out non-point sources
     filtered_detections = filter_point_sources(

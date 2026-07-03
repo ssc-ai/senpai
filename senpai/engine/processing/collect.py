@@ -509,8 +509,11 @@ def process_senpai_collect(
 
         # Separate matched vs unmatched detections and compute a brightness
         # threshold.  Only flag unmatched detections that are at least as bright
-        # as the 25th-percentile of matched (catalog-confirmed) detections.
-        # Fainter unmatched sources are overwhelmingly noise peaks.
+        # as the MEDIAN of matched (catalog-confirmed) detections. The lower
+        # quartile of matched counts sits at the noise floor (the deep catalog
+        # matches plenty of barely-detected stars), so a p25 floor let dozens
+        # of noise peaks through per frame (abq01 frame 9: 38 at p25, 2 at
+        # p50). Fainter unmatched sources are overwhelmingly noise peaks.
         matched_counts = []
         unmatched = []
         for det in image_frame.starfield.detections:
@@ -526,7 +529,7 @@ def process_senpai_collect(
         if not unmatched or not matched_counts:
             continue
 
-        min_counts = float(np.percentile(matched_counts, 25))
+        min_counts = float(np.percentile(matched_counts, 50))
 
         non_catalog = [
             det for det in unmatched
