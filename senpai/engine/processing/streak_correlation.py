@@ -154,16 +154,25 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
             exposure_time = frame.frame_metadata.exposure_time_seconds
 
         try:
+            # Star streaks (known angle/length from the tracking rate) are
+            # excluded inside detection, before the expensive per-candidate
+            # profile refinement.  The exclusion tolerance is wider than the
+            # correlation tolerance: trail-residual angles are biased by
+            # field aberration (coma tilts corner trails by ~15-20 deg).
             candidates, _, _ = detect_streaks_in_sidereal(
                 frame.frame.data,
                 frame.starfield,
                 exposure_time=exposure_time,
+                exclude_angle_deg=star_streak_angle,
+                exclude_length_pixels=star_streak_length,
+                exclude_angle_tol_deg=1.5 * angle_tol,
             )
         except Exception as e:
             logger.warning("Streak detection failed for rate frame %d: %s", frame.index, e)
             continue
 
-        # Filter out star streaks: candidates matching the star streak angle AND length
+        # Safety net: re-check the star-streak criterion on the surviving
+        # candidates (refinement can update angle/length).
         non_star_candidates = []
         for c in candidates:
             angle_diff_val = _angle_diff(c.angle_deg, star_streak_angle)

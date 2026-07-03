@@ -96,25 +96,32 @@ def _apply_directional_filters_fft(
     filter_length_fwhm: float = 5.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Core FFT-based directional filter bank on an image at native resolution."""
-    from scipy.fft import irfft2, rfft2
+    from scipy.fft import irfft2, next_fast_len, rfft2
 
     kernels, angles = build_directional_filter_bank(fwhm, n_angles, filter_length_fwhm)
 
-    max_response = np.full(image.shape, -np.inf, dtype=np.float64)
+    # float32 halves FFT cost; response precision is bounded by image noise,
+    # not arithmetic precision.
+    image = np.ascontiguousarray(image, dtype=np.float32)
+
+    max_response = np.full(image.shape, -np.inf, dtype=np.float32)
     best_angle_idx = np.zeros(image.shape, dtype=np.int32)
-    sum_response = np.zeros(image.shape, dtype=np.float64)
+    sum_response = np.zeros(image.shape, dtype=np.float32)
 
     k0 = kernels[0]
+    # Exact linear-convolution padding (image + kernel - 1) is often a
+    # numerically awful FFT length (e.g. 2124 = 4*3*177); rounding up to the
+    # next fast composite size is a large constant-factor win.
     fft_shape = (
-        image.shape[0] + k0.shape[0] - 1,
-        image.shape[1] + k0.shape[1] - 1,
+        next_fast_len(image.shape[0] + k0.shape[0] - 1, real=True),
+        next_fast_len(image.shape[1] + k0.shape[1] - 1, real=True),
     )
 
-    image_fft = rfft2(image, s=fft_shape)
+    image_fft = rfft2(image, s=fft_shape, workers=-1)
 
     for i, kernel in enumerate(kernels):
-        kernel_fft = rfft2(kernel, s=fft_shape)
-        raw = irfft2(image_fft * kernel_fft, s=fft_shape)
+        kernel_fft = rfft2(kernel.astype(np.float32), s=fft_shape, workers=-1)
+        raw = irfft2(image_fft * kernel_fft, s=fft_shape, workers=-1)
 
         ky, kx = kernel.shape
         oy, ox = ky // 2, kx // 2
@@ -130,6 +137,31 @@ def _apply_directional_filters_fft(
     best_angle_deg = angles[best_angle_idx]
 
     return directional_excess, best_angle_deg, isotropic
+
+
+def _bin_image(image: np.ndarray, factor: int) -> np.ndarray:
+    """Block-average ``image`` by ``factor`` (trims edges that don't divide)."""
+    h, w = image.shape
+    hb, wb = h // factor, w // factor
+    return (
+        image[: hb * factor, : wb * factor]
+        .reshape(hb, factor, wb, factor)
+        .mean(axis=(1, 3))
+    )
+
+
+def _upsample_map(binned: np.ndarray, factor: int, shape: tuple[int, int]) -> np.ndarray:
+    """Nearest-neighbor upsample of a binned map back to ``shape``.
+
+    Edge rows/cols trimmed by binning are zero-padded; they fall inside the
+    detection border margin anyway.
+    """
+    full = np.kron(binned, np.ones((factor, factor), dtype=binned.dtype))
+    pad_y = shape[0] - full.shape[0]
+    pad_x = shape[1] - full.shape[1]
+    if pad_y or pad_x:
+        full = np.pad(full, ((0, pad_y), (0, pad_x)))
+    return full
 
 
 def apply_directional_filters(
@@ -357,6 +389,17 @@ def _refine_streak_from_image(
         )
         return None
 
+    # Validate the perpendicular width against the PSF (same band as
+    # _characterize_component): a real streak is the PSF smeared along one
+    # axis.  Far too narrow = pixel-grid noise artifact; far too wide =
+    # glare gradient or halo, not a streak.
+    if fitted_fwhm < 0.3 * fwhm or fitted_fwhm > 2.5 * fwhm:
+        logger.debug(
+            "Rejected streak at (%.0f,%.0f): width=%.2f outside [0.3,2.5]*fwhm=%.2f",
+            cx, cy, fitted_fwhm, fwhm,
+        )
+        return None
+
     # ---- Along-streak profile (refines length) -------------------------
     angle_rad = np.radians(best_angle)
     along_half = int(max(candidate.length_pixels, 4 * fwhm))
@@ -369,22 +412,43 @@ def _refine_streak_from_image(
         along_profile = map_coordinates(image, [ax_y[valid_a], ax_x[valid_a]], order=1)
         t_along_valid = t_along[valid_a]
         bg_level = np.median(along_profile)
-        peak_level = along_profile.max()
+        peak_idx = int(np.argmax(along_profile))
+        peak_level = along_profile[peak_idx]
         half_max = bg_level + 0.5 * (peak_level - bg_level)
         above_half = t_along_valid[along_profile > half_max]
-        refined_length = (
-            float(above_half[-1] - above_half[0]) if len(above_half) >= 2
-            else candidate.length_pixels
-        )
+        if len(above_half) >= 2:
+            # Only count the gap-free cluster of above-half samples around
+            # the peak.  A raw first-to-last span bridges disjoint bright
+            # features along the cut (e.g. a star blob plus glare 100 px
+            # away) into one absurd length.
+            peak_t = t_along_valid[peak_idx]
+            gaps = np.where(np.diff(above_half) > fwhm)[0]
+            starts = np.concatenate(([0], gaps + 1))
+            ends = np.concatenate((gaps, [len(above_half) - 1]))
+            refined_length = candidate.length_pixels
+            for s, e in zip(starts, ends):
+                if above_half[s] <= peak_t <= above_half[e]:
+                    refined_length = float(above_half[e] - above_half[s])
+                    break
+        else:
+            refined_length = candidate.length_pixels
     else:
         refined_length = candidate.length_pixels
 
     candidate.angle_deg = best_angle
     candidate.width_pixels = float(fitted_fwhm)
-    # Keep the traced length if along-streak refinement gives shorter —
-    # the trace in the directional-excess map integrates more signal and
-    # is more reliable for faint streaks than a single profile cut.
-    candidate.length_pixels = float(max(refined_length, candidate.length_pixels))
+    # The traced length is measured on the directional-excess map, which is
+    # smeared by the matched-filter kernel (~filter length beyond the true
+    # ends for bright streaks).  When the streak is strong the image-space
+    # along-profile is the unsmeared measurement — trust it.  This also
+    # collapses star-residual blobs (compact flux, long smeared trace) to
+    # their true image extent so the minimum-length filter rejects them.
+    # For faint streaks the half-max crossing is unreliable, so keep the
+    # trace, which integrates more signal.
+    if local_noise > 0 and fitted_amp > 5 * local_noise:
+        candidate.length_pixels = float(refined_length)
+    else:
+        candidate.length_pixels = float(max(refined_length, candidate.length_pixels))
     return candidate
 
 
@@ -393,32 +457,86 @@ def _refine_streak_from_image(
 # ---------------------------------------------------------------------------
 
 
-def _build_star_mask(
+def _build_adaptive_star_mask(
     shape: tuple[int, int],
-    star_positions: list[tuple[float, float]],
-    mask_radius: float,
+    star_amplitudes: list[tuple[float, float, float, float]],
+    fwhm: float,
+    image_noise: float,
+    template_peak: float,
+    streak_angle_deg: float | None = None,
+    streak_length_pixels: float | None = None,
 ) -> np.ndarray:
-    """Build a boolean mask that is True where stars are located.
+    """Mask each subtracted star out to where its PSF model was significant.
 
-    Uses vectorized distance computation for efficiency.
+    A blanket per-star radius is catastrophic on deep catalogs (a mag-21
+    Gaia catalog covers essentially the whole frame); instead each star's
+    mask radius is derived from its fitted amplitude: the radius where the
+    model dropped below a fraction of the image noise.  Stars too faint to
+    leave residuals get no mask at all.  Very bright stars leave structured
+    non-model residuals (halos, saturation bleed, aberrated wings) far
+    beyond the model radius, so they get a generous fixed radius.
+
+    On rate-track frames (``streak_angle_deg``/``streak_length_pixels``
+    given) stars are trailed, and the mask is a capsule along the trail
+    segment instead of a disk.
+
+    Args:
+        shape: Image shape.
+        star_amplitudes: ``(x, y, fitted_amplitude, measured_peak)`` per
+            subtracted star.
+        fwhm: PSF FWHM in pixels.
+        image_noise: Robust image noise sigma (ADU).
+        template_peak: Peak value of the sum-normalized subtraction
+            template (converts amplitudes to model peak pixel values).
+        streak_angle_deg: Star-trail angle on rate frames.
+        streak_length_pixels: Star-trail length on rate frames.
+
+    Returns:
+        Boolean mask, True where candidate seeding should be suppressed.
     """
-    if not star_positions:
-        return np.zeros(shape, dtype=bool)
-
     star_mask = np.zeros(shape, dtype=bool)
-    h, w = shape
-    mask_radius_sq = mask_radius ** 2
+    if not star_amplitudes or image_noise <= 0:
+        return star_mask
 
-    # Vectorized: for each star, mask a square region and check circular distance
-    ir = int(np.ceil(mask_radius))
-    for sx, sy in star_positions:
+    sigma = fwhm / 2.355
+    h, w = shape
+
+    if streak_angle_deg is not None and streak_length_pixels:
+        angle_rad = np.radians(streak_angle_deg)
+        ux, uy = np.cos(angle_rad), np.sin(angle_rad)
+        half_trail = streak_length_pixels / 2.0
+    else:
+        ux = uy = 0.0
+        half_trail = 0.0
+
+    for sx, sy, amp, measured_peak in star_amplitudes:
+        # The measured peak catches saturated and aberrated stars whose
+        # model fit badly underestimates their real brightness.
+        peak_snr = max(amp * template_peak, measured_peak) / image_noise
+        if peak_snr < 3.0:
+            continue  # subtraction residual is below the noise
+        # Radius where a Gaussian cross-section falls to 0.25 * noise
+        radius = sigma * np.sqrt(2 * np.log(4.0 * peak_snr))
+        if peak_snr > 40.0:
+            # Bright: the model is wrong in the wings; halos, bleed and
+            # aberration residuals extend far beyond the model radius and
+            # mimic streak-shaped signal.
+            radius = max(radius, 6.0 * fwhm)
+
+        ir = int(np.ceil(radius + half_trail))
         y_lo = max(0, int(sy) - ir)
         y_hi = min(h, int(sy) + ir + 1)
         x_lo = max(0, int(sx) - ir)
         x_hi = min(w, int(sx) + ir + 1)
         yy, xx = np.ogrid[y_lo:y_hi, x_lo:x_hi]
-        dist_sq = (xx - sx) ** 2 + (yy - sy) ** 2
-        star_mask[y_lo:y_hi, x_lo:x_hi] |= dist_sq <= mask_radius_sq
+        if half_trail > 0:
+            # Distance to the trail segment: clamp the along-trail
+            # projection to +-half_trail, then measure to the closest point.
+            t = np.clip((xx - sx) * ux + (yy - sy) * uy, -half_trail, half_trail)
+            dist_sq = (xx - sx - t * ux) ** 2 + (yy - sy - t * uy) ** 2
+        else:
+            dist_sq = (xx - sx) ** 2 + (yy - sy) ** 2
+        star_mask[y_lo:y_hi, x_lo:x_hi] |= dist_sq <= radius * radius
 
     return star_mask
 
@@ -432,32 +550,62 @@ def _subtract_catalog_stars(
     image: np.ndarray,
     catalog_stars: list,
     fwhm: float,
-) -> np.ndarray:
-    """Subtract Gaussian PSF models of catalog stars from the image.
+    streak_angle_deg: float | None = None,
+    streak_length_pixels: float | None = None,
+) -> tuple[np.ndarray, list[tuple[float, float, float, float]], float]:
+    """Subtract PSF models of catalog stars from the image.
 
-    For each catalog star, fits the amplitude of a Gaussian PSF at the
+    For each catalog star, fits the amplitude of a PSF template at the
     star's known position and subtracts it.  This removes the dominant
     star signal while preserving any streak signal passing through or
     near the star.
 
+    On sidereal frames the template is a round Gaussian.  On rate-track
+    frames (``streak_angle_deg``/``streak_length_pixels`` given) every star
+    is trailed by the tracking motion, and the template is the
+    corresponding streaked PSF — subtracting round Gaussians from trailed
+    stars removes almost nothing and floods the filter bank with trail
+    residuals.
+
     The amplitude is estimated by matched filtering: the dot product of
-    the image patch with the normalized PSF template, which is the
+    the image patch with the normalized template, which is the
     maximum-likelihood amplitude estimate for known position and shape.
 
-    Returns the image with stars subtracted.
+    Returns:
+        ``(subtracted_image, star_amplitudes, template_peak)`` where
+        ``star_amplitudes`` is a list of ``(x, y, fitted_amplitude,
+        measured_peak)`` per subtracted star and ``template_peak`` is the
+        peak value of the sum-normalized template (converts fitted
+        amplitudes to model peak pixel values).
     """
+    from senpai.engine.detection.kernels import streak_matched_kernel
+
     sigma = fwhm / 2.355
     result = image.copy()
     h, w = image.shape
 
-    # Build the PSF template (normalized to sum=1)
-    half = int(np.ceil(3.5 * fwhm))
-    y, x = np.mgrid[-half : half + 1, -half : half + 1].astype(np.float64)
-    psf = np.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
-    psf /= psf.sum()
-    psf_sq_sum = np.sum(psf ** 2)
+    trailed = streak_angle_deg is not None and streak_length_pixels
+    if trailed:
+        # Streaked PSF template at the tracking angle (normalized to sum=1)
+        psf = streak_matched_kernel(
+            round(float(fwhm), 2),
+            round(float(streak_angle_deg), 1),
+            round(float(streak_length_pixels) / fwhm, 2),
+        )
+        half = psf.shape[0] // 2
+        gauss_grid = None
+    else:
+        # Round Gaussian template (normalized to sum=1)
+        half = int(np.ceil(3.5 * fwhm))
+        y, x = np.mgrid[-half : half + 1, -half : half + 1].astype(np.float64)
+        psf = np.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
+        psf /= psf.sum()
+        gauss_grid = (y, x)
 
-    n_subtracted = 0
+    psf_sq_sum = np.sum(psf ** 2)
+    template_peak = float(psf.max())
+
+    star_amplitudes: list[tuple[float, float, float, float]] = []
     for star in catalog_stars:
         if star.x is None or star.y is None:
             continue
@@ -476,24 +624,38 @@ def _subtract_catalog_stars(
 
         # Only subtract positive stars (negative amplitude = no star)
         if amplitude > 0:
-            # Subpixel centering: shift the PSF by the fractional offset
-            dx = star.x - ix
-            dy = star.y - iy
-            shifted_psf = np.exp(
-                -((x - dx) ** 2 + (y - dy) ** 2) / (2 * sigma ** 2)
-            )
-            shifted_psf /= shifted_psf.sum()
+            # Measured peak near the star center: for saturated or aberrated
+            # (non-Gaussian) stars the fitted model peak badly underestimates
+            # the real brightness, and the residual mask needs to know.
+            core = patch[half - 2 : half + 3, half - 2 : half + 3]
+            measured_peak = float(core.max())
+
+            if gauss_grid is not None:
+                # Subpixel centering: shift the PSF by the fractional offset
+                gy, gx = gauss_grid
+                dx = star.x - ix
+                dy = star.y - iy
+                model = np.exp(
+                    -((gx - dx) ** 2 + (gy - dy) ** 2) / (2 * sigma ** 2)
+                )
+                model /= model.sum()
+            else:
+                # Streaked template: pixel-centered subtraction.  The trail
+                # is many pixels long, so the sub-pixel offset leaves only a
+                # small dipole residual, covered by the residual mask.
+                model = psf
 
             result[iy - half : iy + half + 1, ix - half : ix + half + 1] -= (
-                amplitude * shifted_psf
+                amplitude * model
             )
-            n_subtracted += 1
+            star_amplitudes.append((star.x, star.y, float(amplitude), measured_peak))
 
     logger.info(
-        "PSF-subtracted %d catalog stars (FWHM=%.2f, template=%dx%d)",
-        n_subtracted, fwhm, 2 * half + 1, 2 * half + 1,
+        "PSF-subtracted %d catalog stars (FWHM=%.2f, template=%dx%d%s)",
+        len(star_amplitudes), fwhm, 2 * half + 1, 2 * half + 1,
+        f", trailed L={streak_length_pixels:.0f}px" if trailed else "",
     )
-    return result
+    return result, star_amplitudes, template_peak
 
 
 # ---------------------------------------------------------------------------
@@ -603,17 +765,6 @@ def _trace_streak_profile(
     return float(centroid_x), float(centroid_y), float(length), peak_excess, total_excess
 
 
-def _weighted_circular_mean_angle(
-    angles_deg: np.ndarray,
-    weights: np.ndarray,
-) -> float:
-    """Weighted circular mean of angles in [0, 180) — handles 0/180 wraparound."""
-    rads = np.radians(2 * angles_deg)  # Double to map [0,180) → [0,360)
-    mean_sin = np.sum(weights * np.sin(rads)) / np.sum(weights)
-    mean_cos = np.sum(weights * np.cos(rads)) / np.sum(weights)
-    return float(np.degrees(np.arctan2(mean_sin, mean_cos)) / 2) % 180
-
-
 def _trace_and_build_candidate(
     image: np.ndarray,
     directional_excess: np.ndarray,
@@ -631,9 +782,9 @@ def _trace_and_build_candidate(
 
     Uses the best angle from the filter bank to trace along the streak
     direction in the directional excess map, finding endpoints where the
-    signal drops below threshold.  Then refines the angle by computing
-    a weighted circular mean of the filter-bank angles over the traced
-    pixels, which is more robust than a single-point measurement.
+    signal drops below threshold.  Then refines the angle with a
+    DE-weighted PCA of the local above-threshold region (resolving below
+    the filter-bank angle step) and re-traces along the refined angle.
     """
     initial_angle = float(best_angle_deg[hotspot_y, hotspot_x]) % 180
 
@@ -655,7 +806,6 @@ def _trace_and_build_candidate(
     # then finds the real streak.
     centroid_x_init, centroid_y_init = result[0], result[1]
     perp_angle = (initial_angle + 90) % 180
-    used_perpendicular = False
     perp_result = _trace_streak_profile(
         directional_excess,
         centroid_x_init,
@@ -672,49 +822,56 @@ def _trace_and_build_candidate(
     if perp_result is not None and perp_result[4] > result[4]:
         result = perp_result
         initial_angle = perp_angle
-        used_perpendicular = True
 
     centroid_x, centroid_y, length, peak_excess, _total = result
 
-    # Refine the angle using the filter-bank angles over the traced extent.
-    # Skip this when the perpendicular retrace was used — the per-pixel
-    # best_angle values are dominated by the artifact that caused the wrong
-    # initial angle, so the weighted mean would undo the correction.
+    # Refine the angle with a DE-weighted PCA of the above-threshold pixels
+    # around the trace.  The filter bank quantizes angles (typically 5deg
+    # steps) and the per-pixel best_angle is noisy where the kernel smears
+    # signal beyond the streak ends; the excess-weighted second moment of
+    # the actual detection region resolves the angle below the bank step
+    # and is insensitive to both.
     h, w = directional_excess.shape
-    angle_rad = np.radians(initial_angle)
-    cos_a = np.cos(angle_rad)
-    sin_a = np.sin(angle_rad)
     half_len = length / 2
 
-    # Use the DETECTION threshold (not the lower trace threshold) for
-    # angle sampling.  Noise pixels at the streak edges have random
-    # best_angle values that contaminate the weighted mean.  Only pixels
-    # with reliable directional excess should contribute to the angle.
-    if not used_perpendicular:
-        # Refine angle from per-pixel best_angle along the trace.
-        # Only when the initial angle was used — if perpendicular retrace
-        # was needed, the per-pixel angles are unreliable (dominated by
-        # the artifact that caused the wrong initial direction).
-        angle_threshold = noise_std * 5.0
-        sample_angles = []
-        sample_weights = []
-        for t in np.arange(-half_len, half_len + 0.5, 1.0):
-            px = int(round(centroid_x + t * cos_a))
-            py = int(round(centroid_y + t * sin_a))
-            if 0 <= px < w and 0 <= py < h:
-                de = directional_excess[py, px]
-                if de > angle_threshold:
-                    sample_angles.append(best_angle_deg[py, px])
-                    sample_weights.append(de)
+    r = int(np.ceil(half_len + fwhm))
+    y_lo = max(0, int(centroid_y) - r)
+    y_hi = min(h, int(centroid_y) + r + 1)
+    x_lo = max(0, int(centroid_x) - r)
+    x_hi = min(w, int(centroid_x) + r + 1)
+    local_de = directional_excess[y_lo:y_hi, x_lo:x_hi]
+    angle_threshold = noise_std * 5.0
+    sel = local_de > angle_threshold
 
-        if len(sample_angles) >= 3:
-            angle = _weighted_circular_mean_angle(
-                np.array(sample_angles), np.array(sample_weights)
-            )
-        else:
-            angle = initial_angle
-    else:
-        angle = initial_angle
+    angle = initial_angle
+    if sel.sum() >= 5:
+        ys, xs = np.nonzero(sel)
+        wts = local_de[ys, xs]
+        wsum = wts.sum()
+        mx = (wts * xs).sum() / wsum
+        my = (wts * ys).sum() / wsum
+        dx = xs - mx
+        dy = ys - my
+        cxx = (wts * dx * dx).sum() / wsum
+        cyy = (wts * dy * dy).sum() / wsum
+        cxy = (wts * dx * dy).sum() / wsum
+        eigvals, eigvecs = np.linalg.eigh(np.array([[cxx, cxy], [cxy, cyy]]))
+        # Require clear elongation, otherwise the PCA direction is noise
+        if eigvals[0] > 0 and np.sqrt(eigvals[1] / eigvals[0]) > 1.5:
+            major = eigvecs[:, -1]
+            angle = float(np.degrees(np.arctan2(major[1], major[0]))) % 180
+
+    # If PCA moved the angle appreciably, re-trace along the refined angle:
+    # the original trace direction was off by up to half the bank step and
+    # its length/centroid degrade with angle error over long streaks.
+    angle_change = abs(angle - initial_angle) % 180
+    angle_change = min(angle_change, 180 - angle_change)
+    if angle_change > 1.0:
+        retrace = _trace_streak_profile(
+            directional_excess, centroid_x, centroid_y, angle, fwhm, threshold,
+        )
+        if retrace is not None and retrace[4] >= result[4]:
+            centroid_x, centroid_y, length, peak_excess, _total = retrace
 
     peak_snr = peak_excess / noise_std if noise_std > 0 else 0.0
     peak_frac = float(fractional_excess[hotspot_y, hotspot_x])
@@ -771,7 +928,10 @@ def detect_streaks_in_sidereal(
     min_length_fwhm: float = 2.0,
     min_component_pixels: int = 10,
     exposure_time: float | None = None,
-) -> tuple[list[StreakCandidate], np.ndarray]:
+    exclude_angle_deg: float | None = None,
+    exclude_length_pixels: float | None = None,
+    exclude_angle_tol_deg: float = 15.0,
+) -> tuple[list[StreakCandidate], np.ndarray, np.ndarray]:
     """Detect streak candidates in a sidereal frame.
 
     Applies a bank of directional matched filters directly to the image.
@@ -790,9 +950,19 @@ def detect_streaks_in_sidereal(
         min_length_fwhm: Reject candidates shorter than this many FWHMs.
         min_component_pixels: Skip connected components smaller than this.
         exposure_time: Exposure time in seconds (enables rate estimation).
+        exclude_angle_deg: Star-trail angle on rate-track frames.  When set
+            (with ``exclude_length_pixels``), catalog stars are subtracted
+            with a TRAILED PSF template, masked along the trail capsule,
+            and candidates matching the trail angle (within
+            ``exclude_angle_tol_deg``) are dropped when their length is
+            0.4-4x the trail length or a significant star lies on their
+            axis — before the expensive profile refinement.
+        exclude_length_pixels: Star-trail length paired with
+            ``exclude_angle_deg``.
+        exclude_angle_tol_deg: Angle tolerance for the exclusion.
 
     Returns:
-        ``(candidates, directional_excess_image)``
+        ``(candidates, directional_excess_image, best_angle_deg_image)``
     """
     # ---- FWHM ----------------------------------------------------------
     if starfield.detection_metadata and starfield.detection_metadata.pixel_fwhm:
@@ -802,7 +972,11 @@ def detect_streaks_in_sidereal(
         logger.warning("No FWHM in starfield, using default %.1f", fwhm)
 
     # ---- 1. Background subtract ----------------------------------------
-    _, bg_median, _ = sigma_clipped_stats(image, sigma=3.0, maxiters=5)
+    # Stats on a 4x4-subsampled view: identical medians to within noise at
+    # a fraction of the cost on multi-megapixel frames.
+    _, bg_median, image_noise = sigma_clipped_stats(
+        image[::4, ::4], sigma=3.0, maxiters=5
+    )
     bg_subtracted = image.astype(np.float64) - bg_median
 
     # ---- 1b. PSF-subtract catalog stars --------------------------------
@@ -810,64 +984,82 @@ def detect_streaks_in_sidereal(
     # near stars), subtract a Gaussian PSF model at each catalog star
     # position.  This preserves any streak signal passing through or near
     # the star while removing the dominant star contribution.
+    # On rate frames the exclusion model doubles as the star-trail model:
+    # stars are subtracted with a trailed template and masked along the
+    # trail capsule.
+    star_amplitudes: list[tuple[float, float, float, float]] = []
+    sigma = fwhm / 2.355
+    template_peak = 1.0 / (2 * np.pi * sigma**2)
     if starfield.catalog_stars:
-        bg_subtracted = _subtract_catalog_stars(
-            bg_subtracted, starfield.catalog_stars, fwhm,
+        bg_subtracted, star_amplitudes, template_peak = _subtract_catalog_stars(
+            bg_subtracted,
+            starfield.catalog_stars,
+            fwhm,
+            streak_angle_deg=exclude_angle_deg,
+            streak_length_pixels=exclude_length_pixels,
         )
 
     # ---- 2. Directional matched filter bank ----------------------------
+    # The PSF oversamples the pixel grid on most sensors; block-averaging
+    # before the filter bank keeps the matched-filter SNR (bin << FWHM)
+    # while cutting FFT cost by ~bin_factor^2.  Maps are upsampled back to
+    # native resolution afterwards so tracing and refinement are unchanged.
+    bin_factor = max(1, int(fwhm / 3.5))
     logger.info(
-        "Applying %d-angle directional filter bank (FWHM=%.2f, length=%.1fxFWHM)",
+        "Applying %d-angle directional filter bank "
+        "(FWHM=%.2f, length=%.1fxFWHM, bin=%d)",
         n_angles,
         fwhm,
         filter_length_fwhm,
+        bin_factor,
     )
+    if bin_factor > 1:
+        filter_input = _bin_image(bg_subtracted, bin_factor)
+        filter_fwhm = fwhm / bin_factor
+    else:
+        filter_input = bg_subtracted
+        filter_fwhm = fwhm
+
     directional_excess, best_angle_deg, isotropic = apply_directional_filters(
-        bg_subtracted, fwhm, n_angles, filter_length_fwhm
+        filter_input, filter_fwhm, n_angles, filter_length_fwhm
     )
 
-    # Noise estimates
+    # Noise estimates (on the compact maps, before upsampling)
     _, _, excess_noise = sigma_clipped_stats(directional_excess, sigma=3.0, maxiters=5)
     _, _, iso_noise = sigma_clipped_stats(isotropic, sigma=3.0, maxiters=5)
     logger.info("Directional excess noise sigma = %.4f", excess_noise)
+
+    if bin_factor > 1:
+        directional_excess = _upsample_map(directional_excess, bin_factor, image.shape)
+        best_angle_deg = _upsample_map(best_angle_deg, bin_factor, image.shape)
+        isotropic = _upsample_map(isotropic, bin_factor, image.shape)
 
     # Fractional excess: how much the peak exceeds isotropic, as a fraction
     # of the isotropic level.  Stars ~0.05, streaks >>0.3.
     # Use iso_noise as floor to avoid division by zero in background regions.
     fractional_excess = directional_excess / np.maximum(np.abs(isotropic), iso_noise)
 
-    # ---- 3. Pre-mask known star regions --------------------------------
-    # The directional filter kernel extends filter_length_fwhm/2 * FWHM in
-    # each direction.  Bright stars create spurious directional excess in
-    # their wings out to the kernel half-extent.  Mask these regions BEFORE
-    # thresholding to prevent false positives.
-    #
-    # IMPORTANT: Only use catalog stars (known astronomical objects), NOT
-    # detections from the point-source finder.  Detections may include
-    # streak peaks, and masking those would remove the very targets we
-    # are trying to find.
-    star_positions = []
-    if starfield.catalog_stars:
-        for s in starfield.catalog_stars:
-            if s.x is not None and s.y is not None:
-                star_positions.append((s.x, s.y))
-
-    # Mask radius for subtraction residuals.  Since catalog stars are now
-    # PSF-subtracted before filtering, the mask only needs to cover
-    # subtraction residuals (imperfect PSF model, saturation, etc.).
-    # Use a smaller radius than before to preserve streak signal near stars.
-    star_mask_radius = fwhm * 3.0
-    star_mask = _build_star_mask(image.shape, star_positions, star_mask_radius)
-    n_masked = int(star_mask.sum())
-
-    # Zero out directional excess at star locations
-    directional_excess[star_mask] = 0.0
-    fractional_excess[star_mask] = 0.0
+    # ---- 3. Build the star-residual seed mask ---------------------------
+    # Imperfect PSF subtraction leaves residuals that light up the filter
+    # bank.  Suppress candidate SEEDING there, but do NOT zero the
+    # directional excess map itself: a streak passing near a star must
+    # still trace through the region with its full signal, otherwise the
+    # trace truncates (or wanders off along a noise direction) and the
+    # candidate dies in refinement.
+    star_mask = _build_adaptive_star_mask(
+        image.shape,
+        star_amplitudes,
+        fwhm,
+        float(image_noise),
+        template_peak,
+        streak_angle_deg=exclude_angle_deg,
+        streak_length_pixels=exclude_length_pixels,
+    )
     logger.info(
-        "Pre-masked %d pixels near %d known stars (radius=%.1f px)",
-        n_masked,
-        len(star_positions),
-        star_mask_radius,
+        "Star-residual seed mask: %d pixels (%.1f%% of frame) from %d stars",
+        int(star_mask.sum()),
+        100.0 * star_mask.sum() / star_mask.size,
+        len(star_amplitudes),
     )
 
     # ---- 4. Threshold --------------------------------------------------
@@ -889,6 +1081,7 @@ def detect_streaks_in_sidereal(
         & (fractional_excess > min_fractional_excess)  # not a point source
         & (isotropic > iso_signal_threshold)           # has real signal
         & border_mask
+        & ~star_mask                                   # no star residual seeds
     )
     n_det = int(detection_mask.sum())
     logger.info(
@@ -932,7 +1125,47 @@ def detect_streaks_in_sidereal(
     candidates: list[StreakCandidate] = []
     n_rejected_short = 0
     n_rejected_duplicate = 0
+    n_rejected_border = 0
+    n_rejected_excluded = 0
     min_length = fwhm * min_length_fwhm
+
+    # Stars whose trail residuals can seed candidates (used by
+    # _is_excluded_star_streak on rate frames).  Trailing spreads a star's
+    # flux over the trail, so even mag ~12 stars only peak at ~10 sigma —
+    # the threshold here is deliberately low.
+    trail_stars = [
+        (sx, sy)
+        for sx, sy, amp, measured_peak in star_amplitudes
+        if max(amp * template_peak, measured_peak) > 8.0 * float(image_noise)
+    ]
+
+    def _is_excluded_star_streak(candidate: StreakCandidate) -> bool:
+        """Candidate is a star trail (rate frames): matches the tracking angle
+        and either the approximate trail length or a star on its axis."""
+        if exclude_angle_deg is None or not exclude_length_pixels:
+            return False
+        diff = abs(candidate.angle_deg - exclude_angle_deg) % 180
+        if min(diff, 180 - diff) > exclude_angle_tol_deg:
+            return False
+        # Wide band: the traced length of a trail residual is smeared by the
+        # matched-filter kernel (and halos on bright stars), so it can come
+        # out several times the nominal trail length.
+        ratio = candidate.length_pixels / exclude_length_pixels
+        if 0.4 < ratio < 4.0:
+            return True
+        # If a significant star sits on the candidate's axis, it IS that
+        # star's trail regardless of the measured length.
+        angle_rad = np.radians(candidate.angle_deg)
+        ux, uy = np.cos(angle_rad), np.sin(angle_rad)
+        reach = candidate.length_pixels / 2 + 6.0 * fwhm
+        for sx, sy in trail_stars:
+            dx = sx - candidate.x
+            dy = sy - candidate.y
+            along = dx * ux + dy * uy
+            perp = abs(-dx * uy + dy * ux)
+            if abs(along) <= reach and perp <= 1.5 * fwhm:
+                return True
+        return False
 
     for hy, hx, _ in hotspots:
         # Skip if this hotspot was already claimed by a brighter streak
@@ -960,8 +1193,23 @@ def detect_streaks_in_sidereal(
             n_rejected_short += 1
             continue
 
+        # The trace can slide the centroid off the seed hotspot and into the
+        # border zone (edge glare from bright sources just off-frame produces
+        # strong directional gradients there).  Signal centered that close to
+        # the edge cannot be validated; drop it.
+        if (
+            candidate.x < border
+            or candidate.x >= image.shape[1] - border
+            or candidate.y < border
+            or candidate.y >= image.shape[0] - border
+        ):
+            n_rejected_border += 1
+            continue
+
         # Mark the streak region as claimed to prevent duplicate detections.
         # Step at 2-pixel intervals (sufficient for claim_radius overlap).
+        # Excluded star streaks claim their region too, so the remaining
+        # hotspots along the same star streak are skipped cheaply.
         angle_rad = np.radians(candidate.angle_deg)
         cos_a = np.cos(angle_rad)
         sin_a = np.sin(angle_rad)
@@ -977,6 +1225,12 @@ def detect_streaks_in_sidereal(
                 x_lo = max(0, px - ir)
                 x_hi = min(image.shape[1], px + ir + 1)
                 claimed_mask[y_lo:y_hi, x_lo:x_hi] = True
+
+        # On rate frames every star is a streak at the tracking angle/length;
+        # drop those before the expensive profile refinement.
+        if _is_excluded_star_streak(candidate):
+            n_rejected_excluded += 1
+            continue
 
         candidates.append(candidate)
 
@@ -1053,6 +1307,10 @@ def detect_streaks_in_sidereal(
             candidate.y = result[1]
             candidate.length_pixels = max(candidate.length_pixels, result[2])
 
+            if _is_excluded_star_streak(candidate):
+                n_rejected_excluded += 1
+                continue
+
             # Check not duplicate of existing candidates
             is_dup = False
             for existing in candidates:
@@ -1074,20 +1332,54 @@ def detect_streaks_in_sidereal(
     refined = []
     for candidate in candidates:
         result = _refine_streak_from_image(bg_subtracted, candidate, fwhm)
-        if result is not None:
-            refined.append(result)
-        else:
+        # Refinement updates the length from the image profile; re-check the
+        # minimum length so kernel-smear-only detections don't survive.
+        if result is None or result.length_pixels < min_length:
             n_rejected_profile += 1
+            continue
+        # Refinement also updates the angle/length, so re-check the star
+        # streak exclusion on rate frames.
+        if _is_excluded_star_streak(result):
+            n_rejected_excluded += 1
+            continue
+        # Rate estimates were derived from the kernel-smeared traced length;
+        # recompute from the refined length.
+        if exposure_time and exposure_time > 0:
+            result.rate_pixels_per_sec = result.length_pixels / exposure_time
+            if (
+                starfield.wcs_metadata
+                and hasattr(starfield.wcs_metadata, "x_ifov_arcsec")
+            ):
+                result.rate_arcsec_per_sec = (
+                    result.rate_pixels_per_sec * starfield.wcs_metadata.x_ifov_arcsec
+                )
+        refined.append(result)
     candidates = refined
 
     # Sort by SNR but return ALL candidates (no cap)
     candidates.sort(key=lambda c: c.peak_snr, reverse=True)
+
+    # Final dedup: hotspot- and component-seeded candidates can converge to
+    # the same streak after angle refinement and re-tracing.  Keep the
+    # highest-SNR instance.
+    deduped: list[StreakCandidate] = []
+    for candidate in candidates:
+        if any(
+            np.hypot(candidate.x - kept.x, candidate.y - kept.y) < fwhm * 2
+            for kept in deduped
+        ):
+            continue
+        deduped.append(candidate)
+    candidates = deduped
     logger.info(
-        "Detected %d streak candidates (%d rejected short, "
-        "%d rejected profile, %d duplicate hotspots, from %d hotspots)",
+        "Detected %d streak candidates (%d rejected short, %d rejected profile, "
+        "%d rejected border, %d excluded star streaks, "
+        "%d duplicate hotspots, from %d hotspots)",
         len(candidates),
         n_rejected_short,
         n_rejected_profile,
+        n_rejected_border,
+        n_rejected_excluded,
         n_rejected_duplicate,
         len(hotspots),
     )
