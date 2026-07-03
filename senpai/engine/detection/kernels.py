@@ -67,8 +67,10 @@ def rectangle_pyramoid(
 
     angle = np.rad2deg(np.arctan2(sinx, cosx))
 
-    width = int(width)
-    length = int(length)
+    # Floor at 1 px: a sub-pixel length/width truncates to 0 and builds a
+    # zero-size array that cv2.warpAffine rejects (src.cols > 0 assertion).
+    width = max(int(width), 1)
+    length = max(int(length), 1)
 
     # Bound the supersampled intermediate. The kernel is built at `upsample`x
     # resolution then PIL-rotated with expand=1, so the rotated bounding box

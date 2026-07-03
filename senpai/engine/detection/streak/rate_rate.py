@@ -384,7 +384,11 @@ def solve_rate_from_rate(
 
     scale = 150
     if expected_shift:
-        scale = int(expected_shift * 1.2)
+        # Floor the search window: a near-stationary target gives a sub-pixel
+        # expected shift, and int() would collapse the window to zero pixels
+        # (empty slice -> argmax of an empty sequence). A few PSF widths is
+        # always enough room to find the correlation peak.
+        scale = max(int(expected_shift * 1.2), int(3 * streak_fwhm), 5)
 
     valid = False
     max_trials = 10
@@ -775,8 +779,21 @@ def solve_rate_from_rate(
     else:
         reported_rate = estimated_pixel_track_rate_per_second
 
+    # A trail can never appear shorter than the PSF: a near-sidereal-rate target
+    # with sub-pixel motion is point-like, and downstream kernel builders assume
+    # a length of at least a pixel. Floor the kernel geometry at the measured
+    # FWHM; the reported rate stays motion-derived and is unaffected.
+    kernel_length = streak.length
+    if kernel_length < streak.fwhm:
+        logger.warning(
+            f"Streak length {kernel_length:.2f}px is below the PSF FWHM "
+            f"({streak.fwhm:.2f}px); flooring kernel length at the PSF "
+            f"(point-like target)"
+        )
+        kernel_length = streak.fwhm
+
     rate_frame_b.streak = StreakMetadata(
-        pixel_length=streak.length,
+        pixel_length=kernel_length,
         sine_angle=np.sin(np.deg2rad(streak.rotation)),
         cosine_angle=np.cos(np.deg2rad(streak.rotation)),
         fwhm=streak.fwhm,

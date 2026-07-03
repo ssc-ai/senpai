@@ -63,6 +63,35 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
             "WCS status is not PIXEL_SHIFTED_WCS, skipping kernel convolution"
         )
 
+    # A missing or degenerate streak (non-finite parameters or sub-pixel length)
+    # cannot produce a usable convolution kernel — building one hands an empty or
+    # NaN array to OpenCV. Skip refinement and keep the pixel-shifted WCS rather
+    # than crash the run; this happens for near-sidereal-rate targets whose trail
+    # is shorter than a pixel.
+    streak = frame.streak
+    if (
+        streak is None
+        or not np.all(
+            np.isfinite(
+                [
+                    streak.pixel_length,
+                    streak.sine_angle,
+                    streak.cosine_angle,
+                    streak.fwhm,
+                ]
+            )
+        )
+        or streak.pixel_length < 1.0
+    ):
+        logger.warning(
+            "Streak metadata for frame %d is missing or degenerate (%s); "
+            "skipping kernel-convolution WCS refinement",
+            frame.index,
+            streak,
+        )
+        frame.starfield.wcs_status = WCSStatus.KERNEL_REFINED_WCS
+        return 0.0, 0.0
+
     # Decide whether to enable variable kernels for this frame based on WCS distortion.
     use_variable_kernels = False
     distortion_metrics = None
