@@ -215,6 +215,15 @@ class StreakDetectionConfig(BaseModel):
         default_factory=VariableKernelConfig,
         description="Variable-kernel configuration for streak WCS refinement",
     )
+    symmetric_border_removal: bool = Field(
+        default=True,
+        description="When removing border-crossing streaks before the rate-rate "
+        "cross-correlation, also fill the counterpart region (blob translated by "
+        "±expected drift) in the OTHER frame. Deleting a streak from only one "
+        "frame breaks its correlation pair and lets a mis-pair of two different "
+        "stars win the CC peak — the proven cause of reversed/aliased shifts. "
+        "Falls back to per-frame removal when no drift estimate exists.",
+    )
 
 
 class ValidationConfig(BaseModel):
@@ -256,6 +265,78 @@ class ValidationConfig(BaseModel):
         description="Strict absolute-correlation floor for the same noise-signal case.",
     )
     max_validation_stars: int = Field(default=50, description="Maximum number of stars to use for validation")
+    test_negated_shift: bool = Field(
+        default=True,
+        description="Also correlate the negated shift; reject the proposed shift if its "
+        "negation correlates better (guards against the rate-rate direction ambiguity)",
+    )
+    negated_rejection_ratio: float = Field(
+        default=1.05,
+        description="Reject the proposed shift when corr(-shift) > ratio * corr(shift) "
+        "and the shift is larger than a few pixels",
+    )
+
+
+class WCSValidationConfig(BaseModel):
+    """Absolute post-refinement WCS validation.
+
+    Tests for real star flux at the pixel positions the refined WCS predicts
+    for the brightest catalog stars, against a random-position null and an
+    offset control grid. Catches WCS solutions that are internally consistent
+    but globally wrong (e.g. poisoned by a bad frame-to-frame shift), which
+    the relative fallback-based checks cannot see.
+    """
+
+    enable: bool = Field(default=True, description="Run absolute WCS validation after refinement")
+    n_stars: int = Field(default=30, description="Brightest in-bounds catalog stars to test")
+    min_stars: int = Field(
+        default=8,
+        description="Minimum testable stars for a verdict; below this the result is indeterminate",
+    )
+    n_random: int = Field(default=500, description="Random positions for the null distribution")
+    significance_percentile: float = Field(
+        default=99.0, description="Null percentile a star's flux must exceed to count as significant"
+    )
+    min_frac_significant: float = Field(
+        default=0.12,
+        description="Minimum fraction of significant stars for the WCS to pass. "
+        "Calibrated on the 2024 tako calsat set: genuinely poisoned WCS frames "
+        "score <=0.04 and correct ones >=0.16 even under heavy moonlight.",
+    )
+    control_margin: float = Field(
+        default=0.10,
+        description="Pass additionally requires frac_significant >= control fraction + this margin",
+    )
+    control_offset_px: int = Field(
+        default=300, description="Pixel offset applied to predictions for the control grid"
+    )
+    background_block_px: int = Field(
+        default=32, description="Block size for the coarse median background model"
+    )
+
+
+class ChainGateConfig(BaseModel):
+    """Consistency gate for the frame-to-frame shift chain.
+
+    Under rate tracking the star drift rate (shift / time gap) is nearly
+    constant across an observation, so a solved hop whose rate reverses
+    direction or deviates grossly from the accepted-chain median is almost
+    certainly a mis-solve. One such hop silently poisons the WCS of every
+    frame chained beyond it.
+    """
+
+    enable: bool = Field(default=True, description="Enable the shift-chain consistency gate")
+    min_history_hops: int = Field(
+        default=2, description="Accepted rate-rate hops required before the gate activates"
+    )
+    max_rate_deviation_fraction: float = Field(
+        default=0.5,
+        description="Reject a hop whose drift rate deviates from the chain median by more than "
+        "this fraction of the median magnitude",
+    )
+    min_rate_deviation_px_s: float = Field(
+        default=3.0, description="Absolute deviation floor (px/s) so slow chains aren't over-gated"
+    )
 
 
 class ExposureTimeConfig(BaseModel):
@@ -499,6 +580,14 @@ class AppConfig(BaseModel):
         description="Streak detection and tracking configuration",
     )
     validation: ValidationConfig = Field(default_factory=ValidationConfig, description="Validation configuration")
+    wcs_validation: WCSValidationConfig = Field(
+        default_factory=WCSValidationConfig,
+        description="Absolute post-refinement WCS validation configuration",
+    )
+    chain_gate: ChainGateConfig = Field(
+        default_factory=ChainGateConfig,
+        description="Frame-shift chain consistency gate configuration",
+    )
     headers: HeadersConfig = Field(default_factory=HeadersConfig, description="FITS header mapping configuration")
     photometry: PhotometryConfig = Field(default_factory=PhotometryConfig, description="Photometry configuration")
     calibrations: CalibrationsConfig = Field(

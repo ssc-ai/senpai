@@ -339,14 +339,44 @@ def validate_shift_lightweight(
         logger.warning(f"Insufficient stars for validation: {proposed_n_stars} < 4")
         return False, 0.0, None, (0.0, 0.0)
 
+    # Calculate shift magnitude to determine if we should use perpendicular sampling
+    shift_magnitude = np.sqrt(shift_x**2 + shift_y**2)
+
+    # 1b. Direction-ambiguity guard: streak patterns correlate almost as well
+    # under a sign-flipped shift, and a flipped hop silently reverses the WCS
+    # chain. If the negated shift correlates decisively better, the proposed
+    # shift is the wrong branch of that ambiguity — reject it here so the
+    # solver can try again rather than poison every downstream frame.
+    if config.validation.test_negated_shift and shift_magnitude > 5.0:
+        negated_corr, negated_n_stars, _ = quick_correlation_from_boxes(
+            target_frame,
+            source_frame,
+            -shift_x,
+            -shift_y,
+            catalog_stars,
+            box_size,
+            max_stars,
+            debug_label="NEGATED",
+        )
+        if (
+            negated_n_stars >= 4
+            and negated_corr > proposed_corr * config.validation.negated_rejection_ratio
+        ):
+            logger.warning(
+                "Rejecting proposed shift (%.1f, %.1f): its negation correlates "
+                "better (%.3f vs %.3f) — direction ambiguity",
+                shift_x,
+                shift_y,
+                negated_corr,
+                proposed_corr,
+            )
+            return False, proposed_corr, None, (0.0, 0.0)
+
     # 2. Test random alternative shifts
     # Strategy: Sample perpendicular to the shift vector to avoid landing on the streak
     random_correlations = []
     random_shifts = []
     random_n_stars = []  # Track number of stars for each random trial
-
-    # Calculate shift magnitude to determine if we should use perpendicular sampling
-    shift_magnitude = np.sqrt(shift_x**2 + shift_y**2)
 
     # Use fwhm_exclusion if provided, otherwise derive from config or use a default
     if fwhm_exclusion is not None:

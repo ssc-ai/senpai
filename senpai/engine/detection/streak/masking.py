@@ -628,15 +628,16 @@ def remove_near_saturation_streaks(
     return image, int(sat_labels.size)
 
 
-def remove_border_crossing_streaks(image: np.ndarray) -> np.ndarray:
-    # Remove edge targets (streaks crossing the frame border). Vectorized for
-    # the same reason as remove_near_saturation_streaks: label blobs above
-    # fill_min once, then fill the ones seeded by a bright (> pixel_cut) pixel in
-    # the 2px border, rather than looping a full-frame argmax + mask copy per
-    # streak.
+def _border_crossing_mask(image: np.ndarray) -> np.ndarray | None:
+    """Mask of streaks crossing the frame border (None when there are none).
+
+    Vectorized for the same reason as remove_near_saturation_streaks: label
+    blobs above fill_min once, then select the ones seeded by a bright
+    (> pixel_cut) pixel in the 2px border, rather than looping a full-frame
+    argmax + mask copy per streak.
+    """
     pixel_cut = np.mean(image) + 3 * np.std(image)
     fill_min = np.median(image) + 0.5 * np.std(image)
-    fill_value = float(np.mean(image))
 
     border_seed = np.zeros(image.shape, dtype=bool)
     border_seed[:2, :] = True
@@ -645,16 +646,91 @@ def remove_border_crossing_streaks(image: np.ndarray) -> np.ndarray:
     border_seed[:, -2:] = True
     border_seed &= image > pixel_cut
     if not border_seed.any():
-        return image
+        return None
 
     struct = generate_binary_structure(2, 2)
     labels, _ = label(image > fill_min, structure=struct)
     seed_labels = np.unique(labels[border_seed])
     seed_labels = seed_labels[seed_labels != 0]
-    if seed_labels.size:
-        image[np.isin(labels, seed_labels)] = fill_value
+    if not seed_labels.size:
+        return None
+    return np.isin(labels, seed_labels)
 
+
+def remove_border_crossing_streaks(image: np.ndarray) -> np.ndarray:
+    # Remove edge targets (streaks crossing the frame border).
+    mask = _border_crossing_mask(image)
+    if mask is not None:
+        image[mask] = float(np.mean(image))
     return image
+
+
+def _translate_mask(mask: np.ndarray, dx: int, dy: int) -> np.ndarray:
+    """Shift a boolean mask by (dx, dy) pixels with zero fill (no wraparound)."""
+    out = np.zeros_like(mask)
+    h, w = mask.shape
+    ys0, ys1 = max(0, dy), min(h, h + dy)
+    xs0, xs1 = max(0, dx), min(w, w + dx)
+    yt0, yt1 = max(0, -dy), min(h, h - dy)
+    xt0, xt1 = max(0, -dx), min(w, w - dx)
+    out[ys0:ys1, xs0:xs1] = mask[yt0:yt1, xt0:xt1]
+    return out
+
+
+def remove_border_crossing_streaks_pairwise(
+    image_a: np.ndarray,
+    image_b: np.ndarray,
+    drift_dx: float,
+    drift_dy: float,
+    pad_px: int,
+) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """Remove border-crossing streaks from a frame pair, symmetrically.
+
+    Deleting a streak from only one frame of a correlation pair breaks its
+    true match while its counterpart (drifted ~one hop inward) survives in
+    the other frame — in sparse fields the whitened cross-correlation then
+    locks onto a mis-pair of two *different* streaks, producing a reversed or
+    aliased shift. So whenever a blob is filled in one frame, also fill the
+    counterpart region in the other frame: the blob mask translated by the
+    expected inter-frame drift. The drift sign is unknown here (streak axes
+    carry a 180° ambiguity), so both ±drift translations are filled; the
+    spurious one costs a blob-sized patch of sky, which is harmless next to a
+    broken pair.
+
+    Args:
+        image_a, image_b: The two frames (modified in place, same shape).
+        drift_dx, drift_dy: Expected inter-frame drift vector (sign-agnostic).
+        pad_px: Isotropic dilation of the counterpart fills, absorbing drift
+            estimate error.
+
+    Returns:
+        (image_a, image_b, filled_px_a, filled_px_b)
+    """
+    from scipy.ndimage import binary_dilation
+
+    mask_a = _border_crossing_mask(image_a)
+    mask_b = _border_crossing_mask(image_b)
+
+    def counterpart(mask: np.ndarray) -> np.ndarray:
+        both = _translate_mask(mask, round(drift_dx), round(drift_dy)) | _translate_mask(
+            mask, -round(drift_dx), -round(drift_dy)
+        )
+        if pad_px > 0:
+            both = binary_dilation(both, iterations=pad_px)
+        return both
+
+    fill_a = mask_a.copy() if mask_a is not None else np.zeros(image_a.shape, dtype=bool)
+    fill_b = mask_b.copy() if mask_b is not None else np.zeros(image_b.shape, dtype=bool)
+    if mask_b is not None:
+        fill_a |= counterpart(mask_b)
+    if mask_a is not None:
+        fill_b |= counterpart(mask_a)
+
+    if fill_a.any():
+        image_a[fill_a] = float(np.mean(image_a))
+    if fill_b.any():
+        image_b[fill_b] = float(np.mean(image_b))
+    return image_a, image_b, int(fill_a.sum()), int(fill_b.sum())
 
 
 def map_cluster_with_peaks(

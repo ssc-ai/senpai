@@ -19,6 +19,48 @@ class WCSStatus(str, Enum):
     SIDEREAL_FIT_WCS = "SIDEREAL_FIT_WCS"
     PIXEL_SHIFTED_WCS = "PIXEL_SHIFTED_WCS"
     KERNEL_REFINED_WCS = "KERNEL_REFINED_WCS"
+    # Refinement ran but the result failed the absolute image-based validation
+    # (no significant star flux at the positions the WCS predicts). The WCS is
+    # kept for inspection but must not be trusted for astrometry.
+    REFINED_UNVALIDATED_WCS = "REFINED_UNVALIDATED_WCS"
+
+
+class WCSQualityMetrics(BaseModel):
+    """Absolute, image-based quality measurement of a frame's WCS.
+
+    Measures background-subtracted flux at the pixel positions the WCS
+    predicts for the brightest catalog stars, against a random-position null
+    distribution and a deliberately offset control grid. A correct WCS puts
+    real star flux at the predicted positions; a poisoned one lands on blank
+    sky, which no relative (fallback-based) check can detect.
+    """
+
+    method: str = "flux_at_catalog_positions"
+    n_stars_tested: int
+    box_radius_px: int
+    frac_significant: float = Field(
+        description="Fraction of tested stars whose flux exceeds the null p-th percentile"
+    )
+    control_frac_significant: float = Field(
+        description="Same fraction for the control grid (predictions offset by control_offset_px)"
+    )
+    null_percentile: float
+    passed: bool | None = Field(
+        description="True/False = validation verdict; None = too few testable stars to judge"
+    )
+    # Residuals of the WCS refit against the star positions it was fitted to
+    # (absent when refinement fell back to the propagated WCS).
+    refit_rms_px: float | None = None
+    refit_rms_arcsec: float | None = None
+    n_refit_stars: int | None = None
+
+    @field_serializer("frac_significant", "control_frac_significant")
+    def _ser_frac(self, v: float) -> float:
+        return round(v, 3)
+
+    @field_serializer("refit_rms_px", "refit_rms_arcsec")
+    def _ser_rms(self, v: float | None) -> float | None:
+        return round(v, 3) if v is not None else None
 
 
 class ReturnAstrometryConfig(BaseModel):

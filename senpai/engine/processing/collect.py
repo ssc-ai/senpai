@@ -9,7 +9,10 @@ import numpy as np
 from senpai.core.config import get_config
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
 from senpai.engine.detection.point.satellite import extract_point_sources
-from senpai.engine.detection.streak.frame_shift import solve_shift
+from senpai.engine.detection.streak.frame_shift import (
+    enforce_chain_consistency,
+    solve_shift,
+)
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import SeeingModel, TrackMode
 from senpai.engine.models.senpai import RateTrackFrame, SenpaiRun, SiderealFrame
@@ -368,6 +371,12 @@ def process_senpai_collect(
             next_shift.error_message = (
                 next_shift.error_message or "Solver returned without processing"
             )
+
+        # A solved hop must also agree with the accepted chain: one reversed or
+        # aliased shift here would silently corrupt the WCS of every frame
+        # chained beyond it. Runs before update_valid_path so a rejected hop
+        # can be routed around.
+        enforce_chain_consistency(senpai_run, next_shift)
 
         senpai_run.update_valid_path()
 

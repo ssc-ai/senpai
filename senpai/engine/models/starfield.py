@@ -5,6 +5,7 @@ from senpai.engine.models.astrometry import (
     ReturnAstrometryConfig,
     WCSMetadata,
     WCSModel,
+    WCSQualityMetrics,
     WCSStatus,
 )
 from senpai.engine.models.metadata import DetectionMetadata, FWHMMetadata, ImageMetadata
@@ -181,6 +182,8 @@ class StarField(BaseModel):
     #   - "max_angle_variation_deg"
     #   - "max_length_variation_fraction"
     distortion_metrics: dict[str, float] | None = None
+    # Absolute image-based WCS validation result (set after refinement)
+    wcs_quality: WCSQualityMetrics | None = None
 
     @model_validator(mode="after")
     def create_wcs_metadata(self) -> "StarField":

@@ -557,7 +557,7 @@ def fit_and_validate_wcs(
     sip_refit_order: int,
     sip_refit_enabled: bool,
     max_acceptable_shift: float = 50.0,
-) -> WCSModel:
+) -> tuple[WCSModel, dict | None]:
     """Fit a new WCS from matched points and validate against a fallback.
 
     Consolidates the identical fit-then-validate blocks used in both the
@@ -574,7 +574,9 @@ def fit_and_validate_wcs(
             at image corners/center before the fit is rejected.
 
     Returns:
-        The refined WCSModel, or *fallback_wcs* if validation fails.
+        (wcs_model, refit_stats): the refined WCSModel plus a dict with the
+        fit's residual statistics (rms_px, rms_arcsec, n_stars), or
+        (*fallback_wcs*, None) if validation fails.
     """
     import astropy.units as u
     from astropy.coordinates import SkyCoord
@@ -642,12 +644,39 @@ def fit_and_validate_wcs(
             "Using fallback WCS.",
             max_shift,
         )
-        return fallback_wcs
+        return fallback_wcs, None
+
+    # Residuals of the fit against the points it was fitted to. Same pixel
+    # convention as x_values/y_values (whatever was passed to
+    # fit_wcs_from_points), so origin=0 is consistent here.
+    refit_stats = None
+    try:
+        fit_x, fit_y = refined_astropy_wcs.all_world2pix(
+            ra_values, dec_values, 0, quiet=True
+        )
+        residuals_px = np.hypot(fit_x - x_values, fit_y - y_values)
+        scale_arcsec = (
+            np.sqrt(np.abs(np.linalg.det(refined_astropy_wcs.pixel_scale_matrix))) * 3600.0
+        )
+        rms_px = float(np.sqrt(np.mean(residuals_px**2)))
+        refit_stats = {
+            "rms_px": rms_px,
+            "rms_arcsec": rms_px * scale_arcsec,
+            "n_stars": len(world_coords),
+        }
+        logger.info(
+            "WCS refit residuals: rms=%.2fpx (%.2f\") over %d stars",
+            rms_px,
+            refit_stats["rms_arcsec"],
+            len(world_coords),
+        )
+    except Exception as e:
+        logger.warning("Could not compute WCS refit residuals: %s", e)
 
     logger.info(
         "Successfully refined WCS using %d catalog stars", len(world_coords)
     )
-    return new_wcs_model
+    return new_wcs_model, refit_stats
 
 
 def update_starfield_wcs(

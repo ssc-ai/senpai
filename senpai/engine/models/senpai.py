@@ -8,7 +8,7 @@ import numpy as np
 from pydantic import BaseModel, field_serializer
 
 import senpai
-from senpai.engine.models.astrometry import WCSMetadata, WCSModel
+from senpai.engine.models.astrometry import WCSMetadata, WCSModel, WCSQualityMetrics
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import (
     CollectionMetadata,
@@ -121,6 +121,7 @@ class FrameSummary(BaseModel):
     solve_ms: float | None = None  # total cascade solve wall time (ms)
     wcs: WCSModel | None = None
     wcs_metadata: WCSMetadata | None = None  # FOV, plate scale, center RA/Dec
+    wcs_quality: WCSQualityMetrics | None = None  # absolute image-based validation result
 
     # Observing
     frame_metadata: FrameMetadata | None = None
@@ -843,6 +844,7 @@ class SenpaiRun(BaseModel):
         wcs = sf.wcs if sf else None
         wcs_metadata = sf.wcs_metadata if sf else None
         wcs_status = sf.wcs_status.value if sf else None
+        wcs_quality = sf.wcs_quality if sf else None
         solver_tier = sf.solver_tier if sf else None
         solve_ms = sf.solve_ms if sf else None
         limiting_magnitude = sf.limiting_magnitude if sf else None
@@ -872,6 +874,7 @@ class SenpaiRun(BaseModel):
             original_frame_path=original_path,
             processed_frame_path=processed_path,
             wcs_status=wcs_status,
+            wcs_quality=wcs_quality,
             solver_tier=solver_tier,
             solve_ms=solve_ms,
             wcs=wcs,

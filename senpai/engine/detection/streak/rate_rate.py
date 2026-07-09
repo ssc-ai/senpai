@@ -20,6 +20,7 @@ from senpai.engine.detection.streak.extraction import (
 from senpai.engine.detection.streak.masking import (
     percent_difference,
     remove_border_crossing_streaks,
+    remove_border_crossing_streaks_pairwise,
     remove_brightest_streak,
     remove_near_saturation_streaks,
     remove_streak_at_point_robust,
@@ -256,8 +257,48 @@ def solve_rate_from_rate(
         rate_b_data, rate_frame_b.frame.data_type
     )
 
-    rate_a_data = remove_border_crossing_streaks(rate_a_data)
-    rate_b_data = remove_border_crossing_streaks(rate_b_data)
+    # Border-crossing streak removal. Symmetric (pairwise) when we can estimate
+    # the inter-frame drift: deleting a streak from one frame while its
+    # counterpart survives in the other breaks the strongest true correlation
+    # pair, and in sparse fields the CC argmax then lands on a mis-pair of two
+    # different streaks (reversed/aliased shift). The drift estimate is the
+    # same prior the CC masking and search window below already rely on.
+    drift_axis = None
+    for fr in (rate_frame_a, rate_frame_b):
+        if fr.streak is not None and np.all(
+            np.isfinite([fr.streak.cosine_angle, fr.streak.sine_angle])
+        ):
+            drift_axis = (fr.streak.cosine_angle, fr.streak.sine_angle)
+            break
+    if (
+        get_config().streak.symmetric_border_removal
+        and pixel_track_rate_per_second is not None
+        and drift_axis is not None
+    ):
+        drift_mag = pixel_track_rate_per_second * (
+            frame_exposure_gap_seconds
+            + 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
+        )
+        pad_px = int(min(30, max(8, 2 * (streak_fwhm or 4.0), 0.15 * drift_mag)))
+        rate_a_data, rate_b_data, filled_a, filled_b = (
+            remove_border_crossing_streaks_pairwise(
+                rate_a_data,
+                rate_b_data,
+                drift_mag * drift_axis[0],
+                drift_mag * drift_axis[1],
+                pad_px,
+            )
+        )
+        if filled_a or filled_b:
+            logger.info(
+                "Symmetric border-streak removal: filled %d px in frame %d, "
+                "%d px in frame %d (drift=%.0fpx, pad=%dpx)",
+                filled_a, rate_frame_a.index, filled_b, rate_frame_b.index,
+                drift_mag, pad_px,
+            )
+    else:
+        rate_a_data = remove_border_crossing_streaks(rate_a_data)
+        rate_b_data = remove_border_crossing_streaks(rate_b_data)
 
     # strip_unbalanced_streaks(rate_a_data, rate_b_data)
 

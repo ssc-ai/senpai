@@ -6,6 +6,10 @@ setup_logging()
 
 
 try:
-    __version__ = version("senpai")
+    # Distribution is named astro-senpai (import package stays senpai)
+    __version__ = version("astro-senpai")
 except PackageNotFoundError:
-    __version__ = "unknown"  # Fallback if the package is not installed
+    try:
+        __version__ = version("senpai")  # pre-rename installs
+    except PackageNotFoundError:
+        __version__ = "unknown"  # Fallback if the package is not installed

@@ -34,6 +34,7 @@ from senpai.engine.utils.wcs_ops import (
     filter_catalog_stars_by_radius,
     shift_wcs,
 )
+from senpai.engine.utils.wcs_validation import validate_frame_wcs
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
             frame.index,
             streak,
         )
-        frame.starfield.wcs_status = WCSStatus.KERNEL_REFINED_WCS
+        _finalize_refined_wcs_status(frame, refit_stats=None)
         return 0.0, 0.0
 
     # Decide whether to enable variable kernels for this frame based on WCS distortion.
@@ -189,7 +190,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
         )
 
     # Second pass: Refine WCS using catalog stars
-    refined_wcs = refine_wcs_with_catalog_stars(frame, convolved_image)
+    refined_wcs, refit_stats = refine_wcs_with_catalog_stars(frame, convolved_image)
 
     if refined_wcs is not None:
         # Update with the refined WCS if successful. Keep the catalog DEEP (no
@@ -222,10 +223,37 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
                 / f"{frame.index}_kernel_final.png",
             )
 
-    # Update WCS status
-    frame.starfield.wcs_status = WCSStatus.KERNEL_REFINED_WCS
+    _finalize_refined_wcs_status(frame, refit_stats)
 
     return global_shift_x, global_shift_y
+
+
+def _finalize_refined_wcs_status(
+    frame: RateTrackFrame, refit_stats: dict | None
+) -> None:
+    """Set the post-refinement WCS status from the absolute validation verdict.
+
+    The refinement itself can only confirm a WCS relative to what it started
+    from, so a chain poisoned by one bad shift used to sail through and get
+    stamped KERNEL_REFINED_WCS regardless. Only an explicit validation FAIL
+    demotes; an indeterminate result (too few testable stars) keeps the
+    refined status but records the metrics for downstream consumers.
+    """
+    quality = validate_frame_wcs(frame, refit_stats=refit_stats)
+    frame.starfield.wcs_quality = quality
+
+    if quality is not None and quality.passed is False:
+        logger.warning(
+            "Frame %d WCS failed absolute validation "
+            "(frac_significant=%.2f, control=%.2f); demoting to %s",
+            frame.index,
+            quality.frac_significant,
+            quality.control_frac_significant,
+            WCSStatus.REFINED_UNVALIDATED_WCS.value,
+        )
+        frame.starfield.wcs_status = WCSStatus.REFINED_UNVALIDATED_WCS
+    else:
+        frame.starfield.wcs_status = WCSStatus.KERNEL_REFINED_WCS
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +419,7 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
             mode="same",
         )
 
-    wcs_model = refine_sidereal_with_catalog_stars(frame, convolved_image)
+    wcs_model, refit_stats = refine_sidereal_with_catalog_stars(frame, convolved_image)
 
     frame.starfield.wcs = wcs_model
     frame.starfield.wcs_metadata = WCSMetadata.from_wcsmodel(wcs_model)
@@ -415,6 +443,22 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
         wcs_model, catalog_stars.stars
     )
 
+    # Absolute validation: sidereal frames refined from a propagated shift are
+    # just as exposed to a poisoned chain as rate frames. Only an explicit
+    # FAIL demotes the status.
+    quality = validate_frame_wcs(frame, refit_stats=refit_stats)
+    frame.starfield.wcs_quality = quality
+    if quality is not None and quality.passed is False:
+        logger.warning(
+            "Sidereal frame %d WCS failed absolute validation "
+            "(frac_significant=%.2f, control=%.2f); demoting to %s",
+            frame.index,
+            quality.frac_significant,
+            quality.control_frac_significant,
+            WCSStatus.REFINED_UNVALIDATED_WCS.value,
+        )
+        frame.starfield.wcs_status = WCSStatus.REFINED_UNVALIDATED_WCS
+
     if config.plotting.debug:
         plot_single_frame(
             frame.frame.data,
@@ -432,7 +476,7 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
 
 def refine_sidereal_with_catalog_stars(
     frame: SiderealFrame, convolved_image: np.ndarray
-) -> WCSModel:
+) -> tuple[WCSModel, dict | None]:
     """Refine WCS for sidereal frames using catalog stars from brightest to dimmest.
 
     Args:
@@ -440,7 +484,8 @@ def refine_sidereal_with_catalog_stars(
         convolved_image (np.ndarray): The convolved image (with a 2D Gaussian kernel).
 
     Returns:
-        WCSModel: The refined WCS model, or None if refinement failed.
+        tuple[WCSModel, dict | None]: The refined WCS model plus refit residual
+        stats, or (shifted WCS, None) if the refit could not be attempted.
     """
     config = get_config()
 
@@ -548,7 +593,7 @@ def refine_sidereal_with_catalog_stars(
             "Not enough stars (%d) for WCS refit, returning shifted WCS",
             len(filtered_star_data),
         )
-        return updated_wcs_model
+        return updated_wcs_model, None
 
     # MAD-based outlier rejection on shift magnitudes (shared helper)
     shifts = []
@@ -572,7 +617,7 @@ def refine_sidereal_with_catalog_stars(
             "Not enough stars (%d) after outlier rejection for WCS refit",
             len(world_coords),
         )
-        return updated_wcs_model
+        return updated_wcs_model, None
 
     # Check spatial coverage
     star_positions = np.array(pixel_coords)
@@ -588,7 +633,7 @@ def refine_sidereal_with_catalog_stars(
             coverage_metrics["quadrant_coverage"],
             coverage_metrics["convex_hull_area_ratio"],
         )
-        return updated_wcs_model
+        return updated_wcs_model, None
 
     # Fit and validate WCS (shared helper)
     return fit_and_validate_wcs(
@@ -608,7 +653,7 @@ def refine_sidereal_with_catalog_stars(
 
 def refine_wcs_with_catalog_stars(
     frame: RateTrackFrame, convolved_image: np.ndarray
-) -> WCSModel:
+) -> tuple[WCSModel, dict | None]:
     """Refine WCS using catalog stars from brightest to dimmest.
 
     Args:
@@ -616,7 +661,9 @@ def refine_wcs_with_catalog_stars(
         convolved_image (np.ndarray): The convolved image.
 
     Returns:
-        WCSModel: The refined WCS model, or None if refinement failed.
+        tuple[WCSModel, dict | None]: The refined WCS model (or the frame's
+        existing WCS if refinement failed) plus refit residual stats when a
+        refit actually happened.
     """
     config = get_config()
     logger.info("Second pass: Refining WCS with catalog stars")
@@ -983,7 +1030,7 @@ def refine_wcs_with_catalog_stars(
         logger.warning(
             f"Not enough stars ({len(world_coords)}) for reliable WCS refinement. Minimum required: {MIN_STARS_FOR_WCS}"
         )
-        return frame.starfield.wcs  # Return the original WCS model
+        return frame.starfield.wcs, None  # Return the original WCS model
 
     # Check spatial distribution of reference stars
     star_positions = np.array(pixel_coords)
@@ -1013,7 +1060,7 @@ def refine_wcs_with_catalog_stars(
             logger.error(
                 "Extremely poor spatial distribution of reference stars. Using original WCS."
             )
-            return frame.starfield.wcs
+            return frame.starfield.wcs, None
 
     logger.info(
         f"Using {len(world_coords)} well-separated star positions for WCS fitting"
