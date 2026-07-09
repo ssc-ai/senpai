@@ -667,8 +667,14 @@ def remove_border_crossing_streaks(image: np.ndarray) -> np.ndarray:
 
 def _translate_mask(mask: np.ndarray, dx: int, dy: int) -> np.ndarray:
     """Shift a boolean mask by (dx, dy) pixels with zero fill (no wraparound)."""
+    dx, dy = int(dx), int(dy)
     out = np.zeros_like(mask)
     h, w = mask.shape
+    # A shift beyond the frame moves everything off-image (multi-frame-gap
+    # hops can have expected drifts larger than the frame itself) — and the
+    # slice arithmetic below would wrap a negative stop instead of clamping.
+    if abs(dx) >= w or abs(dy) >= h:
+        return out
     ys0, ys1 = max(0, dy), min(h, h + dy)
     xs0, xs1 = max(0, dx), min(w, w + dx)
     yt0, yt1 = max(0, -dy), min(h, h - dy)
