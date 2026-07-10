@@ -224,6 +224,23 @@ class StreakDetectionConfig(BaseModel):
         "stars win the CC peak — the proven cause of reversed/aliased shifts. "
         "Falls back to per-frame removal when no drift estimate exists.",
     )
+    reconcile_with_chain: bool = Field(
+        default=True,
+        description="Overrule a degenerate or deviant per-frame streak model "
+        "(length==fwhm blob fits, lengths off by >reconcile_length_tolerance, "
+        "axes misaligned with the drift) with chain-derived geometry "
+        "(drift rate x exposure along the drift axis) once hops are solved",
+    )
+    reconcile_length_tolerance: float = Field(
+        default=0.5,
+        description="Fractional disagreement with rate x exposure beyond which "
+        "the extracted streak length is replaced",
+    )
+    reconcile_angle_tolerance_deg: float = Field(
+        default=25.0,
+        description="Misalignment between streak axis and drift axis beyond "
+        "which the extracted angle is replaced",
+    )
 
 
 class ValidationConfig(BaseModel):

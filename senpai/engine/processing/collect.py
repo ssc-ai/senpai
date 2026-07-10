@@ -392,6 +392,23 @@ def process_senpai_collect(
                 refine_sidereal_frame(target)
 
             elif isinstance(target, RateTrackFrame):
+                # A degenerate streak extraction (length==fwhm blob fit, or an
+                # axis unrelated to the drift) feeds a garbage kernel into the
+                # refinement below and overlong star line labels downstream —
+                # reconcile with the chain-derived geometry first.
+                if config.streak.reconcile_with_chain:
+                    from senpai.engine.utils.streak_chain import (
+                        chain_drift_rates,
+                        reconcile_streak_with_chain,
+                    )
+
+                    reconcile_streak_with_chain(
+                        target,
+                        chain_drift_rates(senpai_run),
+                        config.streak.reconcile_length_tolerance,
+                        config.streak.reconcile_angle_tolerance_deg,
+                    )
+
                 logger.info("Refining WCS by kernel convolution")
                 shift_correction_x, shift_correction_y = (
                     refine_wcs_by_kernel_convolution(target)

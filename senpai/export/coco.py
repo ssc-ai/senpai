@@ -88,6 +88,22 @@ class SenpaiCocoExporter:
         self._source_path = source_path
         self._build_cfg = "unset"  # reset per-run config cache
 
+        # Star line labels inherit each frame's streak model; overrule
+        # degenerate/deviant extractions with chain-derived geometry so saved
+        # runs (which may predate in-pipeline reconciliation) export physical
+        # streak lengths and angles.
+        try:
+            from senpai.engine.utils.streak_chain import reconcile_run_streaks
+
+            n_fixed = reconcile_run_streaks(senpai_run)
+            if n_fixed:
+                logger.info(
+                    "Reconciled %d streak models with the solved chain for export",
+                    n_fixed,
+                )
+        except Exception as e:
+            logger.warning("Streak-chain reconciliation skipped: %s", e)
+
         # Process frames based on run type
         if isinstance(senpai_run, SenpaiRunResult):
             # Process serializable frames
