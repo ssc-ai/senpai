@@ -314,9 +314,21 @@ class SenpaiCocoExporter:
         streak_annotations = []
         streak_lines = []
 
-        if frame.starfield and frame.streak:
+        # Star line annotations are catalog positions projected through the
+        # frame's WCS — a WCS that failed absolute validation makes them
+        # mislabeled training data, so emit none for demoted frames.
+        wcs_status = getattr(frame.starfield, "wcs_status", None) if frame.starfield else None
+        wcs_unvalidated = getattr(wcs_status, "value", wcs_status) == "REFINED_UNVALIDATED_WCS"
+        if wcs_unvalidated:
+            logger.info(
+                "Skipping star line annotations for frame %s: WCS failed "
+                "absolute validation (REFINED_UNVALIDATED_WCS)",
+                frame.index,
+            )
+
+        if frame.starfield and frame.streak and not wcs_unvalidated:
             logger.debug(f"Processing streak annotations for rate frame {frame.index}")
-            
+
             # Use catalog stars if available (they have magnitudes), otherwise fall back to detections
             stars_to_process = []
             if frame.starfield.catalog_stars:
@@ -525,9 +537,20 @@ class SenpaiCocoExporter:
         streak_annotations = []
         streak_lines = []
 
-        if hasattr(frame, "starfield") and frame.starfield is not None:
+        # Star line annotations are catalog positions projected through the
+        # frame's WCS — skip them when the WCS failed absolute validation.
+        wcs_status = getattr(getattr(frame, "starfield", None), "wcs_status", None)
+        wcs_unvalidated = getattr(wcs_status, "value", wcs_status) == "REFINED_UNVALIDATED_WCS"
+        if wcs_unvalidated:
+            logger.info(
+                "Skipping star line annotations for frame %s: WCS failed "
+                "absolute validation (REFINED_UNVALIDATED_WCS)",
+                frame.index,
+            )
+
+        if hasattr(frame, "starfield") and frame.starfield is not None and not wcs_unvalidated:
             starfield = frame.starfield
-            
+
             # Use catalog stars if available (they have magnitudes), otherwise fall back to detections
             stars_to_process = []
             if hasattr(starfield, "catalog_stars") and starfield.catalog_stars:
