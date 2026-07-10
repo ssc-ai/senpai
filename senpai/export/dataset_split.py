@@ -330,8 +330,15 @@ class DatasetSplitter:
             json.dump(points_data, f, indent=2)
 
         # Create lines annotation file (stars) - exclude sidereal frames
-        # Sidereal frames don't have streak lines, only point sources
-        rate_images = [img for img in images if img.get("type") == "rate"]
+        # Sidereal frames don't have streak lines, only point sources.
+        # Also exclude rate frames with no line annotations: star line labels are
+        # catalog x WCS, so a frame without them (demoted/unvalidated WCS) has
+        # UNKNOWN star positions — including it would teach "no stars here".
+        labeled_ids = {ann["image_id"] for ann in line_annotations}
+        rate_images = [
+            img for img in images
+            if img.get("type") == "rate" and img["id"] in labeled_ids
+        ]
         rate_image_ids = {img["id"] for img in rate_images}
         
         lines_data_dir = f"{split_name}/"
