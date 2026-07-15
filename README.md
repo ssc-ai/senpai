@@ -1,10 +1,10 @@
 # SENPAI
 
-[![CI](https://github.com/zgazak/senpai/actions/workflows/ci.yml/badge.svg)](https://github.com/zgazak/senpai/actions/workflows/ci.yml) ![Tests](https://raw.githubusercontent.com/zgazak/senpai/main/tests.svg) ![Coverage](https://raw.githubusercontent.com/zgazak/senpai/main/coverage.svg)
+[![CI](https://github.com/ssc-ai/senpai/actions/workflows/ci.yml/badge.svg)](https://github.com/ssc-ai/senpai/actions/workflows/ci.yml) ![Tests](https://raw.githubusercontent.com/ssc-ai/senpai/main/tests.svg) ![Coverage](https://raw.githubusercontent.com/ssc-ai/senpai/main/coverage.svg)
 
 A classic star detector and astrometry tool.
 
-<img src="https://raw.githubusercontent.com/zgazak/senpai/main/resources/senpai_logo.png" alt="senpai" width="600"/>
+<img src="https://raw.githubusercontent.com/ssc-ai/senpai/main/resources/senpai_logo.png" alt="senpai" width="600"/>
 
 SENPAI is built off of the algorithm descriptions in [Gazak et al. 2026, PASP, 138, 014502](https://iopscience.iop.org/article/10.1088/1538-3873/ae2b35/meta) — see [Citation](#citation) below if you use this software.
 
