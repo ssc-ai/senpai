@@ -1880,8 +1880,11 @@ SSTR7_EXPECTED_FILES = {
     "sstrc.acc": 864000,
 }
 
-# GitHub release information for SSTRC7 catalog
-SSTR7_GITHUB_REPO = "zgazak/sstrc7"
+# GitHub release information for SSTRC7 catalog.
+# Blanked pending re-hosting under the new org — the downloader
+# (sstrc7_management.py) will fail fast until this points at a repo again.
+# The local-file SSTRC7 catalog path is unaffected.
+SSTR7_GITHUB_REPO = ""
 SSTR7_RELEASE_TAG = "v1.0.1"
 
 # SHA256 checksums for SSTRC7 catalog part files
