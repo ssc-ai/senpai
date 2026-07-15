@@ -29,6 +29,39 @@ def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
     logger.info("Config saved to: %s", output_dir / "config.yaml")
 
 
+# Per-star / completeness arrays are dropped from the per-frame quick-look
+# files; they stay in the run summary and full result JSONs. The quick-look is
+# for eyeballing detections + WCS, not photometric analysis.
+_QUICKLOOK_PHOTOMETRY_DROP = frozenset({
+    "stars_mag",
+    "stars_snr",
+    "stars_zp_offset",
+    "stars_isolated",
+    "stars_catalog_id",
+    "completeness_mag",
+    "completeness_pct",
+})
+
+
+def write_frame_quicklooks(summary, output_dir: Path) -> None:
+    """Write compact per-frame quick-look JSONs (frame_{index}_{mode}.json).
+
+    Takes a SenpaiRunSummary: each frame gets its FrameSummary (detections,
+    WCS, streaks, scalar photometry) minus the bulk per-star arrays.
+    """
+    for fs in summary.frames:
+        data = fs.model_dump(mode="json")
+        ps = data.get("photometry_summary")
+        if ps:
+            data["photometry_summary"] = {
+                k: v for k, v in ps.items() if k not in _QUICKLOOK_PHOTOMETRY_DROP
+            }
+        mode = fs.track_mode or "frame"
+        with open(Path(output_dir) / f"frame_{fs.index}_{mode}.json", "w") as f:
+            json.dump(data, f)
+    logger.info("Wrote %d per-frame quick-look JSONs", len(summary.frames))
+
+
 def profile_run(func, *args, run_id: str = "profile", **kwargs):
     """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
     saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result."""
@@ -76,7 +109,7 @@ def serialize_photometry_to_json(results, summary, output_path: Path) -> None:
     }
 
     with open(output_path, "w") as f:
-        json.dump(photometry_output, f, indent=4)
+        json.dump(photometry_output, f)
     logger.info("Photometry results saved to %s", output_path)
 
 

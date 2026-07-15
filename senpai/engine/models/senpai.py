@@ -23,6 +23,26 @@ from senpai.engine.utils.frame_organization import extract_uct_time_from_header
 
 logger = logging.getLogger(__name__)
 
+# Serialized outputs keep only the brightest catalog stars. The full in-memory
+# list (up to ~150k stars on galactic-plane fields) is a reproducible Gaia
+# cutout with no measurements attached — dumping it made data products larger
+# than the raw FITS. 500 matches replot's aperture/PSF star budget
+# (_MAX_STARS_FOR_APERTURE), so saved runs still replot identically. Measured
+# per-star photometry survives separately in photometry_summary.stars_*.
+MAX_SERIALIZED_CATALOG_STARS = 500
+
+
+def _starfield_for_output(sf: StarField | None) -> StarField | None:
+    """Copy a StarField with catalog_stars trimmed to the brightest
+    MAX_SERIALIZED_CATALOG_STARS for serialization; the live frame keeps the
+    full list."""
+    if sf is None or not sf.catalog_stars or len(sf.catalog_stars) <= MAX_SERIALIZED_CATALOG_STARS:
+        return sf
+    brightest = sorted(
+        sf.catalog_stars, key=lambda s: (s.magnitude is None, s.magnitude or 0.0)
+    )[:MAX_SERIALIZED_CATALOG_STARS]
+    return sf.model_copy(update={"catalog_stars": brightest})
+
 
 class SiderealFrameSerializable(BaseModel):
     starfield: StarField | None = None
@@ -679,7 +699,7 @@ class SenpaiRun(BaseModel):
                     streak_cands_serialized.append(sc)
 
             serializable = SiderealFrameSerializable(
-                starfield=frame.starfield,
+                starfield=_starfield_for_output(frame.starfield),
                 seeing=frame.seeing,
                 hardware=frame.hardware,
                 detections=frame.detections,
@@ -756,7 +776,7 @@ class SenpaiRun(BaseModel):
                     rate_streak_cands_serialized.append(sc)
 
             serializable = RateTrackFrameSerializable(
-                starfield=frame.starfield,
+                starfield=_starfield_for_output(frame.starfield),
                 streak=frame.streak,
                 seeing=frame.seeing,
                 hardware=frame.hardware,

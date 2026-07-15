@@ -118,6 +118,11 @@ class SimplePhotometrySummary:
     # then the blend's, not this star's — the dominant fake-faint-SNR source).
     # Downstream plots/aggregates should drop non-isolated stars.
     stars_isolated: list[bool] | None = None
+    # Catalog source identifier (e.g. Gaia source id), parallel to stars_mag —
+    # ties each measured SNR back to its catalog star now that the bulk
+    # catalog_stars list is no longer serialized in full. None entries mark
+    # stars whose catalog record carried no id.
+    stars_catalog_id: list[str | None] | None = None
     # Literal aperture/annulus geometry (pixels) actually used on this frame —
     # the PSF-factor policy resolved against this frame's measured FWHM, kept so
     # a reader needn't re-derive it from FWHM × factors (lossy for rate frames).
@@ -1793,6 +1798,7 @@ def _calculate_simple_photometry_summary(
     stars_snr: list[float] = []
     stars_zp_offset: list[float | None] = []
     stars_isolated: list[bool] = []
+    stars_catalog_id: list[str | None] = []
     iso_mask = _isolated_result_mask(results, starfield)
     for r, iso in zip(results, iso_mask):
         mag = getattr(r.star, "magnitude", None)
@@ -1805,6 +1811,7 @@ def _calculate_simple_photometry_summary(
             if r.instrumental_magnitude is not None else None
         )
         stars_isolated.append(bool(iso))
+        stars_catalog_id.append(getattr(r.star, "catalog_id", None))
 
     return SimplePhotometrySummary(
         n_stars=n_stars,
@@ -1824,6 +1831,7 @@ def _calculate_simple_photometry_summary(
         stars_snr=stars_snr or None,
         stars_zp_offset=stars_zp_offset or None,
         stars_isolated=stars_isolated or None,
+        stars_catalog_id=stars_catalog_id or None,
     )
 
 

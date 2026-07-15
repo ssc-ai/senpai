@@ -7,7 +7,7 @@ from pathlib import Path
 import senpai
 from senpai.astrometry import enforce_indices, require_astrometry_install
 from senpai.catalog.runner import enforce_catalog
-from senpai.cli.common import profile_run, save_run_metadata
+from senpai.cli.common import profile_run, save_run_metadata, write_frame_quicklooks
 from senpai.core.config import initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.core.logging import set_log_level
@@ -141,29 +141,15 @@ if __name__ == "__main__":
     json.dump(
         result.model_dump(),
         open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w"),
-        indent=4,
     )
 
     summary = senpai_run.to_summary()
     json.dump(
         summary.model_dump(),
         open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w"),
-        indent=4,
     )
 
-    # Write per-frame JSON files
-    for sid_frame in result.sidereal_frames:
-        path = output_dir / f"frame_{sid_frame.index}_sidereal.json"
-        with open(path, "w") as f:
-            json.dump(sid_frame.model_dump(mode="json"), f, indent=4)
-
-    for rt_frame in result.rate_track_frames:
-        path = output_dir / f"frame_{rt_frame.index}_rate.json"
-        with open(path, "w") as f:
-            json.dump(rt_frame.model_dump(mode="json"), f, indent=4)
-
-    logger.info(
-        f"Wrote {len(result.sidereal_frames)} sidereal + {len(result.rate_track_frames)} rate per-frame JSON files"
-    )
+    # Per-frame quick-look JSONs (detections + WCS, no bulk star arrays)
+    write_frame_quicklooks(summary, output_dir)
 
     final_plots(senpai_run, output_dir)

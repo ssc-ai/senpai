@@ -12,7 +12,7 @@ import json
 import logging
 from pathlib import Path
 
-from senpai.cli.common import ensure_output_dir, save_run_metadata
+from senpai.cli.common import ensure_output_dir, save_run_metadata, write_frame_quicklooks
 from senpai.core.config import initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.core.logging import set_log_level
@@ -113,22 +113,14 @@ if __name__ == "__main__":
     # Write results
     result = senpai_run.to_result()
     with open(output_dir / f"senpai_{result.id}.json", "w") as f:
-        json.dump(result.model_dump(), f, indent=4)
+        json.dump(result.model_dump(), f)
 
     summary = senpai_run.to_summary()
     with open(output_dir / f"senpai_{summary.id}_summary.json", "w") as f:
-        json.dump(summary.model_dump(), f, indent=4)
+        json.dump(summary.model_dump(), f)
 
-    # Per-frame JSONs
-    for sid_frame in result.sidereal_frames:
-        path = output_dir / f"frame_{sid_frame.index}_sidereal.json"
-        with open(path, "w") as f:
-            json.dump(sid_frame.model_dump(mode="json"), f, indent=4)
-
-    for rt_frame in result.rate_track_frames:
-        path = output_dir / f"frame_{rt_frame.index}_rate.json"
-        with open(path, "w") as f:
-            json.dump(rt_frame.model_dump(mode="json"), f, indent=4)
+    # Per-frame quick-look JSONs (detections + WCS, no bulk star arrays)
+    write_frame_quicklooks(summary, output_dir)
 
     # Correlated streaks
     if senpai_run.correlated_streaks:
@@ -136,7 +128,6 @@ if __name__ == "__main__":
             json.dump(
                 [cs.model_dump(mode="json") for cs in senpai_run.correlated_streaks],
                 f,
-                indent=4,
             )
         logger.info("Wrote %d correlated streaks", len(senpai_run.correlated_streaks))
 
@@ -151,7 +142,6 @@ if __name__ == "__main__":
                         for sc in frame.streak_candidates
                     ],
                     f,
-                    indent=4,
                 )
 
     final_plots(senpai_run, output_dir)

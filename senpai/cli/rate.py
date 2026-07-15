@@ -103,15 +103,15 @@ if __name__ == "__main__":
     # Write results
     result = senpai_run.to_result()
     with open(output_dir / f"senpai_{result.id}.json", "w") as f:
-        json.dump(result.model_dump(), f, indent=4)
+        json.dump(result.model_dump(), f)
 
     summary = senpai_run.to_summary()
     with open(output_dir / f"senpai_{summary.id}_summary.json", "w") as f:
-        json.dump(summary.model_dump(), f, indent=4)
+        json.dump(summary.model_dump(), f)
 
     # Write rateframe.json for backward compatibility
     if result.rate_track_frames:
         with open(output_dir / "rateframe.json", "w") as f:
-            json.dump(result.rate_track_frames[0].model_dump(mode="json"), f, indent=4)
+            json.dump(result.rate_track_frames[0].model_dump(mode="json"), f)
 
     final_plots(senpai_run, output_dir)
