@@ -810,7 +810,11 @@ def query_catalog_gaia(
         faint_conf = getattr(cfg.star_catalog, "faint_limit", None)
         faint_lim = int(faint_conf) if faint_conf is not None else None
 
-    logger.info("Querying Gaia catalog online")
+    # Report the actual source: _query_gaia_sky swaps the online TAP for the local
+    # mirror when star_catalog.type == "gaia_local" (see _online there). Log honestly
+    # so a mirror-backed run doesn't look like it's hammering the network.
+    _cat_src = "local mirror" if getattr(cfg.star_catalog, "type", "gaia") == "gaia_local" else "online"
+    logger.info("Querying Gaia catalog (%s)", _cat_src)
     start_time = time.time()
 
     # Convert WCS to hashable tuple and timestamp for caching
