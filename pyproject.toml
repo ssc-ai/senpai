@@ -3,11 +3,17 @@ name = "astro-senpai"
 version = "2.7.0"
 description = "SENPAI is a software package for the analysis of astronomical images."
 authors = [
-    { name="Zach Gazak", email="jzg@alum.mit.edu" },
-    { name="Ian McQuaid", email="ian.mcquaid@e-o.solutions" },
-    { name="Kevin Phan", email="kevin.phan@e-o.solutions" },
+    { name = "Zach Gazak", email = "jzg@alum.mit.edu" },
+    { name = "Ian McQuaid", email = "ian.mcquaid@e-o.solutions" },
+    { name = "Kevin Phan", email = "kevin.phan@e-o.solutions" },
 ]
-keywords = ["astronomy", "astrometry", "photometry", "astrometric fitting", "astrometric calibration"]
+keywords = [
+    "astronomy",
+    "astrometry",
+    "photometry",
+    "astrometric fitting",
+    "astrometric calibration",
+]
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -70,9 +76,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-omit = [
-    "tests/*"
-]
+omit = ["tests/*"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -82,7 +86,7 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "pass",
-    "raise ImportError"
+    "raise ImportError",
 ]
 
 
@@ -278,11 +282,11 @@ convention = "google"
     "S105",
     "S106",
     "S107",
-    "ARG", # Unused function args -> fixtures nevertheless are functionally relevant...
-    "FBT", # Don't care about booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
+    "ARG",  # Unused function args -> fixtures nevertheless are functionally relevant...
+    "FBT",  # Don't care about booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
     # The below are debateable
     "PLR2004", # Magic value used in comparison, ...
-    "S311", # Standard pseudo-random generators are not suitable for cryptographic purposes
+    "S311",    # Standard pseudo-random generators are not suitable for cryptographic purposes
 ]
 
 [build-system]
