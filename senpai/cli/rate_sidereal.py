@@ -1,4 +1,11 @@
-# this is a CLI for the SENPAI algorithm for collecting stars from a series of images
+"""CLI for the SENPAI rate+sidereal collect pipeline over a series of images.
+
+Selects imagesets from a data directory (by id, filename regex, or all), initializes
+configuration, enforces the astrometry indices and star catalog, and runs
+``process_senpai_collect`` on each imageset, optionally detecting point sources and
+writing per-frame quick-look JSONs and final plots.
+"""
+
 import json
 import logging
 import os
@@ -138,16 +145,12 @@ if __name__ == "__main__":
     senpai_run = profile_run(process_senpai_collect, file_list, id=run_id, run_id=run_id)
 
     result = senpai_run.to_result()
-    json.dump(
-        result.model_dump(),
-        open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w"),
-    )
+    with open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w") as result_file:
+        json.dump(result.model_dump(), result_file)
 
     summary = senpai_run.to_summary()
-    json.dump(
-        summary.model_dump(),
-        open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w"),
-    )
+    with open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w") as summary_file:
+        json.dump(summary.model_dump(), summary_file)
 
     # Per-frame quick-look JSONs (detections + WCS, no bulk star arrays)
     write_frame_quicklooks(summary, output_dir)

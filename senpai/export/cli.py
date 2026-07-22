@@ -5,7 +5,6 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from senpai.engine.models.senpai import SenpaiRunResult
 from senpai.engine.utils.file_io import load_senpai_run
@@ -32,7 +31,7 @@ def setup_logging(verbose: bool = False) -> None:
 def export_single_run(
     run_path: str,
     output_dir: str,
-    collect_id: Optional[str] = None,
+    collect_id: str | None = None,
     write_png: bool = False,
     write_fits: bool = True,
     save_annotated_images: bool = False,
@@ -40,8 +39,8 @@ def export_single_run(
     snr_cut: float = 0.5,
     box_size: int = 4,
     streak_box_size: int = 10,
-    mask_radius: Optional[float] = None,
-    max_streak_length: Optional[float] = None,
+    mask_radius: float | None = None,
+    max_streak_length: float | None = None,
     apply_calibrations: bool = True,
     verbose: bool = False,
 ) -> None:
@@ -54,10 +53,9 @@ def export_single_run(
 
     # Use provided collect_id or extract from run
     if collect_id is None:
-        if isinstance(senpai_run, SenpaiRunResult):
-            collect_id = senpai_run.metadata.get("observation_id", "unknown")
-        else:
-            collect_id = "unknown"
+        # SenpaiRunResult carries no free-form metadata dict; fall back to the
+        # run id when one was recorded.
+        collect_id = senpai_run.id if isinstance(senpai_run, SenpaiRunResult) and senpai_run.id else "unknown"
 
     # Create exporter
     exporter = SenpaiCocoExporter(
@@ -79,8 +77,19 @@ def export_single_run(
     logger.info("Export completed successfully")
 
 
-def _export_run_worker(args):
-    """Worker function for parallel export processing."""
+def _export_run_worker(args: tuple) -> tuple[bool, str, str | None]:
+    """Export a single SENPAI run in a parallel worker.
+
+    Args:
+        args: Packed tuple of ``(run_file, senpai_run, output_dir, write_png,
+            write_fits, save_annotated_images, remove_median, snr_cut, box_size,
+            streak_box_size, mask_radius, max_streak_length, apply_calibrations,
+            run_index, total_runs)`` as assembled by :func:`export_folder`.
+
+    Returns:
+        Tuple ``(success, collect_id, error)`` where ``error`` is the exception
+        message string on failure and None on success.
+    """
     (
         run_file,
         senpai_run,
@@ -134,7 +143,7 @@ def _export_run_worker(args):
 def export_folder(
     folder_path: str,
     output_dir: str,
-    max_runs: Optional[int] = None,
+    max_runs: int | None = None,
     workers: int = 1,
     write_png: bool = False,
     write_fits: bool = True,
@@ -143,8 +152,8 @@ def export_folder(
     snr_cut: float = 0.5,
     box_size: int = 4,
     streak_box_size: int = 10,
-    mask_radius: Optional[float] = None,
-    max_streak_length: Optional[float] = None,
+    mask_radius: float | None = None,
+    max_streak_length: float | None = None,
     apply_calibrations: bool = True,
     verbose: bool = False,
 ) -> None:
@@ -227,7 +236,7 @@ def export_folder(
 
             # Process completed tasks
             for future in as_completed(future_to_args):
-                success, collect_id, error = future.result()
+                success, _collect_id, _error = future.result()
                 if success:
                     successful_exports += 1
                 else:
@@ -235,7 +244,7 @@ def export_folder(
     else:
         # Sequential processing
         for args in worker_args:
-            success, collect_id, error = _export_run_worker(args)
+            success, _collect_id, _error = _export_run_worker(args)
             if success:
                 successful_exports += 1
             else:
@@ -250,7 +259,7 @@ def split_dataset(
     train_ratio: float = 0.7,
     val_ratio: float = 0.2,
     test_ratio: float = 0.1,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
     image_pattern: str = "*.fits",
     verbose: bool = False,
 ) -> None:

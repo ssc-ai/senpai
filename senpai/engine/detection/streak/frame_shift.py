@@ -1,3 +1,11 @@
+"""Dispatch frame-to-frame shift solving based on the source/target frame types.
+
+This module preprocesses a pair of frames and routes them to the appropriate
+shift solver (sidereal-to-sidereal, rate-to-rate, or rate/sidereal mixed). It
+also hosts the optional chain-consistency gate (``chain_gate`` config) that can
+reject or sign-repair a solved hop contradicting the accepted chain.
+"""
+
 import logging
 
 import numpy as np
@@ -6,20 +14,61 @@ from senpai.core.config import get_config
 from senpai.engine.detection.streak.rate_rate import solve_rate_from_rate
 from senpai.engine.detection.streak.rate_sidereal import solve_rate_from_sidereal
 from senpai.engine.detection.streak.sidereal_sidereal import solve_sidereal_from_sidereal
-from senpai.engine.detection.streak.validation import validate_proposed_shift
-from senpai.engine.models.images import ProcessedFitsImage
+from senpai.engine.detection.streak.validation_extra import validate_proposed_shift
+from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
 from senpai.engine.models.senpai import FrameShift, RateTrackFrame, SenpaiRun, SiderealFrame
+from senpai.engine.utils.preprocessing import remove_background, remove_column_and_row_medians
 
 logger = logging.getLogger(__name__)
 
 
 def preprocess_for_shift(frame: ProcessedFitsImage) -> None:
-    # Preprocessing should already be applied at frame load time
-    # This function is kept for backward compatibility but should be a no-op
-    logger.debug("Preprocessing already applied at frame load time")
+    """Apply row/column median and background subtraction to a frame if not already done.
+
+    The frame is mutated in place by the preprocessing helpers; processing steps that
+    have already been recorded in the frame's processing history are skipped.
+
+    Args:
+        frame (ProcessedFitsImage): The processed FITS image to preprocess in place.
+
+    Returns:
+        None.
+    """
+    # Only apply if not already processed. History entries are
+    # ProcessingMetadata records (bare ProcessingStep enums tolerated).
+    applied = {
+        step.step_type if hasattr(step, "step_type") else step
+        for step in frame.processing_history
+    }
+    if (
+        ProcessingStep.ROW_MEDIAN_SUBTRACT not in applied
+        or ProcessingStep.COLUMN_MEDIAN_SUBTRACT not in applied
+    ):
+        logger.info("Applying row and column median subtraction")
+        frame = remove_column_and_row_medians(frame)
+
+    if ProcessingStep.BACKGROUND_SUBTRACT not in applied:
+        logger.info("Applying background subtraction")
+        frame = remove_background(frame)
 
 
 def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
+    """Solve the pixel shift between the two frames referenced by a frame shift.
+
+    Looks up the source and target frames from the run, preprocesses them, selects the
+    appropriate solver based on their frame types, and runs it. The solver mutates the
+    provided frame shift in place.
+
+    Args:
+        senpai_run (SenpaiRun): The run containing the frames to resolve by index.
+        frame_shift (FrameShift): The frame shift describing the source/target indices to solve.
+
+    Returns:
+        None.
+
+    Raises:
+        TypeError: If the source/target frame types are not a supported combination.
+    """
     frame_source = senpai_run.get_frame_by_index(frame_shift.source_index)
     frame_target = senpai_run.get_frame_by_index(frame_shift.target_index)
 
@@ -43,7 +92,7 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
         solve_type = "rate to sidereal"
 
     else:
-        raise ValueError(f"Invalid frame types: {type(frame_source)} and {type(frame_target)}")
+        raise TypeError(f"Invalid frame types: {type(frame_source)} and {type(frame_target)}")
 
     logger.info(f"Solving shift from {frame_source.index} to {frame_target.index} ({solve_type})")
 
@@ -51,9 +100,19 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
 
 
 def _hop_rate(senpai_run: SenpaiRun, shift: FrameShift) -> tuple[float, float] | None:
-    """Star-drift rate (px/s) implied by a solved hop, normalized by the
-    *signed* time gap so hops solved in either temporal direction are
-    comparable."""
+    """Star-drift rate (px/s) implied by a solved hop.
+
+    Normalized by the *signed* time gap so hops solved in either temporal
+    direction are comparable.
+
+    Args:
+        senpai_run (SenpaiRun): The run containing the frames to resolve by index.
+        shift (FrameShift): The solved hop to convert to a rate.
+
+    Returns:
+        tuple[float, float] | None: ``(x, y)`` drift rate in px/s, or None when the
+            shift is unsolved, either frame is untimed, or the time gap is degenerate.
+    """
     if shift.x_shift is None or shift.y_shift is None:
         return None
     source = senpai_run.get_frame_by_index(shift.source_index)
@@ -76,6 +135,13 @@ def enforce_chain_consistency(senpai_run: SenpaiRun, frame_shift: FrameShift) ->
     silently corrupts every frame beyond it. This gate runs after the solver
     and before WCS propagation; a rejected hop leaves its target frame
     without a WCS, which is strictly better than a confidently wrong one.
+
+    Args:
+        senpai_run (SenpaiRun): The run containing the solved frames and shift history.
+        frame_shift (FrameShift): The freshly solved hop to gate.
+
+    Returns:
+        None.
     """
     gate = get_config().chain_gate
     if not gate.enable or not (frame_shift.is_valid and frame_shift.processed):

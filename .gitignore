@@ -153,3 +153,6 @@ remote-test-paths.txt
 tmp.go
 sidereal_streak_data/
 score_streaks.py
+
+# Private MDP eval harness — never ship
+eos_eval/

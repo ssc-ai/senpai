@@ -3,6 +3,7 @@
 import logging
 
 import numpy as np
+from astropy.wcs import WCS
 
 from senpai.core.config import get_config
 from senpai.engine.detection.jacobian import get_local_streak_kernel
@@ -13,11 +14,21 @@ logger = logging.getLogger(__name__)
 
 def plot_variable_kernel_grid(
     frame: RateTrackFrame,
-    wcs,
+    wcs: WCS,
     nx: int = 4,
     ny: int = 4,
 ) -> None:
-    """Diagnostic: plot a grid of local streak kernels across the field of view."""
+    """Plot a grid of local streak kernels sampled across the field of view.
+
+    A no-op unless ``config.plotting.debug`` is set and the frame has a fitted
+    streak. Saves the grid figure to the configured output directory.
+
+    Args:
+        frame: Rate-track frame whose streak geometry defines the kernels.
+        wcs: Astropy WCS used to build each position-dependent local kernel.
+        nx: Number of grid columns (sample points across the width).
+        ny: Number of grid rows (sample points across the height).
+    """
     from matplotlib import pyplot as plt
 
     config = get_config()

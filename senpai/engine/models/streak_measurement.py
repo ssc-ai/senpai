@@ -1,3 +1,11 @@
+"""Streak orientation measurements and weighted aggregation across sources.
+
+Defines the :class:`StreakMeasurement` record (rotation, length, FWHM) and the
+:class:`StreakMeasurements` container that combines measurements from several
+estimation sources into a single mean/median/sigma-clipped result, accounting
+for the 180 degree ambiguity inherent in streak orientation.
+"""
+
 import numpy as np
 from pydantic import BaseModel, model_validator
 
@@ -51,6 +59,15 @@ def angular_difference(angle1: float, angle2: float) -> float:
 
 
 class StreakMeasurement(BaseModel):
+    """A single streak measurement.
+
+    Attributes:
+        rotation: Streak orientation in degrees, normalized to [0, 180).
+        length: Streak length in pixels.
+        fwhm: Full width at half maximum of the streak cross-section in pixels,
+            or ``None`` when not measured.
+    """
+
     rotation: float
     length: float
     fwhm: float | None = None
@@ -64,6 +81,22 @@ class StreakMeasurement(BaseModel):
 
 
 class StreakMeasurements(BaseModel):
+    """Streak measurements collected from several independent estimation sources.
+
+    Each optional field holds the :class:`StreakMeasurement` produced by a
+    different estimator; the aggregation methods combine the available ones into
+    a single representative measurement.
+
+    Attributes:
+        header: Measurement derived from FITS header metadata.
+        cross_correlation: Measurement from cross-correlation of frames.
+        frame_extraction: Measurement extracted directly from a single frame.
+        previous_frame: Measurement derived from the previous frame.
+        frame_to_frame: Measurement from frame-to-frame differencing.
+        validation: Measurement produced during validation.
+        streak_mapping: Measurement from the streak-mapping stage.
+    """
+
     header: StreakMeasurement | None = None
     cross_correlation: StreakMeasurement | None = None
     frame_extraction: StreakMeasurement | None = None
@@ -75,6 +108,15 @@ class StreakMeasurements(BaseModel):
     def filtered_results(
         self,
     ) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+        """Collect the non-``None`` measurement values and their weights.
+
+        Returns:
+            A tuple ``(rotations, lengths, fwhms, filtered_weights,
+            fwhm_weights)`` where each element is a list of floats. ``rotations``
+            and ``lengths`` include every present measurement, ``fwhms`` includes
+            only measurements with a non-``None`` FWHM, and the two weight lists
+            give the per-source weights aligned to those value lists.
+        """
         # Get all non-None values for each attribute
         frames = [
             self.header,
@@ -102,6 +144,16 @@ class StreakMeasurements(BaseModel):
         return rotations, lengths, fwhms, filtered_weights, fwhm_weights
 
     def mean_measurement(self) -> StreakMeasurement:
+        """Compute the weighted mean across all available measurements.
+
+        Rotation is averaged using circular statistics (doubling the angle) to
+        respect the 180 degree ambiguity; length and FWHM use ordinary weighted
+        averages.
+
+        Returns:
+            A :class:`StreakMeasurement` holding the weighted-mean rotation,
+            length, and FWHM. FWHM is ``None`` when no source reported one.
+        """
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 
         # Apply weighted average if we have values
@@ -118,15 +170,9 @@ class StreakMeasurements(BaseModel):
         else:
             rotation_avg = 0.0
 
-        if lengths:
-            length_avg = np.average(lengths, weights=weights)
-        else:
-            length_avg = 0.0
+        length_avg = np.average(lengths, weights=weights) if lengths else 0.0
 
-        if fwhms:
-            fwhm_avg = np.average(fwhms, weights=fwhm_weights)
-        else:
-            fwhm_avg = None
+        fwhm_avg = np.average(fwhms, weights=fwhm_weights) if fwhms else None
 
         return StreakMeasurement(
             rotation=rotation_avg,
@@ -135,6 +181,15 @@ class StreakMeasurements(BaseModel):
         )
 
     def median_measurement(self) -> StreakMeasurement:
+        """Compute the weighted median across all available measurements.
+
+        Rotation is handled with circular statistics (doubling the angle) so the
+        180 degree ambiguity is respected; length and FWHM use a weighted median.
+
+        Returns:
+            A :class:`StreakMeasurement` holding the weighted-median rotation,
+            length, and FWHM. FWHM is ``None`` when no source reported one.
+        """
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 
         # For weighted median, we'll use a simple implementation

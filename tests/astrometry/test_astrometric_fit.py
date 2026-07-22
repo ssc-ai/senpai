@@ -1,3 +1,5 @@
+"""Tests for solve_field against a real Astrometry.net install (local + Docker)."""
+
 import os
 from pathlib import Path
 
@@ -30,7 +32,8 @@ def _get_test_config_path() -> Path:
     return LOCAL_APP_CONFIG_OVERRIDE
 
 
-def test_astrometric_fit_local(xyls_data: StarListImage):
+def test_astrometric_fit_local(xyls_data: StarListImage) -> None:
+    """solve_field returns a result using the local Astrometry.net config."""
     config_path = _get_test_config_path()
     initialize_config(config_path=config_path)
     wcs_field = solve_field(xyls_data)
@@ -38,7 +41,8 @@ def test_astrometric_fit_local(xyls_data: StarListImage):
     assert wcs_field is not None
 
 
-def test_astrometric_fit_docker(xyls_data: StarListImage):
+def test_astrometric_fit_docker(xyls_data: StarListImage) -> None:
+    """solve_field returns a result using the Docker Astrometry.net config."""
     initialize_config(config_path=LOCAL_APP_LOCAL_ASTROMETRY_CONFIG_OVERRIDE)
     wcs_field = solve_field(xyls_data)
 

@@ -1,8 +1,17 @@
+"""Top-level run and frame models for a SENPAI processing run.
+
+Defines the in-memory :class:`SenpaiRun` (frames organized by track mode plus the
+frame-to-frame shift chain), the serializable frame/run result models used for
+data products, and the compact summary models. Also holds the frame-organization
+and analysis-chain bookkeeping used to route frames through the pipeline.
+"""
+
 import json
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, field_serializer
@@ -33,9 +42,19 @@ MAX_SERIALIZED_CATALOG_STARS = 500
 
 
 def _starfield_for_output(sf: StarField | None) -> StarField | None:
-    """Copy a StarField with catalog_stars trimmed to the brightest
-    MAX_SERIALIZED_CATALOG_STARS for serialization; the live frame keeps the
-    full list."""
+    """Trim a StarField's catalog stars for serialization.
+
+    Copies ``sf`` with ``catalog_stars`` reduced to the brightest
+    ``MAX_SERIALIZED_CATALOG_STARS`` entries so data products stay small; the
+    live frame keeps the full list.
+
+    Args:
+        sf: The starfield to copy, or ``None``.
+
+    Returns:
+        ``sf`` unchanged when it is ``None`` or already within the limit,
+        otherwise a copy holding only the brightest catalog stars.
+    """
     if sf is None or not sf.catalog_stars or len(sf.catalog_stars) <= MAX_SERIALIZED_CATALOG_STARS:
         return sf
     brightest = sorted(
@@ -45,6 +64,8 @@ def _starfield_for_output(sf: StarField | None) -> StarField | None:
 
 
 class SiderealFrameSerializable(BaseModel):
+    """Serializable form of a sidereal-tracked frame (no in-memory image data)."""
+
     starfield: StarField | None = None
     seeing: SeeingModel | None = None
     hardware: TelescopeMetadata | None = None
@@ -62,6 +83,8 @@ class SiderealFrameSerializable(BaseModel):
 
 
 class SiderealFrame(BaseModel):
+    """In-memory sidereal-tracked frame with its processed image and results."""
+
     starfield: StarField | None = None
     seeing: SeeingModel | None = None
     hardware: TelescopeMetadata | None = None
@@ -75,6 +98,8 @@ class SiderealFrame(BaseModel):
 
 
 class RateTrackFrameSerializable(BaseModel):
+    """Serializable form of a rate-tracked frame (no in-memory image data)."""
+
     starfield: StarField | None = None
     streak: StreakMetadata | None = None
     seeing: SeeingModel | None = None
@@ -94,10 +119,21 @@ class RateTrackFrameSerializable(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round the pixel track rate for serialization.
+
+        Args:
+            v: The rate in pixels per second, or ``None``.
+
+        Returns:
+            The rate rounded to three decimals, or ``None`` when ``v`` is
+            ``None``.
+        """
         return round(v, 3) if v is not None else None
 
 
 class RateTrackFrame(BaseModel):
+    """In-memory rate-tracked frame with its processed image and results."""
+
     starfield: StarField | None = None
     streak: StreakMetadata | None = None
     seeing: SeeingModel | None = None
@@ -113,10 +149,32 @@ class RateTrackFrame(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round the pixel track rate for serialization.
+
+        Args:
+            v: The rate in pixels per second, or ``None``.
+
+        Returns:
+            The rate rounded to three decimals, or ``None`` when ``v`` is
+            ``None``.
+        """
         return round(v, 3) if v is not None else None
 
 
 class FrameShift(BaseModel):
+    """A measured (or pending) pixel shift between two frames in the chain.
+
+    Attributes:
+        source_index: Index of the source frame.
+        target_index: Index of the target frame.
+        x_shift: Horizontal shift from source to target in pixels, if measured.
+        y_shift: Vertical shift from source to target in pixels, if measured.
+        is_valid: Whether the shift was accepted.
+        processed: Whether the shift has been attempted/measured.
+        error_message: Diagnostic message when the shift is invalid or pending.
+        correlation: Cross-correlation quality of the shift solve, if measured.
+    """
+
     source_index: int
     target_index: int
     x_shift: float | None = None  # source to target
@@ -124,6 +182,28 @@ class FrameShift(BaseModel):
     is_valid: bool = True
     processed: bool = False
     error_message: str | None = None
+    correlation: float | None = None  # cross-correlation quality of the shift solve, if measured
+
+
+def _shift_status(shift: FrameShift) -> str:
+    """Status glyph for one shift in the analysis-chain log.
+
+    A shift accepted with a poor cross-correlation (< 0.9) is still ``is_valid``, but is flagged
+    with its correlation so a "✅" chain no longer hides weak frame-to-frame registration.
+
+    Args:
+        shift (FrameShift): the shift to summarize.
+
+    Returns:
+        str: one of ``❓`` (unprocessed), ``❌`` (failed), ``⚠️<corr>`` (weak), or ``✅``.
+    """
+    if not shift.processed:
+        return "❓"
+    if not shift.is_valid:
+        return "❌"
+    if shift.correlation is not None and shift.correlation < 0.9:
+        return f"⚠️{shift.correlation:.2f}"
+    return "✅"
 
 
 class FrameSummary(BaseModel):
@@ -168,6 +248,15 @@ class FrameSummary(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round the pixel track rate for serialization.
+
+        Args:
+            v: The rate in pixels per second, or ``None``.
+
+        Returns:
+            The rate rounded to three decimals, or ``None`` when ``v`` is
+            ``None``.
+        """
         return round(v, 3) if v is not None else None
 
 
@@ -222,12 +311,22 @@ class SenpaiRunSummary(BaseModel):
     frames: list[FrameSummary] = []
     correlated_streaks: list[CorrelatedStreak] = []
 
-    def model_dump(self, **kwargs):
-        """Override model_dump to ensure datetime fields are serialized as ISO format strings."""
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401  # forwarded to pydantic model_dump
+        """Override model_dump to ensure datetime fields are serialized as ISO format strings.
+
+        Args:
+            **kwargs: Additional keyword arguments forwarded to
+                :meth:`pydantic.BaseModel.model_dump`.
+
+        Returns:
+            The model serialized in JSON mode as a dictionary.
+        """
         return super().model_dump(mode="json", **kwargs)
 
 
 class SenpaiRunResult(BaseModel):
+    """Serializable result of a SenpaiRun, retaining per-frame data products."""
+
     id: str
     num_frames: int
     collect_metadata: CollectionMetadata
@@ -248,12 +347,26 @@ class SenpaiRunResult(BaseModel):
     rate_track_frames: list[RateTrackFrameSerializable] = []
     correlated_streaks: list[CorrelatedStreak] = []
 
-    def model_dump(self, **kwargs):
-        """Override model_dump to ensure datetime fields are serialized as ISO format strings."""
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401  # forwarded to pydantic model_dump
+        """Override model_dump to ensure datetime fields are serialized as ISO format strings.
+
+        Args:
+            **kwargs: Additional keyword arguments forwarded to
+                :meth:`pydantic.BaseModel.model_dump`.
+
+        Returns:
+            The model serialized in JSON mode as a dictionary.
+        """
         return super().model_dump(mode="json", **kwargs)
 
 
 class SenpaiRun(BaseModel):
+    """In-memory state of a full processing run across all frames.
+
+    Holds the frames split by track mode, the frame-to-frame shift chain and its
+    failed branches, and the correlated streaks, along with run-level metadata.
+    """
+
     id: str
     num_frames: int
     completed: bool = False
@@ -272,9 +385,26 @@ class SenpaiRun(BaseModel):
     def organize_senpai_frames(
         cls,
         frames: list[ProcessedFitsImage],
-        id: str = "",
+        id: str = "",  # noqa: A002  # public API keyword arg (callers pass id=...)
         force_track_mode: TrackMode | None = None,
     ) -> "SenpaiRun":
+        """Organize frames into a SenpaiRun, splitting them by track mode.
+
+        Frames are time-ordered (untimed frames retain input order and sort
+        last), assigned sequential indices, classified as sidereal or rate
+        (respecting ``force_track_mode`` when given), and appended to the
+        appropriate per-mode list.
+
+        Args:
+            frames: The processed FITS images to organize.
+            id: Identifier assigned to the run.
+            force_track_mode: When provided, forces every frame to this track
+                mode instead of classifying from the header/pixels.
+
+        Returns:
+            A new SenpaiRun populated with the organized sidereal and
+            rate-track frames.
+        """
         # Initialize empty lists and create a new SenpaiRun instancexxx
         sidereal_frames = []
         rate_track_frames = []
@@ -418,14 +548,13 @@ class SenpaiRun(BaseModel):
         # Sort frames by index
         all_frames.sort(key=lambda x: x.index)
 
-        # Find a sidereal frame to start with
-        start_frame = None
-        if self.sidereal_frames:
-            # Start with the first sidereal frame (lowest index)
-            start_frame = min(self.sidereal_frames, key=lambda x: x.index)
-        else:
-            # If no sidereal frames, use the first frame
-            start_frame = all_frames[0]
+        # Find a sidereal frame to start with: prefer the lowest-index sidereal
+        # frame, otherwise fall back to the first frame overall.
+        start_frame = (
+            min(self.sidereal_frames, key=lambda x: x.index)
+            if self.sidereal_frames
+            else all_frames[0]
+        )
 
         start_index = start_frame.index
 
@@ -450,7 +579,7 @@ class SenpaiRun(BaseModel):
             before_frames = [f for f in all_frames if f.index < start_index]
             before_frames.sort(key=lambda x: x.index, reverse=True)
 
-            ordered_frames = [start_frame] + after_frames
+            ordered_frames = [start_frame, *after_frames]
 
         # Create shifts between consecutive frames in our ordered path
         for i in range(len(ordered_frames) - 1):
@@ -484,10 +613,10 @@ class SenpaiRun(BaseModel):
         self.log_analysis_chain()
 
     def log_analysis_chain(self) -> None:
-        """Log the analysis chain path with status indicators:
-        ✅ - processed and valid
-        ❓ - not processed yet
-        ❌ - processed but failed
+        """Log the analysis chain path with per-shift status indicators.
+
+        Each shift is annotated with a status glyph: ✅ processed and valid,
+        ❓ not processed yet, and ❌ processed but failed.
         """
         if not self.frame_shifts and not self.frame_shifts_failed:
             logger.info("No analysis chain to log (no frame shifts)")
@@ -498,10 +627,7 @@ class SenpaiRun(BaseModel):
 
         # Add active shifts
         for shift in self.frame_shifts:
-            status = "❓"  # Not processed yet
-            if shift.processed:
-                status = "✅" if shift.is_valid else "❌"  # Processed: valid or failed
-            chain_parts.append(f"{shift.source_index}-{shift.target_index} {status}")
+            chain_parts.append(f"{shift.source_index}-{shift.target_index} {_shift_status(shift)}")
 
         # Add failed shifts that have been moved to the failed list
         for shift in self.frame_shifts_failed:
@@ -518,7 +644,15 @@ class SenpaiRun(BaseModel):
         return None
 
     def update_valid_path(self) -> list[FrameShift]:
-        """Update a valid path through all frames"""
+        """Update a valid path through all frames.
+
+        Moves processed-but-failed shifts to the failed list, deletes now-orphaned
+        dependent shifts, and inserts replacement shifts toward the next untried
+        frame in the same direction, avoiding previously attempted pairs.
+
+        Returns:
+            The updated list of active frame shifts.
+        """
         logger = logging.getLogger(__name__)
 
         # Get all failed shifts that have been processed

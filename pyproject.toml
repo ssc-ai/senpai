@@ -1,9 +1,11 @@
 [project]
 name = "astro-senpai"
-version = "2.6.0.dev0"
+version = "2.7.0"
 description = "SENPAI is a software package for the analysis of astronomical images."
 authors = [
-    { name="Zach Gazak", email="jzg@alum.mit.edu" }
+    { name="Zach Gazak", email="jzg@alum.mit.edu" },
+    { name="Ian McQuaid", email="ian.mcquaid@e-o.solutions" },
+    { name="Kevin Phan", email="kevin.phan@e-o.solutions" },
 ]
 keywords = ["astronomy", "astrometry", "photometry", "astrometric fitting", "astrometric calibration"]
 readme = "README.md"
@@ -11,6 +13,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "arrow>=1.3.0",
     "astroeasy>=1.2.0",
+    "astrometry>=4.1",
     "astropy>=6.1.7",
     "astroquery>=0.4.11",
     "colorlog>=6.9.0",
@@ -24,12 +27,16 @@ dependencies = [
     # and changed flux/mag conventions; calibration was validated on 2.x.
     "photutils>=2.0.2,<3.0",
     "pydantic>=2.11.1",
+    "pydantic-settings>=2.6.0",
     "pypng>=0.20220715.0",
     "python-multipart>=0.0.20",
     "pyyaml>=6.0.2",
     "rawpy>=0.25.1",
     "scikit-learn>=1.7.1",
+    "scikit-optimize>=0.10.2",
+    "scipy>=1.11",
     "seaborn>=0.13.2",
+    "sep>=1.4.1",
     "tqdm>=4.67.1",
     "uvicorn>=0.34.0",
 ]
@@ -54,7 +61,7 @@ dev = [
 override-dependencies = ["pydantic>=2.11"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "senpai/engine/tests", "senpai/api/tests"]
+testpaths = ["tests"]
 addopts = "--cov-report=term-missing"
 markers = [
     "requires_astrometry: needs a local Astrometry.net install and index files (skipped in CI)",
@@ -64,8 +71,7 @@ markers = [
 
 [tool.coverage.run]
 omit = [
-    "senpai/api/tests/*",
-    "senpai/engine/tests/*"
+    "tests/*"
 ]
 
 [tool.coverage.report]
@@ -196,6 +202,10 @@ select = [
     "RUF",
     # tryceratops
     "TRY",
+    # pydocstyle - every public module/class/function is documented
+    "D",
+    # flake8-annotations - every function is fully type-annotated
+    "ANN",
 ]
 ignore = [
     # LineTooLong
@@ -205,6 +215,22 @@ ignore = [
     "ERA001", # Commented out code - lots of false positives
     "TRY003", # Avoid specifying long messages outside exception class
     "S311",   # random isn't strong enough for crptography, but we are just doing stochastic testing here
+    # Intentional scientific/mathematical unicode in strings, docstrings, and comments
+    # (e.g. µ, ×, →, σ, °, ≈, ²); rewriting to ASCII would degrade the notation.
+    "RUF001", # ambiguous character in a string
+    "RUF002", # ambiguous character in a docstring
+    "RUF003", # ambiguous character in a comment
+    # senpai deliberately controls when a stack trace is logged: recoverable conditions
+    # log a clean warning/error WITHOUT a traceback, only unrecoverable failures include one.
+    # TRY400 would force logging.exception (always a traceback) in every except block.
+    "TRY400", # use logging.exception instead of logging.error
+    # int(round(x)) casts are load-bearing: numpy round() can return a float, and a float
+    # used as a pixel index raises IndexError. The int() guarantees a Python int; removing
+    # it (RUF046's "already an integer") is a latent bug on numpy-derived values.
+    "RUF046", # value cast to int is already an integer
+    # Stylistic "move to an else block" preference; the flagged try bodies are clearer as-is
+    # and ruff cannot autofix them.
+    "TRY300", # consider moving statement to an else block
 ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
@@ -241,9 +267,12 @@ docstring-code-format = false
 # enabled.
 docstring-code-line-length = "dynamic"
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.extend-per-file-ignores]
 
-"{tests,senpai/engine/tests,senpai/api/tests}/**/*.py" = [
+"tests/**/*.py" = [
     # at least this three should be fine in tests:
     "S101", # asserts allowed in tests...
     "S105",

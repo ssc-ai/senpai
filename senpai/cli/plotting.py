@@ -24,6 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Regenerate diagnostic plots for every processed batch directory found.
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv`` when None.
+
+    Returns:
+        Process exit code (0 if plots were written, 1 if no batch directories
+        were found).
+    """
     import argparse
 
     from senpai.engine.plotting.replot import ALL_KINDS, replot

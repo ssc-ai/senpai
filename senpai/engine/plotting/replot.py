@@ -29,9 +29,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from senpai.core.config import get_config
 from senpai.engine.utils.file_io import load_fits_file, load_senpai_run
+
+if TYPE_CHECKING:
+    from senpai.engine.models.images import ProcessedFitsImage
+    from senpai.engine.models.senpai import (
+        RateTrackFrameSerializable,
+        SiderealFrameSerializable,
+    )
+
+    # The rehydrated run yields either serializable frame flavor.
+    SerializableFrame = SiderealFrameSerializable | RateTrackFrameSerializable
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +75,21 @@ def _find_result_json(batch_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
-def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
-    """Load a frame's processed FITS, preferring the stored path but falling back
-    to a same-named file in ``batch_dir`` (so a moved/copied dir still plots)."""
+def _resolve_frame_image(
+    batch_dir: Path, processed_path: str | None
+) -> ProcessedFitsImage | None:
+    """Load a frame's processed FITS from its stored path or the batch directory.
+
+    Prefers the stored path but falls back to a same-named file in
+    ``batch_dir`` so a moved or copied directory still plots.
+
+    Args:
+        batch_dir: Directory holding the batch's FITS and result JSON.
+        processed_path: Stored path to the processed FITS, if any.
+
+    Returns:
+        The loaded image, or ``None`` if no candidate file exists.
+    """
     candidates: list[Path] = []
     if processed_path:
         candidates.append(Path(processed_path))
@@ -77,10 +100,20 @@ def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
     return None
 
 
-def _streak_candidate_objs(candidates):
-    """The serializable model stores streak_candidates as raw dicts, but
+def _streak_candidate_objs(candidates: list | None) -> list | None:
+    """Wrap serialized streak-candidate dicts so attribute access works.
+
+    The serializable model stores ``streak_candidates`` as raw dicts, but
     ``plot_single_frame`` reads them by attribute (``.x``, ``.length_pixels``,
-    ...). Wrap each dict so attribute access (and getattr-with-default) works."""
+    ...). Each dict is wrapped so attribute access (and getattr-with-default)
+    works.
+
+    Args:
+        candidates: Serialized streak candidates (dicts) or objects, or ``None``.
+
+    Returns:
+        A list of attribute-accessible objects, or ``None`` when empty.
+    """
     from types import SimpleNamespace
 
     if not candidates:
@@ -91,8 +124,23 @@ def _streak_candidate_objs(candidates):
     return out or None
 
 
-def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
-    """final_<idx>.png (overlays) + raw_<idx>.png for one frame."""
+def _plot_review(
+    img: ProcessedFitsImage,
+    frame: SerializableFrame,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
+    """Render ``final_<idx>.png`` (overlays) and ``raw_<idx>.png`` for one frame.
+
+    Args:
+        img: The frame's processed image.
+        frame: Rehydrated serializable frame with starfield/detections/streak.
+        out_dir: Directory to write the PNGs into.
+        force: Re-render even if the output files already exist.
+
+    Returns:
+        Paths of the files that were written.
+    """
     from senpai.engine.plotting.images import plot_single_frame
 
     written: list[Path] = []
@@ -115,8 +163,19 @@ def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
     return written
 
 
-def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
-    """Completeness + limiting-mag diagnostics from the stored summary arrays."""
+def _plot_photometry_curves(
+    frame: SerializableFrame, out_dir: Path, force: bool
+) -> list[Path]:
+    """Render completeness and limiting-magnitude curves from stored summaries.
+
+    Args:
+        frame: Rehydrated serializable frame carrying ``photometry_summary``.
+        out_dir: Directory to write the PNGs into.
+        force: Re-render even if the output files already exist.
+
+    Returns:
+        Paths of the files that were written.
+    """
     from senpai.engine.photometry.utils import (
         _completeness_limits,
         _save_completeness_plot,
@@ -154,7 +213,13 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
 _MAX_STARS_FOR_APERTURE = 500
 
 
-def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Path]:
+def _plot_aperture(
+    img: ProcessedFitsImage,
+    frame: SerializableFrame,
+    kind: str,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
     """Regenerate the per-star aperture overlay.
 
     Reconstructs a real ``SiderealFrame``/``RateTrackFrame`` from the rehydrated
@@ -162,6 +227,16 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     ``calculate_star_snrs_with_aperture_photometry`` (which emits the overlay when
     ``plotting.photometry`` is on) — the same routine the WCS-refinement path uses
     inline. No astrometry/catalog/WCS recompute: the solved StarField is reused.
+
+    Args:
+        img: The frame's processed image.
+        frame: Rehydrated serializable frame with the solved starfield.
+        kind: Frame flavor, ``"rate"`` or ``"sidereal"``.
+        out_dir: Directory to write the overlay PNG into.
+        force: Re-render even if the output file already exists.
+
+    Returns:
+        Paths of the files that were written (empty if nothing was produced).
     """
     from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
     from senpai.engine.photometry.utils import (
@@ -194,15 +269,15 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
         except ValueError:
             ts = datetime.now()
 
-    common = dict(
-        starfield=sf,
-        detections=frame.detections,
-        frame=img,
-        index=frame.index,
-        timestamp=ts,
-        frame_metadata=frame.frame_metadata,
-        photometry_summary=frame.photometry_summary,
-    )
+    common = {
+        "starfield": sf,
+        "detections": frame.detections,
+        "frame": img,
+        "index": frame.index,
+        "timestamp": ts,
+        "frame_metadata": frame.frame_metadata,
+        "photometry_summary": frame.photometry_summary,
+    }
     if kind == "rate":
         frame_obj = RateTrackFrame(streak=getattr(frame, "streak", None), **common)
     else:
@@ -219,10 +294,29 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     return [ap_path] if ap_path.exists() else []
 
 
-def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
-    """Per-frame empirical PSF panel. Prefers the saved .npy stamp (cheap, no FITS
-    reload); falls back to reloading the processed FITS and re-stacking (which
-    also re-writes the .npy), so panels regenerate even if psfs was off at run."""
+def _plot_psf(
+    img: ProcessedFitsImage | None,
+    frame: SerializableFrame,
+    mode: str,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
+    """Regenerate the per-frame empirical PSF panel.
+
+    Prefers the saved ``.npy`` stamp (cheap, no FITS reload); falls back to
+    reloading the processed FITS and re-stacking (which also re-writes the
+    ``.npy``), so panels regenerate even if ``psfs`` was off at run time.
+
+    Args:
+        img: The frame's processed image, or ``None`` if it could not be loaded.
+        frame: Rehydrated serializable frame with the solved starfield/streak.
+        mode: Frame flavor, ``"rate"`` or ``"sidereal"``.
+        out_dir: Directory to write the PSF PNG/NPY into.
+        force: Re-render even if the output PNG already exists.
+
+    Returns:
+        Paths of the files that were written (empty if nothing was produced).
+    """
     from senpai.engine.plotting import psf as P
 
     suffix = "psf" if mode == "sidereal" else "streak"
@@ -292,7 +386,7 @@ def replot_batch_dir(
     frames = [(f, "sidereal") for f in run.sidereal_frames]
     frames += [(f, "rate") for f in run.rate_track_frames]
 
-    counts = {k: 0 for k in kinds}
+    counts = dict.fromkeys(kinds, 0)
     review_finals: list[Path] = []
     review_raws: list[Path] = []
     review_rate_finals: list[Path] = []
@@ -366,7 +460,7 @@ def replot(
         logger.warning("No batch directories (senpai_*.json) found under: %s", paths)
         return {}
 
-    totals: dict[str, int] = {k: 0 for k in kinds}
+    totals: dict[str, int] = dict.fromkeys(kinds, 0)
     for d in batch_dirs:
         logger.info("Replotting %s (%s)", d.name, ", ".join(kinds))
         try:

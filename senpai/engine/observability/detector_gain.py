@@ -31,7 +31,9 @@ masking sources and measuring the sky directly is the equivalent route.)
 
 from __future__ import annotations
 
+import itertools
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +45,15 @@ _NAME_RE = re.compile(r"^(?P<ts>[^_]+)_(?P<field>.+)_f(?P<idx>\d+)$")
 
 @dataclass
 class FrameKey:
+    """Burst coordinates parsed from a frame filename.
+
+    Attributes:
+        path: Filesystem path to the frame.
+        timestamp: Timestamp token from the filename (the burst's time key).
+        field: Field token identifying which target/tile the frame belongs to.
+        f_index: Frame index within the burst (the ``f<index>`` suffix).
+    """
+
     path: Path
     timestamp: str
     field: str
@@ -58,18 +69,26 @@ def parse_frame_key(path: str | Path) -> FrameKey | None:
     return FrameKey(p, m["ts"], m["field"], int(m["idx"]))
 
 
-def find_burst_pairs(paths) -> list[tuple[Path, Path]]:
+def find_burst_pairs(paths: Iterable[str | Path]) -> list[tuple[Path, Path]]:
     """Consecutive same-field exposures (a burst) -> difference pairs.
 
     Two time-adjacent frames pair only when they share a field token and their
     f-index increments by one, i.e. ``..._f0`` then ``..._f1`` of the same
     target. Repeated ``_f0`` tiles at different times (e.g. a coverage scan) are
     *not* paired -- they are different fields and would not difference cleanly.
+
+    Args:
+        paths: Frame file paths (or path strings) to group into burst pairs.
+            Unparseable names are ignored.
+
+    Returns:
+        Difference pairs ``(frame_n, frame_n+1)`` of same-field, consecutive
+        exposures, ordered by timestamp then f-index.
     """
     keys = [k for k in (parse_frame_key(p) for p in paths) if k is not None]
     keys.sort(key=lambda k: (k.timestamp, k.f_index))
     pairs: list[tuple[Path, Path]] = []
-    for a, b in zip(keys, keys[1:]):
+    for a, b in itertools.pairwise(keys):
         if a.field == b.field and b.f_index == a.f_index + 1:
             pairs.append((a.path, b.path))
     return pairs
@@ -135,6 +154,21 @@ def ptc_point(frame1: np.ndarray, frame2: np.ndarray,
 
 @dataclass
 class GainFit:
+    """Result of a photon-transfer-curve fit for detector gain.
+
+    Attributes:
+        gain: Recovered gain in e-/ADU (``1 / slope``).
+        gain_lo: Lower bound of the gain from the Theil-Sen 95% slope interval.
+        gain_hi: Upper bound of the gain from the Theil-Sen 95% slope interval.
+        slope: Fitted variance-vs-level slope (``1 / gain``).
+        intercept: Fitted intercept (``read_ADU**2 - bias_ADU / gain``).
+        n_pairs: Number of PTC points retained after the one-sided sigma clip.
+        levels: Sky levels (ADU) of all input PTC points.
+        variances: Difference variances of all input PTC points.
+        env_levels: Sky levels of the points kept on the lower-envelope fit.
+        env_variances: Difference variances of the points kept on the fit.
+    """
+
     gain: float                 # e-/ADU = 1 / slope
     gain_lo: float              # from the Theil-Sen 95% slope interval
     gain_hi: float
@@ -208,8 +242,8 @@ def plot_ptc(fit: GainFit, output_path: str | Path,
     import matplotlib.pyplot as plt
 
     levels = np.array(fit.levels)
-    kept = set(zip(fit.env_levels, fit.env_variances))
-    is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances)])
+    kept = set(zip(fit.env_levels, fit.env_variances, strict=False))
+    is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances, strict=False)])
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(levels[is_kept], np.array(fit.variances)[is_kept], s=22,
                alpha=0.7, color="tab:blue",

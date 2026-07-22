@@ -1,3 +1,5 @@
+"""Loaders that read image files (FITS, JPEG, DNG, base64, uploads) into models."""
+
 import json
 import logging
 from pathlib import Path
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 def load_senpai_run(json_path: Path | str) -> SenpaiRunResult:
     """Load a SENPAI run from JSON file."""
     try:
-        with open(json_path, "r") as f:
+        with open(json_path) as f:
             data = json.load(f)
         return SenpaiRunResult.model_validate(data)
     except Exception as e:
@@ -26,20 +28,30 @@ def load_senpai_run(json_path: Path | str) -> SenpaiRunResult:
 
 
 def load_jpeg_file(jpeg_file: Path | str) -> ProcessedFitsImage:
-    """
-    Loads a .JPEG file and returns:
-      - grayscale numpy array
-      - metadata header info (as dict)
+    """Load a .JPEG file into a ProcessedFitsImage.
+
+    Args:
+        jpeg_file: Path to the JPEG file to load.
+
+    Returns:
+        The decoded image wrapped as a ProcessedFitsImage.
     """
     logger.warning("untested")
     return ProcessedFitsImage.from_file_bytes(jpeg_file.read_bytes(), file_path=str(jpeg_file))
 
 
 def load_dng_file(dng_file: Path | str) -> ProcessedFitsImage:
-    """
-    Loads a .DNG file and returns:
-      - grayscale numpy array
-      - metadata header info (as dict)
+    """Load a .DNG (camera RAW) file into a ProcessedFitsImage.
+
+    The RAW image is demosaiced, summed across color channels into a grayscale
+    float frame, and normalized to 0-1. Camera metadata (white balance, color
+    matrices, black/white levels, patterns) is captured into a FITS header.
+
+    Args:
+        dng_file: Path to the DNG file to load.
+
+    Returns:
+        The grayscale image and derived header wrapped as a ProcessedFitsImage.
     """
     # Open and process the DNG (RAW) file
     with rawpy.imread(dng_file) as raw:
@@ -115,6 +127,17 @@ def load_dng_file(dng_file: Path | str) -> ProcessedFitsImage:
 
 
 def load_fits_files(fits_files: list[Path | str]) -> list[ProcessedFitsImage]:
+    """Load multiple FITS files from disk into ProcessedFitsImage objects.
+
+    Args:
+        fits_files: Paths to the FITS files to load.
+
+    Returns:
+        One ProcessedFitsImage per input path, in the same order.
+
+    Raises:
+        FileNotFoundError: If any of the given paths does not exist.
+    """
     fits_files = [Path(f) for f in fits_files]
 
     for fits_file in fits_files:
@@ -129,6 +152,17 @@ def load_fits_files(fits_files: list[Path | str]) -> list[ProcessedFitsImage]:
 
 
 def load_fits_file(fits_file: Path | str) -> ProcessedFitsImage:
+    """Load a single FITS file from disk into a ProcessedFitsImage.
+
+    Args:
+        fits_file: Path to the FITS file to load.
+
+    Returns:
+        The loaded image as a ProcessedFitsImage.
+
+    Raises:
+        FileNotFoundError: If the given path does not exist.
+    """
     logger.info("loading fits file from disk")
     fits_file = Path(fits_file)
 
@@ -139,6 +173,14 @@ def load_fits_file(fits_file: Path | str) -> ProcessedFitsImage:
 
 
 async def load_uploaded_files(fits_files: list[UploadFile]) -> list[ProcessedFitsImage]:
+    """Load FastAPI-uploaded files into ProcessedFitsImage objects.
+
+    Args:
+        fits_files: The uploaded files to read.
+
+    Returns:
+        One ProcessedFitsImage per uploaded file, in the same order.
+    """
     logger.info(f"loading {len(fits_files)} uploaded files")
 
     processed_files = []
@@ -151,6 +193,14 @@ async def load_uploaded_files(fits_files: list[UploadFile]) -> list[ProcessedFit
 
 
 def load_base64_files(base64_files: list[str]) -> list[ProcessedFitsImage]:
+    """Load base64-encoded FITS payloads into ProcessedFitsImage objects.
+
+    Args:
+        base64_files: Base64-encoded file contents to decode.
+
+    Returns:
+        One ProcessedFitsImage per input string, in the same order.
+    """
     logger.info(f"loading {len(base64_files)} base64 files")
 
     return [ProcessedFitsImage.from_base64_string(base64_file) for base64_file in base64_files]
