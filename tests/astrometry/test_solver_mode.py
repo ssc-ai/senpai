@@ -7,10 +7,17 @@ exactly as before, and non-dotnet modes must be a clean opt-in.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from pydantic import ValidationError
 
 from senpai.core.config import AstrometryConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from senpai.engine.models.starfield import StarListImage
 
 LEGACY_ASTROMETRY_BLOCK = {
     # A pre-solver_mode config block: required fields only, as deployed configs have.
@@ -26,7 +33,10 @@ LEGACY_ASTROMETRY_BLOCK = {
 
 
 class TestSolverModeCompat:
-    def test_legacy_config_defaults_to_dotnet(self):
+    """Backward-compat parsing of the additive solver_mode/fast_solve config."""
+
+    def test_legacy_config_defaults_to_dotnet(self) -> None:
+        """A pre-solver_mode config parses and defaults to dotnet mode."""
         cfg = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK)
         assert cfg.solver_mode == "dotnet"
         assert cfg.fast_solve.mirror_dir is None
@@ -34,15 +44,18 @@ class TestSolverModeCompat:
         assert cfg.fast_solve.sensor_profile is None
 
     @pytest.mark.parametrize("mode", ["dotnet", "tetra3", "chain"])
-    def test_valid_modes_accepted(self, mode):
+    def test_valid_modes_accepted(self, mode: str) -> None:
+        """Each known solver mode is accepted and round-tripped."""
         cfg = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK, solver_mode=mode)
         assert cfg.solver_mode == mode
 
-    def test_unknown_mode_rejected(self):
+    def test_unknown_mode_rejected(self) -> None:
+        """An unrecognized solver mode raises a validation error."""
         with pytest.raises(ValidationError):
             AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK, solver_mode="cascade")
 
-    def test_fast_solve_block_parses(self):
+    def test_fast_solve_block_parses(self) -> None:
+        """The optional fast_solve sub-block parses its paths."""
         cfg = AstrometryConfig(
             **LEGACY_ASTROMETRY_BLOCK,
             solver_mode="chain",
@@ -53,9 +66,17 @@ class TestSolverModeCompat:
 
 
 @pytest.fixture
-def stub_config(monkeypatch):
-    """Point the astrometry adapter at a config we control."""
-    import senpai.astrometry as adapter
+def stub_config(monkeypatch: pytest.MonkeyPatch) -> type:
+    """Point the astrometry adapter at a config we control.
+
+    Args:
+        monkeypatch: The pytest monkeypatch fixture used to swap the adapter's
+            config accessor.
+
+    Returns:
+        The stub config class whose ``astrometry`` attribute tests may reassign.
+    """
+    import senpai.astrometry.astroeasy_backend as adapter
 
     class _Stub:
         astrometry = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK)
@@ -65,9 +86,10 @@ def stub_config(monkeypatch):
 
 
 class TestSolveFieldModeDispatch:
-    def test_dotnet_mode_reaches_original_path(self, stub_config, xyls_data):
-        """With the default mode, the dispatch is transparent: the original
-        too-few-sources early return still triggers (no exception)."""
+    """solve_field dispatch across solver modes without touching the network."""
+
+    def test_dotnet_mode_reaches_original_path(self, stub_config: type, xyls_data: StarListImage) -> None:
+        """Default mode is transparent: the too-few-sources early return still triggers."""
         from senpai.astrometry import solve_field
 
         block = dict(LEGACY_ASTROMETRY_BLOCK, min_sources_for_attempt=10**9)
@@ -75,7 +97,9 @@ class TestSolveFieldModeDispatch:
         starfield = solve_field(xyls_data)
         assert starfield.wcs is None
 
-    def test_tetra3_mode_without_mirror_fails_gracefully(self, stub_config, xyls_data):
+    def test_tetra3_mode_without_mirror_fails_gracefully(
+        self, stub_config: type, xyls_data: StarListImage
+    ) -> None:
         """tetra3 mode with no catalog configured: unfit StarField, no raise."""
         from senpai.astrometry import solve_field
 
@@ -92,7 +116,15 @@ class TestCascadeEndToEnd:
     RA0, DEC0, W, H, SCALE = 150.0, 30.0, 2048, 2048, 2.0  # arcsec/px
 
     @pytest.fixture
-    def synthetic(self, tmp_path):
+    def synthetic(self, tmp_path: Path) -> tuple[StarListImage, str]:
+        """Build a synthetic sky with a Gaia mirror on disk for the cascade.
+
+        Args:
+            tmp_path: Temporary directory the mirror tiles are written into.
+
+        Returns:
+            A tuple of the detected source list and the mirror directory path.
+        """
         import json
         import math
 
@@ -144,9 +176,8 @@ class TestCascadeEndToEnd:
         )
         return sources, str(mirror)
 
-    def test_tetra3_mode_solves_via_t0(self, stub_config, synthetic):
-        """Boresight + scale bounds, no tetra3 DB: the cascade's T0
-        constrained tier solves it natively — no astrometry.net, no Docker."""
+    def test_tetra3_mode_solves_via_t0(self, stub_config: type, synthetic: tuple[StarListImage, str]) -> None:
+        """Boresight + scale bounds, no tetra3 DB: the cascade's T0 tier solves natively."""
         from senpai.astrometry import solve_field
 
         sources, mirror = synthetic

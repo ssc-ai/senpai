@@ -1,3 +1,11 @@
+"""Online SDSS catalog queries via astroquery.
+
+Queries the SDSS photometric catalog over an RA/Dec box (handling RA=0/360
+wraparound) and returns senpai-shaped star dicts (coordinates in radians, per-band
+ugriz magnitudes). One of the interchangeable catalog backends selected by
+``senpai.catalog.runner`` alongside SSTRC7 and Gaia.
+"""
+
 import logging
 from typing import Any
 
@@ -12,8 +20,8 @@ def query_by_ra_dec_bounds(
     max_ra: float,
     min_dec: float,
     max_dec: float,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:
     """Query SDSS catalog using explicit RA/DEC bounds.
@@ -62,7 +70,7 @@ def query_by_ra_dec_bounds(
             WHERE g BETWEEN {bright_lim} AND {faint_lim}
             AND ra >= {min_ra_normalized} AND ra <= 360.0
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             # Query second range: low RA values (near 0)
             sql2 = f"""
@@ -72,7 +80,7 @@ def query_by_ra_dec_bounds(
             WHERE g BETWEEN {bright_lim} AND {faint_lim}
             AND ra >= 0.0 AND ra <= {max_ra_normalized}
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             result1 = SDSS.query_sql(sql1)
             result2 = SDSS.query_sql(sql2)
@@ -86,10 +94,7 @@ def query_by_ra_dec_bounds(
             if result2 is not None and len(result2) > 0:
                 results_to_combine.append(result2)
 
-            if len(results_to_combine) > 0:
-                result = vstack(results_to_combine)
-            else:
-                result = None
+            result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
         else:
             # Field doesn't cross boundary - simple case
             logger.info(
@@ -105,7 +110,7 @@ def query_by_ra_dec_bounds(
             WHERE g BETWEEN {bright_lim} AND {faint_lim}
             AND ra BETWEEN {min_ra_normalized} AND {max_ra_normalized}
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             result = SDSS.query_sql(sql)
 
@@ -158,8 +163,8 @@ def query_by_bounds(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     safety_margin: float = 0.1,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:
@@ -243,7 +248,7 @@ def query_by_bounds(
                 WHERE g BETWEEN {bright_lim} AND {faint_lim}
                 AND ra BETWEEN {min_ra_high} AND 360.0
                 AND dec BETWEEN {min_dec} AND {max_dec}
-                """
+                """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
                 # Query second range: low RA values (near 0)
                 sql2 = f"""
@@ -253,7 +258,7 @@ def query_by_bounds(
                 WHERE g BETWEEN {bright_lim} AND {faint_lim}
                 AND ra BETWEEN 0.0 AND {max_ra_low}
                 AND dec BETWEEN {min_dec} AND {max_dec}
-                """
+                """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
                 logger.info(
                     f"Querying SDSS (crosses RA=0): "
@@ -274,10 +279,7 @@ def query_by_bounds(
                 if result2 is not None and len(result2) > 0:
                     results_to_combine.append(result2)
 
-                if len(results_to_combine) > 0:
-                    result = vstack(results_to_combine)
-                else:
-                    result = None
+                result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
             else:
                 # Fallback to simple query
                 min_ra = np.min(ra_corners_normalized)
@@ -289,7 +291,7 @@ def query_by_bounds(
                 WHERE g BETWEEN {bright_lim} AND {faint_lim}
                 AND ra BETWEEN {min_ra} AND {max_ra}
                 AND dec BETWEEN {min_dec} AND {max_dec}
-                """
+                """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
                 logger.info(
                     f"Querying SDSS: RA=[{min_ra:.3f}, {max_ra:.3f}]°, "
                     f"DEC=[{min_dec:.3f}, {max_dec:.3f}]°, "
@@ -308,7 +310,7 @@ def query_by_bounds(
             WHERE g BETWEEN {bright_lim} AND {faint_lim}
             AND ra BETWEEN {min_ra} AND {max_ra}
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             logger.info(
                 f"Querying SDSS: RA=[{min_ra:.3f}, {max_ra:.3f}]°, "
@@ -369,10 +371,10 @@ def query_by_los_radec_with_rotation(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    rootPath: str = None,
-    filter_center: float = None,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    rootPath: str | None = None,
+    filter_center: float | None = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     safety_margin: float = 0.1,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:

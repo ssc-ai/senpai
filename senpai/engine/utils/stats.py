@@ -1,19 +1,24 @@
 """Statistics helpers shared by detection stages."""
 
 import os
+from contextlib import AbstractContextManager
 
 import numpy as np
 from astropy.stats import sigma_clipped_stats
 from scipy import fft as _scipy_fft
 
 
-def fft_workers():
+def fft_workers() -> AbstractContextManager[None]:
     """Context manager letting scipy FFT-based ops use all cores.
 
     scipy.fft defaults to a single worker, so scipy.signal.convolve /
     fftconvolve on full frames spend their time in single-threaded FFTs;
     wrapping the call sites multiplies nothing but threads — values are
     identical.
+
+    Returns:
+        A context manager that sets scipy's FFT worker count to the CPU
+        count (or 1 if undetectable) for the duration of the ``with`` block.
     """
     return _scipy_fft.set_workers(os.cpu_count() or 1)
 

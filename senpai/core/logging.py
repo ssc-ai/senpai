@@ -1,8 +1,15 @@
+"""Logging configuration for the application.
+
+Provides the local logging dictConfig, a multiprocess-safe rotating file handler,
+and helpers to set up and adjust log levels at runtime.
+"""
+
+import contextlib
 import logging
 import logging.config
 import logging.handlers
-from enum import Enum
-from typing import Any, Dict, Literal
+from enum import StrEnum
+from typing import Any, Literal
 
 from senpai.core.constants import LOG_PATH
 
@@ -24,19 +31,30 @@ class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """
 
     def rotate(self, source: str, dest: str) -> None:
-        try:
+        """Rotate the log file, tolerating a concurrent rollover by another process.
+
+        Args:
+            source: Path of the current log file being rotated out.
+            dest: Path the current log file is renamed to.
+        """
+        # Another process already rotating this file out from under us is fine.
+        with contextlib.suppress(FileNotFoundError):
             super().rotate(source, dest)
-        except FileNotFoundError:
-            # Another process already rotated this file out from under us.
-            pass
 
 
-class LogMode(str, Enum):
+class LogMode(StrEnum):
+    """Supported logging configuration modes."""
+
     LOCAL = "local"
 
 
-def get_local_config() -> Dict[str, Any]:
-    """Configuration for local development with timestamps and color"""
+def get_local_config() -> dict[str, Any]:
+    """Build the logging dictConfig for local development with timestamps and color.
+
+    Returns:
+        A logging configuration dictionary suitable for
+        :func:`logging.config.dictConfig`.
+    """
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -93,12 +111,12 @@ def get_local_config() -> Dict[str, Any]:
     }
 
 
-def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> None:
-    """Configure logging based on level and context
+def setup_logging(level: str = "INFO", disabled_loggers: list[str] | None = None) -> None:
+    """Configure logging based on level and context.
 
     Args:
-        level: The default logging level for all loggers
-        disabled_loggers: List of logger names to disable or set to a higher level
+        level: The default logging level for all loggers.
+        disabled_loggers: List of logger names to disable or set to a higher level.
     """
     # Check if logging is already configured with our settings
     root_logger = logging.getLogger()
@@ -106,8 +124,23 @@ def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> No
         logger.info("Logging already configured, skipping setup")
         return
 
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     config = get_local_config()
+
+    # Create the log directory lazily here (not at import). If the location is
+    # unwritable — an installed wheel on a read-only root, or a locked-down
+    # site-packages — degrade to console-only rather than failing `import senpai`.
+    # The file handler is dropped from the config and from every logger's handler
+    # list so dictConfig doesn't try to open a file we can't create.
+    default_handlers = ["console", "file"]
+    log_dir_error: str | None = None
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log_dir_error = str(exc)
+        default_handlers = ["console"]
+        config["handlers"].pop("file", None)
+        for logger_ in config["loggers"].values():
+            logger_["handlers"] = [h for h in logger_["handlers"] if h != "file"]
 
     # Update log levels
     for logger_ in config["loggers"].values():
@@ -122,7 +155,7 @@ def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> No
             # Otherwise add a new logger config
             else:
                 config["loggers"][logger_name] = {
-                    "handlers": ["console", "file"],
+                    "handlers": list(default_handlers),
                     "level": "WARNING",
                     "propagate": False,
                 }
@@ -135,6 +168,14 @@ def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> No
     # Mark logging as configured
     root_logger.senpai_logging_configured = True
     logger.info(f"Completed logging setup with level `{level}`")
+    if log_dir_error is not None:
+        # Emitted after dictConfig so it reaches the (console) handler now in place.
+        logger.warning(
+            "File logging disabled: could not create log directory %s (%s). "
+            "Logging to console only.",
+            LOG_PATH.parent,
+            log_dir_error,
+        )
 
 
 def set_log_level(level: LogLevel) -> None:

@@ -1,5 +1,4 @@
-"""
-Photometry plotting utilities for visualizing photometric results.
+"""Photometry plotting utilities for visualizing photometric results.
 
 This module provides plotting functions for:
 - Magnitude vs SNR scatter plots with completeness analysis
@@ -7,7 +6,6 @@ This module provides plotting functions for:
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,29 +22,21 @@ logger = logging.getLogger(__name__)
 
 
 def plot_magnitude_vs_snr(
-    results: List[SimplePhotometryResult],
+    results: list[SimplePhotometryResult],
     summary: SimplePhotometrySummary,
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a magnitude vs SNR scatter plot.
+    """Create a magnitude vs SNR scatter plot.
 
-    Parameters
-    ----------
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    summary : SimplePhotometrySummary
-        Summary statistics
-    output_file : Path, optional
-        Path to save the plot
-    figsize : tuple
-        Figure size (width, height)
+    Args:
+        results: Photometry results for individual stars.
+        summary: Summary statistics.
+        output_file: Path to save the plot; not saved when ``None``.
+        figsize: Figure size as ``(width, height)`` in inches.
 
-    Returns
-    -------
-    plt.Figure
-        The created figure
+    Returns:
+        The created figure.
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -292,29 +282,21 @@ def plot_magnitude_vs_snr(
 
 
 def plot_spatial_background_distribution(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of background level distribution.
+    """Create a spatial map of background level distribution.
 
-    Parameters
-    ----------
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    image_shape : tuple
-        Shape of the image (height, width)
-    output_file : Path, optional
-        Path to save the plot
-    figsize : tuple
-        Figure size (width, height)
+    Args:
+        results: Photometry results for individual stars.
+        image_shape: Shape of the image as ``(height, width)``.
+        output_file: Path to save the plot; not saved when ``None``.
+        figsize: Figure size as ``(width, height)`` in inches.
 
-    Returns
-    -------
-    plt.Figure
-        The created figure
+    Returns:
+        The created figure.
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -367,29 +349,21 @@ def plot_spatial_background_distribution(
 
 
 def plot_spatial_background_quality(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of background levels with quality coding.
+    """Create a spatial map of background levels with quality coding.
 
-    Parameters
-    ----------
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    image_shape : tuple
-        Shape of the image (height, width)
-    output_file : Path, optional
-        Path to save the plot
-    figsize : tuple
-        Figure size (width, height)
+    Args:
+        results: Photometry results for individual stars.
+        image_shape: Shape of the image as ``(height, width)``.
+        output_file: Path to save the plot; not saved when ``None``.
+        figsize: Figure size as ``(width, height)`` in inches.
 
-    Returns
-    -------
-    plt.Figure
-        The created figure
+    Returns:
+        The created figure.
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -492,25 +466,18 @@ def plot_spatial_background_quality(
 
 def plot_background_contours_on_image(
     image: ProcessedFitsImage,
-    results: List[SimplePhotometryResult],
-    output_file: Optional[Path] = None,
+    results: list[SimplePhotometryResult],
+    output_file: Path | None = None,
 ) -> plt.Figure:
-    """
-    Create contour lines on the original image showing background distribution.
+    """Create contour lines on the original image showing background distribution.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        The original image
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    output_file : Path, optional
-        Path to save the plot
+    Args:
+        image: The original image.
+        results: Photometry results for individual stars.
+        output_file: Path to save the plot; not saved when ``None``.
 
-    Returns
-    -------
-    plt.Figure
-        The created figure
+    Returns:
+        The created figure.
     """
     from senpai.engine.plotting.images import plot_single_frame
 
@@ -588,29 +555,21 @@ def plot_background_contours_on_image(
 
 
 def plot_spatial_instrumental_magnitude(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (12, 10),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (12, 10),
 ) -> plt.Figure:
-    """
-    Create a spatial map of instrumental magnitudes.
+    """Create a spatial map of instrumental magnitudes.
 
-    Parameters
-    ----------
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    image_shape : tuple
-        Shape of the image (height, width)
-    output_file : Path, optional
-        Path to save the plot
-    figsize : tuple
-        Figure size (width, height)
+    Args:
+        results: Photometry results for individual stars.
+        image_shape: Shape of the image as ``(height, width)``.
+        output_file: Path to save the plot; not saved when ``None``.
+        figsize: Figure size as ``(width, height)`` in inches.
 
-    Returns
-    -------
-    plt.Figure
-        The created figure
+    Returns:
+        The created figure.
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
 
@@ -730,29 +689,21 @@ def plot_spatial_instrumental_magnitude(
 
 
 def plot_spatial_snr(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of SNR values.
+    """Create a spatial map of SNR values.
 
-    Parameters
-    ----------
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    image_shape : tuple
-        Shape of the image (height, width)
-    output_file : Path, optional
-        Path to save the plot
-    figsize : tuple
-        Figure size (width, height)
+    Args:
+        results: Photometry results for individual stars.
+        image_shape: Shape of the image as ``(height, width)``.
+        output_file: Path to save the plot; not saved when ``None``.
+        figsize: Figure size as ``(width, height)`` in inches.
 
-    Returns
-    -------
-    plt.Figure
-        The created figure
+    Returns:
+        The created figure.
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -825,30 +776,23 @@ def plot_spatial_snr(
 
 
 def plot_photometry_summary(
-    results: List[SimplePhotometryResult],
+    results: list[SimplePhotometryResult],
     summary: SimplePhotometrySummary,
-    image_shape: Tuple[int, int],
+    image_shape: tuple[int, int],
     output_dir: Path,
-    image: Optional[ProcessedFitsImage] = None,
-    output_file: Optional[Path] = None,
+    image: ProcessedFitsImage | None = None,
+    output_file: Path | None = None,
 ) -> None:
-    """
-    Create photometry magnitude vs SNR plot.
+    """Create photometry magnitude vs SNR plot.
 
-    Parameters
-    ----------
-    results : List[SimplePhotometryResult]
-        Photometry results for individual stars
-    summary : SimplePhotometrySummary
-        Summary statistics
-    image_shape : tuple
-        Shape of the image (height, width)
-    output_dir : Path
-        Directory to save the plots
-    image : ProcessedFitsImage, optional
-        Original image for contour plots (not used)
-    output_file : Path, optional
-        Custom output file path. If None, uses default filename in output_dir
+    Args:
+        results: Photometry results for individual stars.
+        summary: Summary statistics.
+        image_shape: Shape of the image as ``(height, width)``.
+        output_dir: Directory to save the plots.
+        image: Original image for contour plots (not used).
+        output_file: Custom output file path. If ``None``, uses the default
+            filename in ``output_dir``.
     """
     logger.info("Creating photometry summary plots...")
 
@@ -857,10 +801,7 @@ def plot_photometry_summary(
 
     # Plot 1: Magnitude vs SNR (only plot we want to keep)
     try:
-        if output_file is not None:
-            mag_snr_file = output_file
-        else:
-            mag_snr_file = output_dir / "photometry_magnitude_vs_snr.png"
+        mag_snr_file = output_file if output_file is not None else output_dir / "photometry_magnitude_vs_snr.png"
         plot_magnitude_vs_snr(results, summary, mag_snr_file)
     except Exception as e:
         logger.error(f"Failed to create magnitude vs SNR plot: {e}", exc_info=True)

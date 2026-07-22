@@ -45,7 +45,15 @@ def calculate_residual_errors(
     y_errors = np.array(y_errors)
     radial_errors = np.array(radial_errors)
 
-    def calc_stats(errors):
+    def calc_stats(errors: np.ndarray) -> dict[str, float]:
+        """Summarize an error array as min/max/mean/median/std and percentiles.
+
+        Args:
+            errors: 1D array of per-star residual errors (pixels).
+
+        Returns:
+            Mapping of statistic name to its float value.
+        """
         return {
             "min": float(np.min(errors)),
             "max": float(np.max(errors)),
@@ -68,12 +76,12 @@ def calculate_residual_errors(
     }
 
 
-def log_residual_errors(phase_name: str, error_dict: dict):
+def log_residual_errors(phase_name: str, error_dict: dict) -> None:
     """Log residual error statistics in a formatted way.
 
     Args:
-        phase_name: Name of the phase (e.g., "Phase 1 - Before SIP fit")
-        error_dict: Dictionary returned from calculate_residual_errors()
+        phase_name: Name of the phase (e.g., "Phase 1 - Before SIP fit").
+        error_dict: Dictionary returned from calculate_residual_errors().
     """
     if not error_dict:
         logger.warning(f"{phase_name}: No error data available")

@@ -9,11 +9,19 @@ structured summaries rather than opaque headers.
 import contextlib
 import logging
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 from pydantic import BaseModel, field_serializer
 
+from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.senpai import RateTrackFrame, RateTrackFrameSerializable, SiderealFrame
+from senpai.engine.models.starfield import SatelliteInImage, StarField
+
+if TYPE_CHECKING:
+    from astropy.wcs import WCS
+
+    from senpai.engine.photometry.utils import SimplePhotometrySummary
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +58,7 @@ class AstrometrySummary(BaseModel):
 
     @field_serializer("crval_ra_deg", "crval_dec_deg", "pixel_scale_arcsec", "rotation_deg", "rms_arcsec")
     def serialize_floats(self, v: float | None) -> float | None:
+        """Round astrometry float fields to 6 decimal places for serialization."""
         return round(v, 6) if v is not None else None
 
 
@@ -66,6 +75,7 @@ class PhotometryResult(BaseModel):
 
     @field_serializer("zeropoint", "zeropoint_err", "limiting_mag_5sigma", "limiting_mag_3sigma")
     def serialize_floats(self, v: float | None) -> float | None:
+        """Round photometry float fields to 3 decimal places for serialization."""
         return round(v, 3) if v is not None else None
 
 
@@ -77,6 +87,7 @@ class SeeingResult(BaseModel):
 
     @field_serializer("fwhm_arcsec", "fwhm_px")
     def serialize_floats(self, v: float | None) -> float | None:
+        """Round seeing float fields to 2 decimal places for serialization."""
         return round(v, 2) if v is not None else None
 
 
@@ -99,20 +110,24 @@ class FrameDetection(BaseModel):
 
     @field_serializer("x_px", "y_px")
     def serialize_px(self, v: float) -> float:
+        """Round pixel coordinate fields to 2 decimal places for serialization."""
         return round(v, 2)
 
     @field_serializer("ra_deg", "dec_deg")
     def serialize_radec(self, v: float | None) -> float | None:
+        """Round RA/Dec fields to 6 decimal places for serialization."""
         return round(v, 6) if v is not None else None
 
     @field_serializer("snr", "fwhm_px", "streak_length_arcsec", "streak_angle_deg", "streak_rate_arcsec_per_sec")
     def serialize_floats(self, v: float | None) -> float | None:
+        """Round SNR/FWHM/streak float fields to 2 decimal places for serialization."""
         if v is None:
             return None
         return round(v, 2)
 
     @field_serializer("mag", "mag_err")
     def serialize_mag(self, v: float | None) -> float | None:
+        """Round magnitude fields to 3 decimal places for serialization."""
         return round(v, 3) if v is not None else None
 
 
@@ -146,7 +161,7 @@ class DetectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _astrometry_from_starfield(starfield) -> AstrometrySummary:
+def _astrometry_from_starfield(starfield: StarField | None) -> AstrometrySummary:
     """Build AstrometrySummary from a StarField."""
     if starfield is None:
         return AstrometrySummary()
@@ -204,7 +219,7 @@ def _photometry_from_dict(summary_dict: dict | None) -> PhotometryResult:
     )
 
 
-def _photometry_from_summary(summary) -> PhotometryResult:
+def _photometry_from_summary(summary: "SimplePhotometrySummary | None") -> PhotometryResult:
     """Build PhotometryResult from a SimplePhotometrySummary dataclass."""
     if summary is None:
         return PhotometryResult()
@@ -219,7 +234,10 @@ def _photometry_from_summary(summary) -> PhotometryResult:
     )
 
 
-def _seeing_from_frame(frame, pixel_scale_arcsec: float | None = None) -> SeeingResult:
+def _seeing_from_frame(
+    frame: SiderealFrame | RateTrackFrame,
+    pixel_scale_arcsec: float | None = None,
+) -> SeeingResult:
     """Build SeeingResult from a SiderealFrame or RateTrackFrame."""
     fwhm_px = None
 
@@ -235,7 +253,7 @@ def _seeing_from_frame(frame, pixel_scale_arcsec: float | None = None) -> Seeing
     return SeeingResult(fwhm_px=_safe_float(fwhm_px), fwhm_arcsec=_safe_float(fwhm_arcsec))
 
 
-def _best_mag(sat) -> tuple[float | None, float | None, str | None]:
+def _best_mag(sat: SatelliteInImage) -> tuple[float | None, float | None, str | None]:
     """Extract the best calibrated magnitude from a SatelliteInImage."""
     if sat.calibrated_magnitudes:
         for band in ["V", "R", "Clear"]:
@@ -502,9 +520,9 @@ def frame_result_from_rate_serializable(
 
 
 def frame_result_from_starfield(
-    starfield,
-    fits_image=None,
-    photometry_summary=None,
+    starfield: StarField | None,
+    fits_image: ProcessedFitsImage | None = None,
+    photometry_summary: "SimplePhotometrySummary | None" = None,
     frame_index: int = 0,
 ) -> FrameResult:
     """Convert a StarField (from process_astrometry_fits_sidereal) to a FrameResult."""
@@ -581,7 +599,7 @@ def frame_result_from_starfield(
 # ---------------------------------------------------------------------------
 
 
-def _pix2sky(astropy_wcs, x: float, y: float) -> tuple[float | None, float | None]:
+def _pix2sky(astropy_wcs: "WCS | None", x: float, y: float) -> tuple[float | None, float | None]:
     """Convert pixel coords to RA/Dec using an astropy WCS. Returns (None, None) on failure."""
     if astropy_wcs is None:
         return None, None

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Catalog Magnitude Distribution Analysis Tool
+"""Catalog magnitude-distribution analysis tool.
 
 Samples random sky positions and analyzes the magnitude distribution of stars
 in the catalog to determine the brightest and faintest sources.
@@ -28,8 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def sample_random_sky_positions(num_samples: int) -> list[tuple[float, float]]:
-    """
-    Generate random sky positions uniformly distributed across the celestial sphere.
+    """Generate random sky positions uniformly distributed across the celestial sphere.
 
     Args:
         num_samples: Number of positions to generate
@@ -52,8 +50,7 @@ def sample_random_sky_positions(num_samples: int) -> list[tuple[float, float]]:
 def query_stars_for_sample(
     ra: float, dec: float, fov_size: float, catalog_path: str
 ) -> list[dict]:
-    """
-    Query catalog stars for a given sky position.
+    """Query catalog stars for a given sky position.
 
     Args:
         ra: Right ascension in degrees
@@ -106,8 +103,7 @@ def analyze_catalog_magnitudes(
     fov_size: float = 10.0,
     output_dir: Path | None = None,
 ) -> dict:
-    """
-    Analyze magnitude distribution of stars in the catalog.
+    """Analyze magnitude distribution of stars in the catalog.
 
     Args:
         catalog_path: Path to SSTR7 catalog
@@ -192,7 +188,7 @@ def analyze_catalog_magnitudes(
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+        _fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
 
         # Histogram of magnitudes
         ax1.hist(
@@ -246,8 +242,12 @@ def analyze_catalog_magnitudes(
     return results
 
 
-def main():
-    """Main CLI function."""
+def main() -> int:
+    """Parse CLI arguments and run the catalog magnitude-distribution analysis.
+
+    Returns:
+        Process exit code (0 on success, 1 if no results were produced).
+    """
     parser = argparse.ArgumentParser(
         description="Analyze magnitude distribution of stars in the SSTR7 catalog"
     )

@@ -1,5 +1,10 @@
+"""Frame rendering: sky-gridded overlays, SIP-distortion maps, and shift/limit diagnostics."""
+
+from __future__ import annotations
+
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib
 from astropy.coordinates import SkyCoord
@@ -18,6 +23,10 @@ from senpai.engine.models.metadata import StreakMetadata
 from senpai.engine.models.starfield import StarField, StarListImage
 from senpai.engine.plotting.axes import prep_axes
 from senpai.engine.plotting.normalization import zscale
+from senpai.settings import settings
+
+if TYPE_CHECKING:
+    from photutils.aperture import Aperture
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +38,35 @@ def plot_overs(
     detections: StarListImage | None = None,
     streak: StreakMetadata | None = None,
     streak_candidates: list | None = None,
-    centercross=True,
-    marker="+",
-    markersize=5,
-    linewidth=1,
+    centercross: bool = True,
+    marker: str | None = "+",
+    markersize: float = 5,
+    linewidth: float = 1,
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
-):
+) -> None:
+    """Draw catalog, detection, and streak overlays onto an existing axes.
+
+    Renders catalog-star crosshairs/circles, point-detection crosshairs, and
+    boxes around streak detections and candidates, optionally including
+    undistorted (SIP-removed) catalog positions.
+
+    Args:
+        ax: Matplotlib axes to draw onto.
+        starfield: Solved starfield providing catalog positions and WCS.
+        starlist: Optional star list whose centers are plotted instead.
+        detections: Detected sources to overlay (points and streaks).
+        streak: Fitted streak geometry used to draw line segments on catalog stars.
+        streak_candidates: Candidate streaks to box (objects with ``.x``, ``.y``,
+            ``.length_pixels``, ``.angle_deg``, ...).
+        centercross: Draw catalog stars as center crosses rather than circles.
+        marker: Marker style for catalog crosses; ``None`` disables them.
+        markersize: Marker size / circle radius scale in points.
+        linewidth: Line width for overlay strokes.
+        n_brightest: If set, only overlay the N brightest catalog stars.
+        show_undistorted_catalog: Also plot catalog positions computed without
+            SIP distortion (as white squares) when the WCS carries SIP terms.
+    """
     centers = None
     if starfield is not None:
         # Get all catalog stars
@@ -98,10 +129,9 @@ def plot_overs(
                 sip_order == 0
                 and hasattr(wcs_with_sip, "sip")
                 and wcs_with_sip.sip is not None
-            ):
-                if hasattr(wcs_with_sip.sip, "a_order"):
-                    sip_order = wcs_with_sip.sip.a_order
-                    logger.debug(f"Using SIP order from WCS object: {sip_order}")
+            ) and hasattr(wcs_with_sip.sip, "a_order"):
+                sip_order = wcs_with_sip.sip.a_order
+                logger.debug(f"Using SIP order from WCS object: {sip_order}")
 
             if sip_order > 0:
                 logger.debug(
@@ -225,10 +255,7 @@ def plot_overs(
 
     if starlist is not None:
         stars = starlist.centers_xy()
-        if len(stars.shape) > 1:
-            centers = stars[:, :2]
-        else:
-            centers = None
+        centers = stars[:, :2] if len(stars.shape) > 1 else None
 
     if centers is not None and streak is not None:
         centercross = True
@@ -249,28 +276,27 @@ def plot_overs(
                 linewidth=linewidth,
             )
 
-    if centers is not None and marker is not None:
-        if centers.shape[0] > 0:
-            if centercross:
-                ax.scatter(
-                    centers[:, 0],
-                    centers[:, 1],
-                    marker=marker,
-                    color="red",
-                    s=markersize,
+    if centers is not None and marker is not None and centers.shape[0] > 0:
+        if centercross:
+            ax.scatter(
+                centers[:, 0],
+                centers[:, 1],
+                marker=marker,
+                color="red",
+                s=markersize,
+            )
+        else:
+            for center in centers:
+                rect = patches.Circle(
+                    center,
+                    radius=2 * markersize,
+                    linewidth=linewidth,
+                    linestyle="-",
+                    edgecolor="red",
+                    facecolor="none",
                 )
-            else:
-                for center in centers:
-                    rect = patches.Circle(
-                        center,
-                        radius=2 * markersize,
-                        linewidth=linewidth,
-                        linestyle="-",
-                        edgecolor="red",
-                        facecolor="none",
-                    )
 
-                    ax.add_patch(rect)
+                ax.add_patch(rect)
 
     # Collect streak-type detection indices so we don't double-render them
     _streak_det_indices: set[int] = set()
@@ -356,6 +382,14 @@ def plot_overs(
 
 
 def font_size(img: np.ndarray) -> float:
+    """Compute a label font size scaled to the image's smaller dimension.
+
+    Args:
+        img: The image being annotated.
+
+    Returns:
+        A font size in points (at least 2).
+    """
     return max(2, min(img.shape[1], img.shape[0]) * 0.01)
 
 
@@ -367,17 +401,49 @@ def plot_single_frame(
     streak: StreakMetadata | None = None,
     streak_candidates: list | None = None,
     output_file: str | Path | None = None,
-    scale=True,
-    marker="+",
-    centercross=False,
-    markersize=10,
+    scale: bool = True,
+    marker: str | None = "+",
+    centercross: bool = False,
+    markersize: float = 10,
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
     dpi: int | None = None,
-    format: str | None = None,
+    output_format: str | None = None,
     jpeg_quality: int = 95,
     png_compression: int = 6,
-):
+) -> tuple[plt.Figure, plt.Axes] | None:
+    """Render a single frame with an RA/Dec grid and detection overlays.
+
+    When the starfield has a WCS fit, an equal-area RA/Dec grid with edge labels
+    is drawn; otherwise a plain borderless image is produced. Overlays are added
+    via :func:`plot_overs`. The result is either saved to ``output_file``
+    (optionally re-encoded/optimized) or returned for further use.
+
+    Args:
+        img: Frame pixel data.
+        starfield: Solved starfield providing catalog positions and WCS.
+        starlist: Optional star list to overlay instead of the catalog.
+        detections: Detected sources to overlay.
+        streak: Fitted streak geometry for streak overlays.
+        streak_candidates: Candidate streaks to box.
+        output_file: Destination path; if ``None`` the figure/axes are returned.
+        scale: Apply a zscale stretch before display.
+        marker: Marker style for catalog crosses; ``None`` disables them.
+        centercross: Draw catalog stars as center crosses rather than circles.
+        markersize: Base marker size; overridden by the detection/streak FWHM
+            when a fit is present.
+        n_brightest: If set, only overlay the N brightest catalog stars.
+        show_undistorted_catalog: Also plot SIP-removed catalog positions.
+        dpi: Output DPI; defaults to 150, reduced to 75 for images over 4000 px.
+        output_format: Output format (``"png"`` or ``"jpeg"``); inferred from the
+            extension when ``None``.
+        jpeg_quality: JPEG quality (1-100) when saving as JPEG.
+        png_compression: PNG compression level (0-9) for the PIL optimization pass.
+
+    Returns:
+        The ``(figure, axes)`` pair when ``output_file`` is ``None``; otherwise
+        ``None`` after saving.
+    """
     logger.info(f"plotting frame {output_file if output_file else 'no output file'}")
 
     # Determine DPI - default to 150, but reduce for very large images to save space
@@ -393,13 +459,13 @@ def plot_single_frame(
             dpi = 150  # Default DPI for smaller images
 
     # Determine output format from file extension if not specified
-    if output_file and format is None:
+    if output_file and output_format is None:
         output_path = Path(output_file)
         ext = output_path.suffix.lower()
         if ext in [".jpg", ".jpeg"]:
-            format = "jpeg"
+            output_format = "jpeg"
         elif ext == ".png":
-            format = "png"
+            output_format = "png"
         # If no extension or unknown, default to PNG
 
     if starfield is not None and starfield.fit:
@@ -487,7 +553,23 @@ def plot_single_frame(
         # (ra_ticks and dec_ticks are set based on equal pixel area division)
 
         # Function to place labels
-        def place_label(x, y, label_text, angle, on_x_axis=True):
+        def place_label(
+            x: float,
+            y: float,
+            label_text: str,
+            angle: float,
+            on_x_axis: bool = True,
+        ) -> None:
+            """Place a rotated white label at ``(x, y)`` if inside the image.
+
+            Args:
+                x: Label x-position in pixels.
+                y: Label y-position in pixels.
+                label_text: Text to render.
+                angle: Text rotation in degrees.
+                on_x_axis: Whether the label sits on the x-axis (affects padding
+                    and alignment).
+            """
             if x >= 0 and x < width and y >= 0 and y < height:
                 fs = font_size(img)
                 if on_x_axis:
@@ -513,7 +595,15 @@ def plot_single_frame(
                 )
 
         # Helper function to normalize angle to [-90, 90] degrees
-        def normalize_angle(angle):
+        def normalize_angle(angle: float) -> float:
+            """Fold an angle into the ``[-90, 90]`` degree range.
+
+            Args:
+                angle: Angle in degrees.
+
+            Returns:
+                The equivalent angle within ``[-90, 90]`` degrees.
+            """
             if angle > 90:
                 angle -= 180
             elif angle < -90:
@@ -786,12 +876,12 @@ def plot_single_frame(
                 va=va,
                 size=font_size(img),
                 rotation=angle,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="black",
-                    alpha=0.7,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "black",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
             logger.debug(
                 f"RA {ra:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°"
@@ -1073,12 +1163,12 @@ def plot_single_frame(
                 va=va,
                 size=font_size(img),
                 rotation=angle,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="black",
-                    alpha=0.7,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "black",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
             logger.debug(
                 f"Dec {dec:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°"
@@ -1125,12 +1215,12 @@ def plot_single_frame(
     if output_file:
         # Prepare savefig kwargs based on format
         save_kwargs = {"dpi": dpi}
-        if format == "jpeg" or format == "jpg":
+        if output_format == "jpeg" or output_format == "jpg":
             save_kwargs["format"] = "jpeg"
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["optimize"] = True
             logger.info(f"Saving as JPEG with quality={jpeg_quality}, DPI={dpi}")
-        elif format == "png":
+        elif output_format == "png":
             save_kwargs["format"] = "png"
             logger.info(f"Saving as PNG with DPI={dpi}")
         else:
@@ -1141,7 +1231,7 @@ def plot_single_frame(
 
         # For PNG files, try to optimize further using PIL if available
         output_path = Path(output_file)
-        if (format is None or format == "png") and output_path.suffix.lower() == ".png":
+        if (output_format is None or output_format == "png") and output_path.suffix.lower() == ".png":
             try:
                 from PIL import Image
 
@@ -1188,13 +1278,22 @@ def plot_single_frame(
 
 
 def plot_photometry_frame(
-    img,
-    apertures=None,
-    annuli=None,
-    output_file=None,
-    scale=True,
-):
-    fig, ax = prep_axes(*img.shape)
+    img: np.ndarray,
+    apertures: Aperture | None = None,
+    annuli: Aperture | None = None,
+    output_file: str | Path | None = None,
+    scale: bool = True,
+) -> None:
+    """Render a frame with photometric aperture and background-annulus overlays.
+
+    Args:
+        img: Frame pixel data (typically the per-pixel counts array).
+        apertures: Photutils source apertures to draw in white.
+        annuli: Photutils background annuli to draw in red.
+        output_file: Destination path; if ``None`` the figure is shown instead.
+        scale: Apply a zscale stretch before display.
+    """
+    _fig, ax = prep_axes(*img.shape)
 
     # minval = np.min(img.flatten())
     # maxval = (np.median(img.flatten()) - minval) * 4 + minval
@@ -1216,28 +1315,32 @@ def plot_photometry_frame(
 
 
 def plot_sip_distortions(
-    wcs,
+    wcs: WCS,
     grid_spacing: int = 50,
     plot_type: str = "arrows",
     output_file: str | None = None,
     figsize: tuple = (10, 8),
-    **kwargs,
+    **kwargs: float,
 ) -> tuple | None:
     """Plot SIP (Simple Imaging Polynomial) distortions across the field of view.
 
     Args:
-        wcs: Astropy WCS object containing SIP coefficients
-        grid_spacing: Spacing between grid points in pixels
-        plot_type: Type of plot - "arrows" for quiver plot, "contours" for distortion magnitude contours,
-                  "separate" for individual plots (dx, dy, magnitude)
-        output_file: Optional file path to save the plot
-        figsize: Figure size for the plot
-        **kwargs: Additional arguments passed to plotting functions
+        wcs: Astropy WCS object containing SIP coefficients.
+        grid_spacing: Spacing between grid points in pixels.
+        plot_type: Type of plot - "arrows" for a quiver plot, "contours" for
+            distortion-magnitude contours, "separate" for individual dx/dy/
+            magnitude panels.
+        output_file: Optional file path to save the plot.
+        figsize: Figure size for the plot.
+        **kwargs: Additional numeric arguments passed to the plotting functions
+            (e.g. ``arrow_scale``, ``quiver_scale``, ``arrow_width``).
 
     Returns:
-        tuple: (fig, ax) if output_file is None, None otherwise
-    """
+        The ``(fig, ax)`` pair if ``output_file`` is ``None``, otherwise ``None``.
 
+    Raises:
+        ValueError: If ``plot_type`` is not one of the recognized values.
+    """
     # Check if WCS has SIP distortions
     has_sip = False
     if (hasattr(wcs, "sip") and wcs.sip is not None) or wcs.sip is not None:
@@ -1447,3 +1550,238 @@ def plot_sip_distortions(
         return None
     else:
         return fig, plt.gca()
+
+
+def plot_shift_validation(
+    source_frame: np.ndarray,
+    target_frame: np.ndarray,
+    valid_stars: list,
+    source_fluxes: np.ndarray,
+    target_fluxes: np.ndarray,
+    shift_x: float,
+    shift_y: float,
+    correlation: float,
+    median_ratio: float,
+    ratio_std: float,
+    box_size: int,
+    half_box: int,
+    source_index: int,
+    target_index: int,
+) -> None:
+    """Render diagnostic plots comparing a source frame to a shifted target frame.
+
+    Saves comparison, close-up, and flux-correlation figures to the configured
+    output directory to validate an inter-frame pixel shift.
+
+    Args:
+        source_frame (np.ndarray): Source frame image data.
+        target_frame (np.ndarray): Target frame image data.
+        valid_stars (list): Star tuples ``(x, y, x_shifted, y_shifted)`` matched
+            between the two frames.
+        source_fluxes (np.ndarray): Measured fluxes of stars in the source frame.
+        target_fluxes (np.ndarray): Measured fluxes of stars in the target frame.
+        shift_x (float): Applied shift in x (pixels).
+        shift_y (float): Applied shift in y (pixels).
+        correlation (float): Flux correlation between source and target.
+        median_ratio (float): Median source-to-target flux ratio.
+        ratio_std (float): Standard deviation of the flux ratio.
+        box_size (int): Side length of the star bounding boxes (pixels).
+        half_box (int): Half the box size (pixels).
+        source_index (int): Index of the source frame.
+        target_index (int): Index of the target frame.
+
+    Returns:
+        None
+    """
+
+    def simple_scale(image: np.ndarray) -> np.ndarray:
+        """Linearly stretch an image to [0, 1] using its 1st/99th percentiles."""
+        vmin, vmax = np.percentile(image, [1, 99])
+        return np.clip((image - vmin) / (vmax - vmin), 0, 1)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+
+    ax1.imshow(zscale(source_frame), cmap="viridis", origin="upper")
+    ax1.set_title("Source Frame")
+    ax2.imshow(zscale(target_frame), cmap="viridis", origin="upper")
+    ax2.set_title(f"Target Frame (Shift: {shift_x:.1f}, {shift_y:.1f})")
+
+    for i, (x, y, x_shifted, y_shifted) in enumerate(valid_stars[:15]):
+        rect1 = patches.Rectangle(
+            (x - half_box, y - half_box),
+            box_size,
+            box_size,
+            linewidth=1,
+            edgecolor="r",
+            facecolor="none",
+        )
+        ax1.add_patch(rect1)
+        ax1.text(
+            x,
+            y - half_box - 5,
+            f"{i}",
+            color="white",
+            fontsize=8,
+            bbox={"facecolor": "black", "alpha": 0.5},
+        )
+
+        rect2 = patches.Rectangle(
+            (x_shifted - half_box, y_shifted - half_box),
+            box_size,
+            box_size,
+            linewidth=1,
+            edgecolor="r",
+            facecolor="none",
+        )
+        ax2.add_patch(rect2)
+        ax2.text(
+            x_shifted,
+            y_shifted - half_box - 5,
+            f"{i}",
+            color="white",
+            fontsize=8,
+            bbox={"facecolor": "black", "alpha": 0.5},
+        )
+
+        ax1.plot(x, y, "g+", markersize=6)
+        ax2.plot(x_shifted, y_shifted, "g+", markersize=6)
+
+    ax1.plot([], [], "r-", linewidth=1, label="Star box")
+    ax1.plot([], [], "g+", markersize=6, label="Star center")
+    ax1.legend(loc="upper right")
+
+    plt.figtext(
+        0.5,
+        0.95,
+        f"Shift: ({shift_x:.1f}, {shift_y:.1f}) pixels",
+        ha="center",
+        fontsize=12,
+        bbox={"facecolor": "white", "alpha": 0.8},
+    )
+
+    plt.tight_layout()
+    plt.savefig(
+        Path(settings.plotting.output_dir)
+        / f"shift_validation_comparison_{source_index}_to_{target_index}_{shift_x:.1f}_{shift_y:.1f}.png"
+    )
+    plt.close(fig)
+
+    if len(valid_stars) >= 5:
+        fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+
+        for i, (x, y, x_shifted, y_shifted) in enumerate(valid_stars[:5]):
+            axes[0, i].imshow(simple_scale(source_frame), cmap="viridis", origin="upper")
+            axes[0, i].set_xlim(x - box_size * 2, x + box_size * 2)
+            axes[0, i].set_ylim(y + box_size * 2, y - box_size * 2)
+            axes[0, i].plot(x, y, "g+", markersize=10)
+            axes[0, i].add_patch(
+                patches.Rectangle(
+                    (x - half_box, y - half_box),
+                    box_size,
+                    box_size,
+                    linewidth=1,
+                    edgecolor="r",
+                    facecolor="none",
+                )
+            )
+            axes[0, i].set_title(f"Source Star {i}", fontsize=8)
+            axes[0, i].set_xticks([])
+            axes[0, i].set_yticks([])
+
+            axes[1, i].imshow(simple_scale(target_frame), cmap="viridis", origin="upper")
+            axes[1, i].set_xlim(x_shifted - box_size * 2, x_shifted + box_size * 2)
+            axes[1, i].set_ylim(y_shifted + box_size * 2, y_shifted - box_size * 2)
+            axes[1, i].plot(x_shifted, y_shifted, "g+", markersize=10)
+            axes[1, i].add_patch(
+                patches.Rectangle(
+                    (x_shifted - half_box, y_shifted - half_box),
+                    box_size,
+                    box_size,
+                    linewidth=1,
+                    edgecolor="r",
+                    facecolor="none",
+                )
+            )
+            axes[1, i].set_title(f"Target Star {i}", fontsize=8)
+            axes[1, i].set_xticks([])
+            axes[1, i].set_yticks([])
+
+        plt.tight_layout()
+        plt.savefig(
+            Path(settings.plotting.output_dir)
+            / f"shift_validation_closeups_{source_index}_to_{target_index}_{shift_x:.1f}_{shift_y:.1f}.png"
+        )
+        plt.close(fig)
+
+    if len(source_fluxes) > 1:
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.scatter(source_fluxes, target_fluxes, alpha=0.7)
+        ax.set_xlabel("Source Flux")
+        ax.set_ylabel("Target Flux")
+        ax.set_title(
+            f"Flux Correlation: {correlation:.3f}, Ratio: {median_ratio:.3f}±{ratio_std:.3f}"
+        )
+
+        max_flux = max(np.max(source_fluxes), 1)
+        x_line = np.linspace(0, max_flux, 100)
+        ax.plot(x_line, median_ratio * x_line, "r--", label=f"Median Ratio: {median_ratio:.3f}")
+        ax.legend()
+
+        plt.savefig(
+            Path(settings.plotting.output_dir)
+            / f"shift_validation_correlation_{source_index}_to_{target_index}_{shift_x:.1f}_{shift_y:.1f}.png"
+        )
+        plt.close(fig)
+
+
+def plot_limiting_magnitude(
+    filtered_magnitudes: np.ndarray,
+    filtered_log_snrs: np.ndarray,
+    weights: np.ndarray,
+    slope: float,
+    intercept: float,
+    min_snr: float,
+    limiting_mag: float,
+    frame_index: int,
+) -> None:
+    """Render and save a limiting-magnitude estimation diagnostic plot.
+
+    Args:
+        filtered_magnitudes (np.ndarray): Star magnitudes used in the fit.
+        filtered_log_snrs (np.ndarray): Base-10 log SNR values for the stars.
+        weights (np.ndarray): Per-star weights used to size scatter markers.
+        slope (float): Slope of the fitted magnitude-vs-log(SNR) trend.
+        intercept (float): Intercept of the fitted trend.
+        min_snr (float): SNR threshold used to define the limiting magnitude.
+        limiting_mag (float): Estimated limiting magnitude.
+        frame_index (int): Index of the frame, used in the output filename.
+
+    Returns:
+        None
+    """
+    _fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.scatter(
+        filtered_magnitudes,
+        filtered_log_snrs,
+        c="blue",
+        alpha=0.5,
+        s=weights * 20 / np.max(weights),
+        label="Stars",
+    )
+
+    mag_range = np.linspace(min(filtered_magnitudes), max(filtered_magnitudes) + 2, 100)
+    fitted_line = slope * mag_range + intercept
+    ax.plot(mag_range, fitted_line, "r--", label="Fitted Trend")
+
+    ax.axhline(y=np.log10(min_snr), color="g", linestyle=":", label=f"SNR={min_snr} Threshold")
+    ax.axvline(x=limiting_mag, color="k", linestyle="--", label="Limiting Magnitude")
+
+    ax.set_xlabel("Magnitude")
+    ax.set_ylabel("log10(SNR)")
+    ax.set_title("Limiting Magnitude Estimation")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    plt.savefig(Path(settings.plotting.output_dir) / f"frame_{frame_index}_limiting_mag.png")
+    plt.close()

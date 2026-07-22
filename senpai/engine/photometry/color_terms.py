@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from senpai.core.config import PhotometryConfig
 from senpai.engine.models.starfield import StarField
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,8 @@ class ColorTermFit:
     rms_residual: float
     clipped_fraction: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the fitted quantities to a stable number of decimal places."""
         self.zero_point = round(self.zero_point, 3)
         self.zero_point_err = round(self.zero_point_err, 4)
         self.color_coefficient = round(self.color_coefficient, 4)
@@ -47,7 +49,8 @@ class BandCalibration:
     color_term: ColorTermFit | None = None
     method: str = "simple"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the zero point and its uncertainty to a stable precision."""
         self.zero_point = round(self.zero_point, 3)
         self.zero_point_err = round(self.zero_point_err, 4)
 
@@ -89,7 +92,7 @@ def fit_color_term(
     min_stars : int
         Minimum number of stars required for fitting
 
-    Returns
+    Returns:
     -------
     ColorTermFit or None
         Fit result, or None if insufficient stars
@@ -167,7 +170,7 @@ def calculate_multiband_calibration(
     results: list,
     starfield: StarField,
     target_bands: list[str],
-    config,
+    config: PhotometryConfig,
     observation_filter: str | None = None,
 ) -> MultiBandCalibration | None:
     """Calculate zero points with color corrections for multiple target bands.
@@ -185,7 +188,7 @@ def calculate_multiband_calibration(
     observation_filter : str or None
         Observation filter name (e.g. "Clear", "V")
 
-    Returns
+    Returns:
     -------
     MultiBandCalibration or None
         Multi-band calibration results, or None if no bands could be calibrated

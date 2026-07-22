@@ -1,3 +1,12 @@
+"""Online Gaia DR3 catalog queries via astroquery.
+
+Queries the remote Gaia DR3 archive (``gaiadr3.gaia_source``) over an RA/Dec box with
+ADQL, handling RA=0/360 wraparound, and returns senpai-shaped star dicts (coordinates
+in radians, synthetic Johnson_V / Sloan_r from BP-RP, proper motion in rad/s). This is
+the online counterpart to ``senpai.catalog.gaia_local``, which serves the same dict
+shape from a local mirror.
+"""
+
 import logging
 from typing import Any
 
@@ -11,8 +20,8 @@ def query_by_ra_dec_bounds(
     max_ra: float,
     min_dec: float,
     max_dec: float,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     primary_filter: str = "G",
 ) -> list[dict[str, Any]]:
     """Query Gaia catalog using explicit RA/DEC bounds.
@@ -69,7 +78,7 @@ def query_by_ra_dec_bounds(
             WHERE phot_g_mean_mag BETWEEN {bright_lim} AND {faint_lim}
             AND ra >= {min_ra_normalized} AND ra <= 360.0
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             # Query second range: low RA values (near 0)
             adql2 = f"""
@@ -83,7 +92,7 @@ def query_by_ra_dec_bounds(
             WHERE phot_g_mean_mag BETWEEN {bright_lim} AND {faint_lim}
             AND ra >= 0.0 AND ra <= {max_ra_normalized}
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             result1 = Gaia.launch_job(adql1).get_results()
             result2 = Gaia.launch_job(adql2).get_results()
@@ -97,10 +106,7 @@ def query_by_ra_dec_bounds(
             if result2 is not None and len(result2) > 0:
                 results_to_combine.append(result2)
 
-            if len(results_to_combine) > 0:
-                result = vstack(results_to_combine)
-            else:
-                result = None
+            result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
         else:
             # Field doesn't cross boundary - simple case
             logger.info(
@@ -120,7 +126,7 @@ def query_by_ra_dec_bounds(
             WHERE phot_g_mean_mag BETWEEN {bright_lim} AND {faint_lim}
             AND ra BETWEEN {min_ra_normalized} AND {max_ra_normalized}
             AND dec BETWEEN {min_dec} AND {max_dec}
-            """
+            """  # noqa: S608  # ADQL from internal numeric params, no untrusted input
 
             result = Gaia.launch_job(adql).get_results()
 

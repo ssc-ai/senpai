@@ -1,28 +1,38 @@
+"""Star-catalog query dispatch and pixel projection for plate solving.
+
+Resolves the configured catalog backend (SSTRC7, SDSS, Gaia, or the local Gaia mirror),
+queries it over the field of view implied by a WCS solution, and projects the matched
+stars into image pixel coordinates as a StarListSpace. Also provides an in-process
+growing sky-region cache for online Gaia queries and catalog-availability checks
+(``examine_catalog`` / ``enforce_catalog``).
+"""
+
 import logging
 import math
 import time
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 from astropy.wcs import WCS
 
-import senpai.catalog.sstr7 as sstr7
-import senpai.catalog.sdss as sdss
 import senpai.catalog.gaia as gaia
+import senpai.catalog.sdss as sdss
+import senpai.catalog.sstr7 as sstr7
 from senpai.catalog.constants import CatalogType
 from senpai.core.config import get_config, get_or_initialize_config
 from senpai.engine.models.astrometry import WCSModel
 from senpai.engine.models.starfield import ImageMetadata, StarInSpace, StarListSpace
+from senpai.exceptions import SiderealSolveError
 
 logger = logging.getLogger(__name__)
 
 
 def _validate_catalog_coverage(
-    stars_from_catalog: List[Dict[str, Any]],
-    star_list: List[StarInSpace],
+    stars_from_catalog: list[dict[str, Any]],
+    star_list: list[StarInSpace],
     pixel_width: float,
     pixel_height: float,
     catalog_type: str,
@@ -142,79 +152,82 @@ def _make_wcs_hashable(wcs: WCSModel) -> tuple:
     return tuple(hashable_components)
 
 
-@lru_cache(maxsize=10000)  # Cache up to 10000 distinct queries
-def _query_catalog_sstr7_cached(
-    wcs_tuple: tuple,
-    catalog_path: str,
-    faint_lim: int | None,
-    bright_lim: int | None,
-    proper_motion_date_timestamp: float | None,
-    max_stars: int | None,
-) -> tuple:
-    """Cached version of query_catalog_sstr7 that takes hashable arguments."""
-    # Reconstruct WCS from tuple components
-    header = {
-        "WCSAXES": 2,
-        "CRVAL1": wcs_tuple[0],
-        "CRVAL2": wcs_tuple[1],
-        "CRPIX1": wcs_tuple[2],
-        "CRPIX2": wcs_tuple[3],
-        "PC1_1": wcs_tuple[4],
-        "PC1_2": wcs_tuple[5],
-        "PC2_1": wcs_tuple[6],
-        "PC2_2": wcs_tuple[7],
-        "CDELT1": wcs_tuple[8],
-        "CDELT2": wcs_tuple[9],
-        "NAXIS1": wcs_tuple[10],
-        "NAXIS2": wcs_tuple[11],
-        "CUNIT1": "deg",
-        "CUNIT2": "deg",
-        "CTYPE1": "RA---TAN",
-        "CTYPE2": "DEC--TAN",
-    }
+def query_catalog_sstr7(
+    wcs: WCSModel,
+    catalog_path: str | Path,
+    faint_lim: int | None = None,
+    bright_lim: int | None = None,
+    proper_motion_date: datetime | None = None,
+    max_stars: int | None = None,
+) -> StarListSpace:
+    """Query the SSTRC7 catalog for stars within a WCS field of view.
 
-    astropy_wcs = WCS(header)
-    wcs = WCSModel.from_astropy_wcs(astropy_wcs)
+    The query region is derived from the full WCS solution (image-center pointing,
+    full field of view) rather than a reduced cache key, so shifted/propagated WCS
+    solutions query the sky their frame actually covers.
 
-    proper_motion_date = (
-        datetime.fromtimestamp(proper_motion_date_timestamp)
-        if proper_motion_date_timestamp
-        else None
-    )
+    Args:
+        wcs (WCSModel): WCS solution defining the field of view and orientation.
+        catalog_path (str | Path): root path to the SSTRC7 catalog data.
+        faint_lim (int | None): faintest magnitude to include; stars with
+            magnitude at or above this value are excluded. Defaults to None.
+        bright_lim (int | None): brightest magnitude to include; stars with
+            magnitude at or below this value are excluded. Defaults to None.
+        proper_motion_date (datetime | None): epoch to propagate proper motion
+            to; if None, proper motion is not applied. Defaults to None.
+        max_stars (int | None): maximum number of stars to return; if set,
+            querying stops once this count is reached. Defaults to None.
+
+    Returns:
+        StarListSpace: matched catalog stars with image positions plus the
+            associated image metadata.
+
+    Raises:
+        SiderealSolveError: if the derived sensor field of view is implausibly large
+            (a corrupted WCS would otherwise trigger an enormous catalog read).
+    """
+    astropy_wcs = wcs.to_astropy_wcs()
 
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
+    # A valid plate solution's field of view stays within the configured scale bounds, so a
+    # FOV well beyond the maximum field width means the WCS is corrupted, and querying it reads
+    # an enormous slice of the catalog. Use 2x the configured maximum as a generous sanity
+    # margin so a valid solve at the boundary is never rejected.
+    config = get_config()
+    max_fov_degrees = 2 * config.astrometry.max_width_degrees
+    if fov_width > max_fov_degrees or fov_height > max_fov_degrees:
+        # A corrupted WCS solution yields no sound anchor for the collect -- raise the typed
+        # error so the boundary logs a clean message rather than an alarming traceback.
+        raise SiderealSolveError(
+            f"Implausible sensor field of view ({fov_width:.2f} x {fov_height:.2f} deg) exceeds "
+            f"twice the configured maximum field width ({max_fov_degrees:.1f} deg); the WCS "
+            "solution is likely corrupted. Aborting catalog query to avoid an excessive read."
+        )
+
     # Get center coordinates
-    header = astropy_wcs.to_header()
-    center_ra, center_dec = astropy_wcs.wcs_pix2world(
-        [[header["CRPIX1"], header["CRPIX2"]]], 0
-    )[0]
+    header = astropy_wcs.to_header(relax=True)
+    center_ra, center_dec = astropy_wcs.wcs_pix2world([[pixel_width / 2, pixel_height / 2]], 0)[0]
 
     # Extract rotation from WCS
     rotation = 0.0
     if "PC1_1" in header and "PC1_2" in header:
         # Calculate rotation from PC matrix
         rotation = np.degrees(np.arctan2(header["PC1_2"], header["PC1_1"]))
-    elif "CROTA2" in header:
+    elif "CROTA2" in header:  # pragma: no cover
         rotation = header["CROTA2"]
 
-    # Use the new function that handles rotation
+    # Use the rotation-aware region query
     stars_from_catalog = sstr7.query_by_los_radec_with_rotation(
         fov_height,
         fov_width,
         center_ra,
         center_dec,
         rotation=rotation,
-        rootPath=catalog_path,
-        faint_lim=faint_lim,
-        bright_lim=bright_lim,
+        rootPath=str(catalog_path),
         safety_margin=0.2,  # Add 20% safety margin to ensure complete coverage
     )
-
-    if max_stars is not None and len(stars_from_catalog) > max_stars:
-        # Sort stars from brightest to dimmest (lowest to highest magnitude)
-        stars_from_catalog = sorted(stars_from_catalog, key=lambda star: star["mv"])
-        stars_from_catalog = stars_from_catalog[:max_stars]
+    stars_from_catalog = sorted(stars_from_catalog, key=lambda star: star["mv"])
 
     if proper_motion_date is not None:
         logger.info(f"Applying proper motion for {proper_motion_date}")
@@ -231,24 +244,24 @@ def _query_catalog_sstr7_cached(
     coords = np.column_stack((ra_deg, dec_deg))
     pixel_coords = astropy_wcs.wcs_world2pix(coords, 0)
 
+    logger.info("building SENPAI catalog")
     star_list = []
     for i, star in enumerate(stars_from_catalog):
         xf, yf = pixel_coords[i]
         ra = ra_deg[i]
         dec = dec_deg[i]
+        # Check magnitude limits only if they are provided
+        magnitude_in_range = True
+        if faint_lim is not None and star["mv"] >= faint_lim:
+            magnitude_in_range = False
+        if bright_lim is not None and star["mv"] <= bright_lim:
+            magnitude_in_range = False
 
-        # Only check if star is within image bounds (magnitude filtering done at catalog level)
-        if xf > 0 and xf < pixel_width and yf > 0 and yf < pixel_height:
-            # Ensure magnitudes dict is always populated if magnitude exists
-            # The catalog should populate magnitudes, but ensure it's never None/empty if magnitude exists
-            magnitudes = star.get("magnitudes")
-            if magnitudes is None:
-                magnitudes = {}
-
-            # If magnitude exists but magnitudes dict is empty, populate it with the primary magnitude
-            # This ensures magnitudes dict is never empty when magnitude is set
+        if magnitude_in_range and xf > 0 and xf < pixel_width and yf > 0 and yf < pixel_height:
+            # Populate the multi-band magnitudes dict for downstream photometry;
+            # SSTRC7 carries a single visual magnitude.
+            magnitudes = star.get("magnitudes") or {}
             if star["mv"] is not None and star["mv"] < 32 and len(magnitudes) == 0:
-                # Use a generic name since we don't know which filter was used
                 magnitudes["Primary"] = float(star["mv"])
 
             star_list.append(
@@ -263,92 +276,19 @@ def _query_catalog_sstr7_cached(
                 )
             )
 
-    return star_list, ImageMetadata(
-        wcs=wcs,
-        width=pixel_width,
-        height=pixel_height,
-        boresight_dec=center_dec,
-        boresight_ra=center_ra,
+        # Done early if we have as many stars as were requested
+        if max_stars and len(star_list) >= max_stars:
+            break
+
+    return StarListSpace(
+        stars=star_list,
+        image_metadata=ImageMetadata(
+            width=pixel_width,
+            height=pixel_height,
+            boresight_dec=center_dec,
+            boresight_ra=center_ra,
+        ),
     )
-
-
-def query_catalog_sstr7(
-    wcs: WCSModel,
-    catalog_path: str | Path,
-    faint_lim: int | None = None,
-    bright_lim: int | None = None,
-    proper_motion_date: datetime | None = None,
-    max_stars: int | None = None,
-) -> StarListSpace:
-    """Query the SSTR7 star catalog with caching support."""
-    # Convert inputs to hashable types
-    wcs_tuple = _make_wcs_hashable(wcs)
-    catalog_path_str = str(catalog_path)
-    proper_motion_timestamp = (
-        proper_motion_date.timestamp() if proper_motion_date else None
-    )
-
-    logger.info("building SENPAI catalog")
-    start_time = time.time()
-
-    # Call cached function (uses simplified WCS for FOV calculation and catalog querying)
-    # Note: Pixel coordinates from the cached function use the linear WCS without SIP
-    # distortion (this keeps the cache key SIP-independent and the query fast). Callers
-    # that need distortion-correct pixel positions should use
-    # query_catalog(..., apply_sip=True), which re-projects the returned stars.
-    star_list, image_metadata = _query_catalog_sstr7_cached(
-        wcs_tuple,
-        catalog_path_str,
-        faint_lim,
-        bright_lim,
-        proper_motion_timestamp,
-        max_stars,
-    )
-
-    logger.info(
-        f"Found {len(star_list)} stars in catalog in {time.time() - start_time:.2f} seconds"
-    )
-
-    # Calculate bounds for validation
-    astropy_wcs = wcs.to_astropy_wcs()
-    fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
-    corners_pix = np.array(
-        [
-            [0, 0],
-            [pixel_width, 0],
-            [pixel_width, pixel_height],
-            [0, pixel_height],
-        ]
-    )
-    corners_world = astropy_wcs.wcs_pix2world(corners_pix, 0)
-    ra_corners = corners_world[:, 0]
-    dec_corners = corners_world[:, 1]
-    safety_margin = 0.2
-    ra_range = np.max(ra_corners) - np.min(ra_corners)
-    dec_range = np.max(dec_corners) - np.min(dec_corners)
-    ra_expansion = ra_range * safety_margin / 2
-    dec_expansion = dec_range * safety_margin / 2
-    min_ra = np.min(ra_corners) - ra_expansion
-    max_ra = np.max(ra_corners) + ra_expansion
-    min_dec = np.min(dec_corners) - dec_expansion
-    max_dec = np.max(dec_corners) + dec_expansion
-
-    # Get raw stars from catalog for validation (need to reconstruct from cached function)
-    # For SSTRC7, we'll validate based on final star_list since raw stars aren't easily accessible
-    # Create a dummy list for validation (validation will still work on star_list)
-    _validate_catalog_coverage(
-        stars_from_catalog=star_list,  # Use star_list as proxy for SSTRC7
-        star_list=star_list,
-        pixel_width=pixel_width,
-        pixel_height=pixel_height,
-        catalog_type="SSTRC7",
-        min_ra=min_ra,
-        max_ra=max_ra,
-        min_dec=min_dec,
-        max_dec=max_dec,
-    )
-
-    return StarListSpace(stars=star_list, image_metadata=image_metadata)
 
 
 def query_catalog_sdss(
@@ -358,10 +298,28 @@ def query_catalog_sdss(
     proper_motion_date: datetime | None = None,
     max_stars: int | None = None,
 ) -> StarListSpace:
+    """Query the SDSS catalog for stars within a WCS field of view.
 
+    The query region is derived from the full WCS solution (image-center pointing,
+    full field of view), and matched stars are projected to image pixel coordinates.
+
+    Args:
+        wcs: WCS solution defining the field of view and orientation.
+        faint_lim: Faintest magnitude to include; stars with magnitude at or above
+            this value are excluded. Defaults to None.
+        bright_lim: Brightest magnitude to include; stars with magnitude at or below
+            this value are excluded. Defaults to None.
+        proper_motion_date: Epoch to propagate proper motion to; if None, proper
+            motion is not applied. Defaults to None.
+        max_stars: Maximum number of stars to return; if set, querying stops once
+            this count is reached. Defaults to None.
+
+    Returns:
+        Matched catalog stars with image positions plus the associated image metadata.
+    """
     astropy_wcs = wcs.to_astropy_wcs()
 
-    fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
+    _fov_width, _fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
     header = astropy_wcs.to_header()
@@ -519,7 +477,9 @@ _GAIA_SKY_CACHE_MAX_STARS = 1_000_000
 
 def _trim_sky_cache() -> None:
     """Evict least-recently-used regions until the total star count fits.
-    Callers move the active region to the end of the list first (LRU touch)."""
+
+    Callers move the active region to the end of the list first (LRU touch).
+    """
     total = sum(len(r["stars"]) for r in _GAIA_SKY_CACHE)
     while len(_GAIA_SKY_CACHE) > 1 and (
         total > _GAIA_SKY_CACHE_MAX_STARS or len(_GAIA_SKY_CACHE) > _GAIA_SKY_CACHE_MAX
@@ -534,18 +494,48 @@ def _trim_sky_cache() -> None:
         )
 
 
-def _box_overlap(a, b) -> bool:
+def _box_overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    """Return True if two (min_ra, max_ra, min_dec, max_dec) boxes overlap.
+
+    Args:
+        a: First box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+        b: Second box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+
+    Returns:
+        True if the boxes share any interior area (edge-only contact is not overlap).
+    """
     return not (b[0] >= a[1] or b[1] <= a[0] or b[2] >= a[3] or b[3] <= a[2])
 
 
-def _box_contains(outer, inner) -> bool:
+def _box_contains(outer: tuple[float, float, float, float], inner: tuple[float, float, float, float]) -> bool:
+    """Return True if ``outer`` fully contains ``inner``.
+
+    Args:
+        outer: Containing box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+        inner: Candidate contained box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+
+    Returns:
+        True if every edge of ``inner`` lies within ``outer`` (inclusive).
+    """
     return (outer[0] <= inner[0] and outer[1] >= inner[1]
             and outer[2] <= inner[2] and outer[3] >= inner[3])
 
 
-def _box_difference_strips(C, U):
-    """Rectangles tiling U \\ C, given U ⊇ C (disjoint; ≤4, typically 1-2 for a
-    shifted box): left/right full-height strips + top/bottom strips over C's RA."""
+def _box_difference_strips(
+    C: tuple[float, float, float, float], U: tuple[float, float, float, float]
+) -> list[tuple[float, float, float, float]]:
+    r"""Rectangles tiling U \ C, given U ⊇ C.
+
+    The strips are disjoint (≤4, typically 1-2 for a shifted box): left/right
+    full-height strips plus top/bottom strips over C's RA extent.
+
+    Args:
+        C: Inner (contained) box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+        U: Outer (containing) box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+
+    Returns:
+        Boxes tiling the region ``U \ C``, each as (min_ra, max_ra, min_dec, max_dec).
+    """
     rmn, rmx, dmn, dmx = U
     crmn, crmx, cdmn, cdmx = C
     eps = 1e-9
@@ -561,7 +551,15 @@ def _box_difference_strips(C, U):
     return strips
 
 
-def _sky_dedup_key(s):
+def _sky_dedup_key(s: dict[str, Any]) -> str | tuple[float, float]:
+    """Return a stable dedup key for a star dict when merging cached regions.
+
+    Args:
+        s: Star dict, optionally carrying a ``source_id``.
+
+    Returns:
+        The ``source_id`` when present, otherwise a rounded (ra, dec) tuple in radians.
+    """
     sid = s.get("source_id")
     return sid if sid is not None else (round(s["ra"], 8), round(s["dec"], 8))
 
@@ -573,11 +571,20 @@ def _query_gaia_sky(
     """Online Gaia query with a growing sky-region cache (see note above).
 
     Only the sky area not already cached is fetched online; the result is the raw
-    star dicts within the requested box. The dicts are never mutated downstream."""
+    star dicts within the requested box. The dicts are never mutated downstream.
+    """
     key_fb = (faint_lim, bright_lim)
     B = (min_ra, max_ra, min_dec, max_dec)
 
-    def _online(box):
+    def _online(box: tuple[float, float, float, float]) -> list[dict[str, Any]]:
+        """Fetch stars for a box from the online TAP service or local mirror.
+
+        Args:
+            box: Query box as (min_ra, max_ra, min_dec, max_dec) in degrees.
+
+        Returns:
+            Raw star dicts within the box from the configured Gaia backend.
+        """
         # Swap online TAP for the local mirror when configured (gaia_local). The
         # sliver cache above still wraps this, so local reads get deduped too.
         sc = get_or_initialize_config().star_catalog
@@ -593,7 +600,15 @@ def _query_gaia_sky(
             faint_lim=faint_lim, bright_lim=bright_lim,
         )
 
-    def _within_B(stars):
+    def _within_B(stars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Trim cached stars to the originally requested box B.
+
+        Args:
+            stars: Candidate star dicts (coordinates in radians) from the cache.
+
+        Returns:
+            The subset of ``stars`` whose ra/dec fall within box B.
+        """
         # Trim to the requested box so callers get exactly what a fresh query of B
         # would return (radians stored on each star).
         lo_ra, hi_ra = np.deg2rad(min_ra), np.deg2rad(max_ra)
@@ -664,7 +679,6 @@ def _query_catalog_gaia_cached(
     max_stars: int | None,
 ) -> tuple[list[dict[str, Any]], ImageMetadata]:
     """Cached Gaia query using a hashable WCS representation."""
-
     # Reconstruct WCS from tuple components
     header = {
         "WCSAXES": 2,
@@ -695,7 +709,7 @@ def _query_catalog_gaia_cached(
         else None
     )
 
-    fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
+    _fov_width, _fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
     header = astropy_wcs.to_header()
@@ -802,7 +816,26 @@ def query_catalog_gaia(
     proper_motion_date: datetime | None = None,
     max_stars: int | None = None,
 ) -> StarListSpace:
+    """Query the Gaia catalog (online or local mirror) for stars in a WCS field of view.
 
+    The backend is selected by configuration: online Gaia TAP or the local Gaia mirror
+    (``star_catalog.type == "gaia_local"``). Matched stars are projected to image pixel
+    coordinates.
+
+    Args:
+        wcs: WCS solution defining the field of view and orientation.
+        faint_lim: Faintest magnitude to include; defaults to the configured
+            ``star_catalog.faint_limit`` when None.
+        bright_lim: Brightest magnitude to include; stars brighter than this are
+            excluded. Defaults to None.
+        proper_motion_date: Epoch to propagate proper motion to; if None, proper
+            motion is not applied. Defaults to None.
+        max_stars: Maximum number of stars to return; if set, querying stops once
+            this count is reached. Defaults to None.
+
+    Returns:
+        Matched catalog stars with image positions plus the associated image metadata.
+    """
     cfg = get_config()
 
     # Apply default faint limit from config if not provided
@@ -913,8 +946,15 @@ def query_catalog_gaia(
     )
 
 
-def examine_catalog():
-    """Examine the configured catalog and return True if valid."""
+def examine_catalog() -> bool:
+    """Examine the configured catalog and return True if valid.
+
+    Dispatches to the backend-specific validator based on ``star_catalog.type``.
+
+    Returns:
+        True if the configured catalog is present and valid, False for an unknown
+        or unsupported type or when the backend validation fails.
+    """
     config = get_or_initialize_config()
     catalog_type = config.star_catalog.type
     catalog_path = config.star_catalog.path
@@ -939,8 +979,17 @@ def examine_catalog():
 
 
 def _examine_gaia_local_catalog(catalog_path: str) -> bool:
-    """Validate the local Gaia mirror: index.json present and every tile it
-    references exists on disk (catches a partial / in-progress download)."""
+    """Validate the local Gaia mirror.
+
+    Checks that index.json is present and that every tile it references exists on disk
+    (catches a partial / in-progress download).
+
+    Args:
+        catalog_path: Path to the local Gaia mirror directory.
+
+    Returns:
+        True if the mirror index and all referenced tiles are present, False otherwise.
+    """
     import json
     import os
 
@@ -972,8 +1021,8 @@ def _examine_gaia_local_catalog(catalog_path: str) -> bool:
 
 def _examine_sstrc7_catalog(catalog_path: str) -> bool:
     """Validate SSTRC7 catalog by checking path and key files."""
-    from senpai.catalog.sstrc7_management import examine_sstrc7_by_path_and_structure
     from senpai.catalog.constants import SSTR7_EXPECTED_FILES
+    from senpai.catalog.sstrc7_management import examine_sstrc7_by_path_and_structure
 
     if not catalog_path:
         logger.error("SSTRC7 catalog path not configured")
@@ -1021,8 +1070,13 @@ def _examine_gaia_catalog() -> bool:
         return False
 
 
-def enforce_catalog():
-    """Enforce catalog validation - raises RuntimeError if catalog is invalid."""
+def enforce_catalog() -> None:
+    """Enforce catalog validation - raises RuntimeError if catalog is invalid.
+
+    Raises:
+        RuntimeError: If the configured catalog is missing or incomplete. For a
+            configured SSTRC7 catalog the message includes the download command.
+    """
     if not examine_catalog():
         config = get_or_initialize_config()
         catalog_type = config.star_catalog.type

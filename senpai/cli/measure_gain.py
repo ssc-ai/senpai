@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure detector gain (e-/ADU) from raw frame pairs via photon transfer.
+r"""Measure detector gain (e-/ADU) from raw frame pairs via photon transfer.
 
 Pairs consecutive same-field exposures (a burst), differences each pair to cancel
 fixed pattern, and fits the lower envelope of difference-variance vs sky level --
@@ -67,7 +67,15 @@ def _read_center(path: str, crop: int) -> np.ndarray | None:
         return None
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the gain-measurement CLI over the given frames.
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv`` when None.
+
+    Returns:
+        Process exit code (0 on success, non-zero on failure).
+    """
     ap = argparse.ArgumentParser(
         description="Measure detector gain (e-/ADU) from raw frame pairs.")
     ap.add_argument("inputs", nargs="+",

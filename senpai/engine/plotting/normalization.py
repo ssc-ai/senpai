@@ -1,3 +1,5 @@
+"""Intensity-normalization stretches (zscale, histogram equalization) for display."""
+
 import matplotlib
 from astropy.visualization import ZScaleInterval
 
@@ -6,8 +8,14 @@ import numpy as np
 
 
 def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
-    """
-    Apply an astronomical zscale stretch.
+    """Apply an astronomical zscale stretch.
+
+    Args:
+        data: Input image pixel values.
+        contrast: ZScale contrast parameter controlling the stretch strength.
+
+    Returns:
+        The zscale-normalized image as a ``float32`` array.
 
     Notes:
         This function is used for *plotting*. Real-world FITS processing often
@@ -46,6 +54,15 @@ def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
 
 
 def histogram_equalization(img_in: np.ndarray, img_dtype: np.dtype = np.uint16) -> np.ndarray:
+    """Apply histogram equalization to spread pixel intensities across the range.
+
+    Args:
+        img_in: Input image pixel values.
+        img_dtype: Integer dtype defining the bit depth of the output histogram.
+
+    Returns:
+        The histogram-equalized image as an array of ``img_dtype``.
+    """
     cast_img = img_in.astype(img_dtype)
 
     # Get bit depth from dtype

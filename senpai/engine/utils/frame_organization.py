@@ -1,3 +1,5 @@
+"""Frame timing and image-set organization helpers driven by FITS headers."""
+
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -12,9 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_date_string(date_str: str) -> arrow.Arrow:
-    """
-    Parse a date string, trying arrow's default formats first,
-    then falling back to MM/DD/YY and MM/DD/YYYY formats.
+    """Parse a date string into an Arrow instant.
+
+    Tries arrow's default parsing first, then falls back to MM/DD/YY and
+    MM/DD/YYYY formats.
+
+    Args:
+        date_str: The date (or datetime) string to parse.
+
+    Returns:
+        The parsed Arrow instant.
     """
     try:
         # First try arrow's default parsing (handles many formats)
@@ -36,9 +45,13 @@ def _parse_date_string(date_str: str) -> arrow.Arrow:
 
 
 def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
-    """
-    Parse a time string and return (hour, minute, second, microsecond) tuple.
-    Returns None if parsing fails.
+    """Parse a time string into its components.
+
+    Args:
+        time_str: The time string to parse.
+
+    Returns:
+        A (hour, minute, second, microsecond) tuple, or None if parsing fails.
     """
     from datetime import datetime
 
@@ -60,13 +73,27 @@ def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
     try:
         arrow_time = arrow.get(time_str)
         return (arrow_time.hour, arrow_time.minute, arrow_time.second, arrow_time.microsecond)
-    except Exception:
+    except Exception:  # noqa: S110  # best-effort time parse; None is returned on failure
         pass
 
     return None
 
 
 def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
+    """Extract the observation time from a FITS header.
+
+    Tries the combined date-time headers first, then falls back to composing a
+    separate date header with a time header.
+
+    Args:
+        header: The FITS header (or dict-like) to read time keywords from.
+
+    Returns:
+        The extracted observation time as a datetime.
+
+    Raises:
+        AttributeError: If no usable date/time header is present.
+    """
     for header_key in DATE_TIME_HEADERS:
         if header_key in header:
             try:
@@ -116,6 +143,15 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
 
 
 def get_imageset_by_filename(data_directory: Path, string_match: str) -> list[str]:
+    """Find FITS files whose filename contains a substring.
+
+    Args:
+        data_directory: Directory searched recursively for ``*.fits`` files.
+        string_match: Substring that must appear in the filename.
+
+    Returns:
+        Sorted paths (as strings) of the matching FITS files.
+    """
     # Get all .fits files in directory that match the regex pattern
     fits_files = [str(f) for f in data_directory.glob("**/*.fits") if string_match in f.name]
 
@@ -126,6 +162,14 @@ def get_imageset_by_filename(data_directory: Path, string_match: str) -> list[st
 
 
 def get_all_images_in_directory(data_directory: Path) -> list[str]:
+    """Find every FITS file under a directory.
+
+    Args:
+        data_directory: Directory searched recursively for ``*.fits`` files.
+
+    Returns:
+        Sorted paths (as strings) of all FITS files found.
+    """
     # Get all .fits files in directory and subdirectories
     fits_files = [str(f) for f in data_directory.glob("**/*.fits")]
 
@@ -135,7 +179,19 @@ def get_all_images_in_directory(data_directory: Path) -> list[str]:
     return sorted(fits_files)
 
 
-def extract_id_from_header(file: Path, header_key: str) -> str:
+def extract_id_from_header(file: Path, header_key: str) -> str | None:
+    """Extract an id value from a FITS file's primary header.
+
+    For the ``ORCHCOMM`` key the embedded image-set id is parsed out of the
+    ``&IMAGESETID@...`` structure; other keys are returned directly.
+
+    Args:
+        file: Path to the FITS file to read.
+        header_key: The header keyword to extract.
+
+    Returns:
+        The extracted value, or None if the key is not present.
+    """
     with fits.open(file) as hdul:
         header = hdul[0].header
 
@@ -151,6 +207,19 @@ def extract_id_from_header(file: Path, header_key: str) -> str:
 
 
 def header_key_matches(file: Path, header_key: str, value: str) -> bool:
+    """Check whether a FITS file's header key matches a value.
+
+    For the ``ORCHCOMM`` key the comparison is a substring match against the
+    embedded image-set id; other keys are compared for equality.
+
+    Args:
+        file: Path to the FITS file to read.
+        header_key: The header keyword to compare.
+        value: The value to match against.
+
+    Returns:
+        True if the key is present and matches, otherwise False.
+    """
     with fits.open(file) as hdul:
         header = hdul[0].header
 
@@ -164,11 +233,25 @@ def header_key_matches(file: Path, header_key: str, value: str) -> bool:
     return header[header_key] == value
 
 
-def get_imageset_by_id(data_directory: Path, id: str, header_id_key: str) -> list[str]:
+def get_imageset_by_id(data_directory: Path, imageset_id: str, header_id_key: str) -> list[str]:
+    """Find FITS files whose header id key matches a value.
+
+    Args:
+        data_directory: Directory searched recursively for ``*.fits`` files.
+        imageset_id: The image-set id value to match.
+        header_id_key: The header keyword that carries the id.
+
+    Returns:
+        Sorted paths (as strings) of the matching FITS files.
+    """
     # get all fits files in a directory that have the same value for the header_id_key
-    fits_files = [str(f) for f in data_directory.glob("**/*.fits") if header_key_matches(f, header_id_key, id)]
+    fits_files = [
+        str(f)
+        for f in data_directory.glob("**/*.fits")
+        if header_key_matches(f, header_id_key, imageset_id)
+    ]
 
     if not fits_files:
-        logger.warning(f"No .fits files found with ID {id} in {data_directory}")
+        logger.warning(f"No .fits files found with ID {imageset_id} in {data_directory}")
 
     return sorted(fits_files)

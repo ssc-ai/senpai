@@ -1,45 +1,37 @@
+"""Image preprocessing: calibration, background removal, scaling and streak math."""
+
 import logging
 from pathlib import Path
-from typing import Optional, Union
 
 import numpy as np
-
-logger = logging.getLogger(__name__)
 from astropy.io import fits
 from astropy.stats import SigmaClip
 from photutils.background import Background2D
 from scipy.ndimage import gaussian_filter, zoom
 
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
-from senpai.engine.models.metadata import FWHMMetadata
+from senpai.engine.models.metadata import FWHMMetadata, StreakMetadata
 from senpai.engine.models.starfield import StarField
 from senpai.engine.utils.darks import apply_dark_subtraction as _apply_dark_subtraction
 from senpai.engine.utils.flats import apply_flat_field as _apply_flat_field
 
+logger = logging.getLogger(__name__)
+
 
 def handle_negative_values(image: ProcessedFitsImage) -> ProcessedFitsImage:
-    """
-    Handle negative values in the image by setting them to the maximum value
-    based on the BITPIX header.
+    """Replace negative pixel values with the BITPIX-derived maximum value.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Image to process
+    Args:
+        image: Image to process.
 
-    Returns
-    -------
-    ProcessedFitsImage
-        Image with negative values replaced
+    Returns:
+        The image with negative values replaced.
     """
     # Get BITPIX from header
     bitpix = image.header.get("BITPIX", 16)  # Default to 16-bit if not found
 
-    # Calculate max value for signed integers
-    if bitpix > 0:
-        max_value = 2 ** (bitpix - 1) - 1  # For signed integers
-    else:
-        max_value = 1e10  # For floating point
+    # Signed integers use the BITPIX-derived max; floating point uses a large sentinel.
+    max_value = 2 ** (bitpix - 1) - 1 if bitpix > 0 else 1e10
 
     # Find negative values
     negative_mask = image.data < 0
@@ -89,17 +81,28 @@ def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
 
 
 def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates: bool = False) -> ProcessedFitsImage:
-    """Remove the median value of each column and row from the image"""
+    """Remove the median value of each column and row from the image.
+
+    Also captures the pre-subtraction sky level (ADU) and a shot-noise gain
+    estimate into the step metadata for downstream calibration.
+
+    Args:
+        image: Image whose column/row medians are subtracted in place.
+        store_intermediates: Whether to record the subtracted column/row
+            medians (and the original frame) on the image.
+
+    Returns:
+        The image with column and row medians subtracted.
+    """
     from senpai.engine.models.images import ProcessingMetadata
 
     array = image.data
 
-    # Convert to a signed float so the subtraction can go negative. float32
-    # on purpose: the whole downstream pipeline (detection convolutions,
-    # statistics, photometry) inherits this dtype, and float64 doubles every
-    # one of those costs for nothing — the data are ADU-scale (<~1e5), where
-    # float32's 24-bit mantissa resolves ~0.005 ADU, far below read noise.
-    array = array.astype(np.float32)
+    # Convert to a signed float so the subtraction can go negative. float64:
+    # the detection/WCS chain downstream was validated end-to-end at double
+    # precision; the float32 variant (half the memory/compute) measurably
+    # perturbs marginal detections, so precision wins on this shared path.
+    array = array.astype(np.float64)
 
     # Capture the sky level (flat-fielded frame median, ADU) BEFORE we subtract
     # it away — this is the physical sky background (moonglow/twilight), which
@@ -156,6 +159,25 @@ def remove_background(
     maxiters: int = 10,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
+    """Measure and subtract the 2D background from a ProcessedFitsImage.
+
+    The measured background is subtracted and the result is floored to zero at
+    its minimum.
+
+    Args:
+        image: Image to background-subtract in place.
+        box_size: Size of the box in pixels used to estimate the background.
+        filter_size: Size of the median filter applied to the background mesh.
+        exclude_percentile: Percentile to exclude when estimating the
+            background.
+        sigma: Sigma-clipping parameter for identifying outliers.
+        maxiters: Maximum number of sigma-clipping iterations.
+        store_intermediates: Whether to record the background frame (and the
+            original frame) on the image.
+
+    Returns:
+        The background-subtracted image.
+    """
     from senpai.engine.models.images import ProcessingMetadata
 
     background = measure_background(image.data, box_size, filter_size, exclude_percentile, sigma, maxiters)
@@ -181,9 +203,7 @@ def remove_background(
     )
     image.processing_history.append(bg_metadata)
 
-    # Background2D returns float64; don't let the subtraction silently
-    # upcast the frame (the pipeline runs float32).
-    image.data = (image.data - background).astype(np.float32, copy=False)
+    image.data = image.data - background
     image.data -= np.min(image.data)
 
     return image
@@ -197,28 +217,23 @@ def measure_background(
     sigma: float = 3.0,
     maxiters: int = 10,
 ) -> np.ndarray:
-    """
-    Subtract the 2D background from an image using photutils Background2D.
+    """Measure the 2D background of an image using photutils Background2D.
 
-    Parameters
-    ----------
-    image : np.ndarray
-        Input image array
-    box_size : int
-        Size of the box in pixels used to calculate the background
-    filter_size : int
-        Size of the median filter to apply to the background mesh
-    exclude_percentile : float
-        Percentile to exclude when calculating the background
-    sigma : float
-        Sigma clipping parameter for identifying outliers
-    maxiters : int
-        Maximum number of sigma-clipping iterations
+    Falls back to progressively more permissive parameters, and finally to a
+    global median, if Background2D fails.
 
-    Returns
-    -------
-    np.ndarray
-        Background-subtracted image
+    Args:
+        image: Input image array.
+        box_size: Size of the box in pixels used to calculate the background.
+        filter_size: Size of the median filter to apply to the background mesh.
+        exclude_percentile: Percentile to exclude when calculating the
+            background.
+        sigma: Sigma-clipping parameter for identifying outliers.
+        maxiters: Maximum number of sigma-clipping iterations.
+
+    Returns:
+        The estimated background image (or a scalar global median if all
+        Background2D attempts fail).
     """
     try:
         # Create a SigmaClip object with the specified parameters
@@ -260,114 +275,85 @@ def background_subtract(
     sigma: float = 3.0,
     maxiters: int = 10,
 ) -> np.ndarray:
+    """Subtract the 2D background from an image using photutils Background2D.
+
+    Args:
+        image: Input image array.
+        box_size: Size of the box in pixels used to calculate the background.
+        filter_size: Size of the median filter to apply to the background mesh.
+        exclude_percentile: Percentile to exclude when calculating the
+            background.
+        sigma: Sigma-clipping parameter for identifying outliers.
+        maxiters: Maximum number of sigma-clipping iterations.
+
+    Returns:
+        The background-subtracted image.
     """
-    Subtract the 2D background from an image using photutils Background2D.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Input image array
-    box_size : int
-        Size of the box in pixels used to calculate the background
-    filter_size : int
-        Size of the median filter to apply to the background mesh
-    exclude_percentile : float
-        Percentile to exclude when calculating the background
-    sigma : float
-        Sigma clipping parameter for identifying outliers
-    maxiters : int
-        Maximum number of sigma-clipping iterations
-
-    Returns
-    -------
-    np.ndarray
-        Background-subtracted image
-    """
-
     background = measure_background(image, box_size, filter_size, exclude_percentile, sigma, maxiters)
     return image - background
 
 
 def apply_flat_field(
     image: ProcessedFitsImage,
-    master_flat: Union[str, Path, np.ndarray],
+    master_flat: str | Path | np.ndarray,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Apply flat field correction to a ProcessedFitsImage.
+    """Apply flat field correction to a ProcessedFitsImage.
 
     This is a wrapper around the flat field utilities that integrates with
     the preprocessing workflow.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Image to flat field correct
-    master_flat : str, Path, or np.ndarray
-        Master flat field. If string/Path, will load from file
-    store_intermediates : bool
-        Whether to store intermediate correction frames
+    Args:
+        image: Image to flat field correct.
+        master_flat: Master flat field. If a string/Path, it is loaded from
+            file.
+        store_intermediates: Whether to store intermediate correction frames.
 
-    Returns
-    -------
-    ProcessedFitsImage
-        Flat field corrected image
+    Returns:
+        The flat-field-corrected image.
     """
     return _apply_flat_field(image, master_flat, store_intermediates)
 
 
 def apply_dark_subtraction(
     image: ProcessedFitsImage,
-    master_dark: Union[str, Path, np.ndarray],
-    dark_exposure_time: Optional[float] = None,
+    master_dark: str | Path | np.ndarray,
+    dark_exposure_time: float | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Apply dark subtraction to a ProcessedFitsImage.
+    """Apply dark subtraction to a ProcessedFitsImage.
 
     This is a wrapper around the dark subtraction utilities that integrates with
     the preprocessing workflow.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Image to dark subtract
-    master_dark : str, Path, or np.ndarray
-        Master dark frame. If string/Path, will load from file
-    dark_exposure_time : float, optional
-        Exposure time of the master dark. If None, will try to read from header
-    store_intermediates : bool
-        Whether to store intermediate correction frames
+    Args:
+        image: Image to dark subtract.
+        master_dark: Master dark frame. If a string/Path, it is loaded from
+            file.
+        dark_exposure_time: Exposure time of the master dark. If None, it is
+            read from the header.
+        store_intermediates: Whether to store intermediate correction frames.
 
-    Returns
-    -------
-    ProcessedFitsImage
-        Dark-subtracted image
+    Returns:
+        The dark-subtracted image.
     """
     return _apply_dark_subtraction(image, master_dark, dark_exposure_time, store_intermediates)
 
 
 def auto_apply_calibrations(
     image: ProcessedFitsImage,
-    config: Optional[object] = None,
+    config: object | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Automatically apply calibration frames (flats, darks) based on configuration.
+    """Automatically apply calibration frames (flats, darks) per configuration.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Image to calibrate
-    config : AppConfig, optional
-        Configuration object. If None, will try to get from global config
-    store_intermediates : bool
-        Whether to store intermediate correction frames
+    Args:
+        image: Image to calibrate.
+        config: Configuration object. If None, the global config is used.
+        store_intermediates: Whether to store intermediate correction frames.
 
-    Returns
-    -------
-    ProcessedFitsImage
-        Calibrated image
+    Returns:
+        The calibrated image (unchanged if no configuration is available).
     """
     if config is None:
         try:
@@ -388,7 +374,8 @@ def auto_apply_calibrations(
     cal_config = config.calibrations
 
     # Helper function to check if a step has already been applied
-    def step_already_applied(step_type):
+    def step_already_applied(step_type: ProcessingStep) -> bool:
+        """Return True if a processing step of this type is in the history."""
         return any(step.step_type == step_type for step in image.processing_history)
 
     # Apply darks first if configured
@@ -455,26 +442,22 @@ def auto_apply_calibrations(
 
 
 def _find_master_calibration(
-    image: ProcessedFitsImage, calibration_dir: Optional[str], matching_headers: list[str], calibration_type: str
-) -> Optional[Path]:
-    """
-    Find the appropriate master calibration file for an image by matching FITS headers.
+    image: ProcessedFitsImage, calibration_dir: str | None, matching_headers: list[str], calibration_type: str
+) -> Path | None:
+    """Find the master calibration file for an image by matching FITS headers.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Image to find calibration for
-    calibration_dir : str, optional
-        Directory containing master calibration files
-    matching_headers : list[str]
-        FITS header keywords that must match between science and calibration frames
-    calibration_type : str
-        Type of calibration ("flat" or "dark")
+    When multiple calibrations match, the one taken closest in time to the
+    science frame is preferred.
 
-    Returns
-    -------
-    Path or None
-        Path to matching master calibration file, or None if not found
+    Args:
+        image: Image to find calibration for.
+        calibration_dir: Directory containing master calibration files.
+        matching_headers: FITS header keywords that must match between science
+            and calibration frames.
+        calibration_type: Type of calibration ("flat" or "dark").
+
+    Returns:
+        Path to the matching master calibration file, or None if not found.
     """
     if not calibration_dir:
         return None
@@ -531,7 +514,7 @@ def _find_master_calibration(
         target_time = None
 
     # Collect every calibration file whose headers match
-    candidates: list[tuple[Path, Optional[float], dict]] = []
+    candidates: list[tuple[Path, float | None, dict]] = []
     for calib_file in calib_files:
         try:
             with fits.open(calib_file) as hdul:
@@ -614,33 +597,26 @@ def _find_master_calibration(
                             value = value.lower().strip()
                         calib_metadata[header_key] = value
                 print(f"  {calib_file.name}: {calib_metadata}")
-        except:
+        except Exception:
             print(f"  {calib_file.name}: <could not read headers>")
 
     return None
 
 
 def _find_best_dark_calibration(
-    image: ProcessedFitsImage, dark_dir: Optional[str], matching_headers: list[str], max_exposure_ratio: float
-) -> Optional[Path]:
-    """
-    Find the best dark calibration file by matching headers and finding closest exposure time.
+    image: ProcessedFitsImage, dark_dir: str | None, matching_headers: list[str], max_exposure_ratio: float
+) -> Path | None:
+    """Find the best dark calibration by matching headers and exposure time.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Image to find dark for
-    dark_dir : str, optional
-        Directory containing master dark files
-    matching_headers : list[str]
-        FITS header keywords that must match (excluding exposure time)
-    max_exposure_ratio : float
-        Maximum ratio between image and dark exposure times
+    Args:
+        image: Image to find a dark for.
+        dark_dir: Directory containing master dark files.
+        matching_headers: FITS header keywords that must match (excluding
+            exposure time).
+        max_exposure_ratio: Maximum ratio between image and dark exposure times.
 
-    Returns
-    -------
-    Path or None
-        Path to best matching master dark file, or None if not found
+    Returns:
+        Path to the best-matching master dark file, or None if not found.
     """
     if not dark_dir:
         return None
@@ -768,17 +744,29 @@ def _find_best_dark_calibration(
 
 def preprocess_image(
     image: ProcessedFitsImage,
-    config: Optional[object] = None,
+    config: object | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Complete preprocessing pipeline that applies all configured steps.
+    """Run the full preprocessing pipeline, applying all configured steps.
+
+    Applies (as configured) dark subtraction, flat fielding, row/column median
+    removal and background subtraction. Falls back to a sensible default set of
+    steps when no configuration is available.
+
+    Args:
+        image: Image to preprocess in place.
+        config: Configuration object. If None, the global config is used.
+        store_intermediates: Whether to store intermediate correction frames.
+
+    Returns:
+        The preprocessed image.
     """
     import numpy as np
 
     fname = Path(image.file_path).name if image.file_path else "?"
 
-    def log_stats(stage, arr):
+    def log_stats(stage: str, arr: np.ndarray) -> None:
+        """Log min/max/median/mean of an array at a named pipeline stage."""
         # Median on a stride-8 subsample: this is a diagnostic log line, and
         # four full-frame medians per frame cost ~1 s each on 66 Mpix.
         logger.info(
@@ -824,7 +812,8 @@ def preprocess_image(
     # Handle negative values once at the beginning
     image = handle_negative_values(image)
 
-    def step_already_applied(step_type):
+    def step_already_applied(step_type: ProcessingStep) -> bool:
+        """Return True if a processing step of this type is in the history."""
         return any(step.step_type == step_type for step in image.processing_history)
 
     # Step 1: Apply darks first (if configured)
@@ -919,22 +908,19 @@ def preprocess_image(
 def collect_detailed_fwhm_stats(
     starfield: StarField, target_fwhm: float = 3.0, oversample_threshold: float = 4.0
 ) -> FWHMMetadata:
-    """
-    Collect comprehensive FWHM statistics from star detections.
+    """Collect comprehensive FWHM statistics from star detections.
 
-    Parameters
-    ----------
-    starfield : StarField
-        Starfield with detected stars
-    target_fwhm : float
-        Target FWHM for scaling recommendations
-    oversample_threshold : float
-        FWHM threshold above which image is considered oversampled
+    Args:
+        starfield: Starfield with detected stars.
+        target_fwhm: Target FWHM for scaling recommendations.
+        oversample_threshold: FWHM threshold above which the image is considered
+            oversampled.
 
-    Returns
-    -------
-    FWHMMetadata
-        Comprehensive FWHM statistics
+    Returns:
+        Comprehensive FWHM statistics.
+
+    Raises:
+        ValueError: If no FWHM measurements are found in the starfield.
     """
     # Get FWHM measurements from different sources
     fwhm_values = []
@@ -1028,20 +1014,14 @@ def collect_detailed_fwhm_stats(
 
 
 def scale_image_block_median(image: ProcessedFitsImage, scale_factor: float) -> ProcessedFitsImage:
-    """
-    Scale image using block median method (fast + removes hot pixels).
+    """Scale an image using the block-median method (fast, removes hot pixels).
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Input image to scale
-    scale_factor : float
-        Factor to scale by (>1 means downsample)
+    Args:
+        image: Input image to scale.
+        scale_factor: Factor to scale by (>1 means downsample).
 
-    Returns
-    -------
-    ProcessedFitsImage
-        Scaled image
+    Returns:
+        The scaled image as a new ProcessedFitsImage.
     """
     from senpai.engine.models.images import ProcessingMetadata
 
@@ -1105,27 +1085,20 @@ def scale_image_block_median(image: ProcessedFitsImage, scale_factor: float) -> 
 
 
 def scale_image_blur_decimate(image: ProcessedFitsImage, scale_factor: float) -> ProcessedFitsImage:
-    """
-    Scale image using Gaussian blur + decimation (better photometry).
+    """Scale an image using Gaussian blur + decimation (better photometry).
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Input image to scale
-    scale_factor : float
-        Factor to scale by (>1 means downsample)
+    Args:
+        image: Input image to scale.
+        scale_factor: Factor to scale by (>1 means downsample).
 
-    Returns
-    -------
-    ProcessedFitsImage
-        Scaled image
+    Returns:
+        The scaled image as a new ProcessedFitsImage.
     """
     from senpai.engine.models.images import ProcessingMetadata
 
     # Calculate target dimensions first
     target_height = int(image.data.shape[0] / scale_factor)
     target_width = int(image.data.shape[1] / scale_factor)
-    output_shape = (target_height, target_width)
 
     # Apply Gaussian blur to avoid aliasing
     # Sigma should be ~scale_factor/2 to prevent aliasing
@@ -1171,26 +1144,22 @@ def scale_image_to_target_fwhm(
     method: str = "block_median",
     oversample_threshold: float = 4.0,
 ) -> tuple[ProcessedFitsImage, float]:
-    """
-    Scale image to achieve target FWHM using specified method.
+    """Scale an image to achieve a target FWHM using the specified method.
 
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Input image to scale
-    fwhm_stats : FWHMMetadata
-        FWHM statistics for the image
-    target_fwhm : float
-        Target FWHM in pixels
-    method : str
-        Scaling method: "block_median" or "blur_decimate"
-    oversample_threshold : float
-        Only scale if median FWHM > this threshold
+    Args:
+        image: Input image to scale.
+        fwhm_stats: FWHM statistics for the image.
+        target_fwhm: Target FWHM in pixels.
+        method: Scaling method: "block_median" or "blur_decimate".
+        oversample_threshold: Only scale if the median FWHM exceeds this
+            threshold.
 
-    Returns
-    -------
-    tuple[ProcessedFitsImage, float]
-        (scaled_image, scale_factor_used)
+    Returns:
+        A ``(scaled_image, scale_factor_used)`` tuple; the scale factor is 1.0
+        when no scaling was needed.
+
+    Raises:
+        ValueError: If ``method`` is not a recognized scaling method.
     """
     if fwhm_stats.median_fwhm <= oversample_threshold:
         print(f"FWHM {fwhm_stats.median_fwhm:.1f} <= {oversample_threshold}, no scaling needed")
@@ -1212,20 +1181,14 @@ def scale_image_to_target_fwhm(
 
 
 def scale_starfield_coordinates(starfield: StarField, scale_factor: float) -> StarField:
-    """
-    Update starfield coordinates after image scaling.
+    """Update starfield coordinates after image scaling.
 
-    Parameters
-    ----------
-    starfield : StarField
-        Starfield to update
-    scale_factor : float
-        Scale factor that was applied to the image
+    Args:
+        starfield: Starfield to update in place.
+        scale_factor: Scale factor that was applied to the image.
 
-    Returns
-    -------
-    StarField
-        Updated starfield with scaled coordinates
+    Returns:
+        The updated starfield with scaled coordinates.
     """
     # Scale detection coordinates
     for star in starfield.detections:
@@ -1282,24 +1245,19 @@ def scale_starfield_coordinates(starfield: StarField, scale_factor: float) -> St
 def unscale_starfield_coordinates(
     starfield: StarField, scale_factor: float, scaling_method: str = "block_median"
 ) -> StarField:
-    """
-    Unscale starfield coordinates back to original image size.
+    """Unscale starfield coordinates back to the original image size.
 
-    This is the reverse of scale_starfield_coordinates, accounting for the specific scaling method used.
+    This is the reverse of :func:`scale_starfield_coordinates`, accounting for
+    the specific scaling method used.
 
-    Parameters
-    ----------
-    starfield : StarField
-        Starfield to unscale
-    scale_factor : float
-        Scale factor that was applied to the image
-    scaling_method : str
-        Scaling method that was used ("block_median" or "simple_integer")
+    Args:
+        starfield: Starfield to unscale in place.
+        scale_factor: Scale factor that was applied to the image.
+        scaling_method: Scaling method that was used ("block_median" or
+            "simple_integer").
 
-    Returns
-    -------
-    StarField
-        Updated starfield with unscaled coordinates
+    Returns:
+        The updated starfield with unscaled coordinates.
     """
     if scale_factor == 1.0:
         return starfield
@@ -1364,7 +1322,8 @@ def unscale_starfield_coordinates(
         import warnings
 
         warnings.warn(
-            "Block median unscaling may not be exact due to trimming. Consider using simple_integer scaling for precise coordinate mapping."
+            "Block median unscaling may not be exact due to trimming. Consider using simple_integer scaling for precise coordinate mapping.",
+            stacklevel=2,
         )
 
         # Use the same logic as simple_integer for now
@@ -1412,23 +1371,19 @@ def unscale_starfield_coordinates(
     return starfield
 
 
-def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "block_median"):
-    """
-    Unscale streak metadata back to original image size.
+def unscale_streak_metadata(
+    streak: StreakMetadata | None, scale_factor: float, scaling_method: str = "block_median"
+) -> StreakMetadata | None:
+    """Unscale streak metadata back to the original image size.
 
-    Parameters
-    ----------
-    streak : StreakMetadata
-        Streak metadata to unscale
-    scale_factor : float
-        Scale factor that was applied to the image
-    scaling_method : str
-        Scaling method that was used
+    Args:
+        streak: Streak metadata to unscale (returned unchanged if None).
+        scale_factor: Scale factor that was applied to the image.
+        scaling_method: Scaling method that was used.
 
-    Returns
-    -------
-    StreakMetadata
-        Updated streak metadata with unscaled values
+    Returns:
+        A deep-copied streak with unscaled values, or the input unchanged when
+        it is None or ``scale_factor`` is 1.0.
     """
     if streak is None or scale_factor == 1.0:
         return streak
@@ -1447,49 +1402,22 @@ def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "
 
 
 def apply_fwhm_optimization(
-    image: ProcessedFitsImage, starfield: StarField, config: Optional[object] = None
+    image: ProcessedFitsImage, starfield: StarField, config: object | None = None
 ) -> tuple[ProcessedFitsImage, StarField]:
-    """
-    Apply FWHM-based optimization after WCS fitting.
+    """Apply FWHM-based optimization after WCS fitting.
 
-    This function:
-    1. Collects detailed FWHM statistics
-    2. Optionally scales the image to optimize FWHM
-    3. Updates starfield coordinates accordingly
+    This function collects detailed FWHM statistics, optionally scales the image
+    to optimize the FWHM, and updates starfield coordinates accordingly.
 
-    Usage Example:
-        # After WCS fitting in the main pipeline:
-        if sidereal_frame.starfield and sidereal_frame.starfield.fit:
-            # Apply FWHM optimization
-            optimized_image, updated_starfield = apply_fwhm_optimization(
-                sidereal_frame.frame,
-                sidereal_frame.starfield,
-                config
-            )
+    Args:
+        image: Processed image with starfield.
+        starfield: Starfield with WCS solution and detections.
+        config: Configuration object. If None, the global config is used.
 
-            # Update frame with optimized data
-            sidereal_frame.frame = optimized_image
-            sidereal_frame.starfield = updated_starfield
-
-            # Log scaling results
-            if updated_starfield.scale_factor and updated_starfield.scale_factor > 1.0:
-                logger.info(f"Image scaled by factor {updated_starfield.scale_factor:.2f} "
-                           f"(FWHM: {updated_starfield.fwhm_stats.median_fwhm:.1f} → "
-                           f"{updated_starfield.fwhm_stats.median_fwhm / updated_starfield.scale_factor:.1f} pixels)")
-
-    Parameters
-    ----------
-    image : ProcessedFitsImage
-        Processed image with starfield
-    starfield : StarField
-        Starfield with WCS solution and detections
-    config : AppConfig, optional
-        Configuration object
-
-    Returns
-    -------
-    tuple[ProcessedFitsImage, StarField]
-        (optimized_image, updated_starfield)
+    Returns:
+        An ``(optimized_image, updated_starfield)`` tuple; the inputs are
+        returned unchanged when scaling is disabled, unavailable, or
+        unnecessary.
     """
     if config is None:
         try:

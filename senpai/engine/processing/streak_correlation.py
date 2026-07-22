@@ -10,17 +10,32 @@ Given a SenpaiRun with multiple sidereal frames, this module:
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.core.config import get_config
-from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
+from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun, SiderealFrame
+
+if TYPE_CHECKING:
+    from senpai.engine.photometry.color_terms import MultiBandCalibration
 
 logger = logging.getLogger(__name__)
 
 
-def _deserialize_multiband(raw):
-    """Deserialize multiband_calibration from dict (photometry_summary) to MultiBandCalibration."""
+def _deserialize_multiband(
+    raw: "dict | MultiBandCalibration | None",
+) -> "MultiBandCalibration | None":
+    """Deserialize multiband_calibration from dict (photometry_summary) to MultiBandCalibration.
+
+    Args:
+        raw: The stored multiband calibration, either a plain dict from the
+            photometry summary, an existing ``MultiBandCalibration``, or ``None``.
+
+    Returns:
+        The parsed ``MultiBandCalibration``, the value unchanged when it is
+        already one, or ``None`` when absent or not parseable.
+    """
     if raw is None:
         return None
     if isinstance(raw, dict):
@@ -478,8 +493,16 @@ def correlate_streaks_across_frames(senpai_run: SenpaiRun) -> list[CorrelatedStr
     return correlated
 
 
-def _single_frame_streaks(frames_with_streaks) -> list[CorrelatedStreak]:
-    """Wrap single-frame streaks as unconfirmed CorrelatedStreak entries."""
+def _single_frame_streaks(frames_with_streaks: list[SiderealFrame]) -> list[CorrelatedStreak]:
+    """Wrap single-frame streaks as unconfirmed CorrelatedStreak entries.
+
+    Args:
+        frames_with_streaks: Sidereal frames that carry streak candidates.
+
+    Returns:
+        One unconfirmed :class:`CorrelatedStreak` per streak candidate across
+        the given frames.
+    """
     result = []
     for frame in frames_with_streaks:
         for sc in frame.streak_candidates:

@@ -8,12 +8,18 @@ settles it: is there actually star flux in the image at the positions the
 WCS predicts for the brightest catalog stars?
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.core.config import get_config
 from senpai.engine.models.astrometry import WCSQualityMetrics
+
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 
 logger = logging.getLogger(__name__)
 
@@ -94,13 +100,13 @@ def flux_significance_test(
     ctrl = _box_sums(integral, cx, pos[:, 1], box_radius)
 
     return {
-        "n_tested": int(len(pos)),
+        "n_tested": len(pos),
         "frac_significant": float(np.mean(pred > threshold)),
         "control_frac": float(np.mean(ctrl > threshold)),
     }
 
 
-def _validation_box_radius(frame) -> int:
+def _validation_box_radius(frame: SiderealFrame | RateTrackFrame) -> int:
     """Box radius matched to how a star appears in this frame.
 
     For rate-track frames the box is matched to the streak *width*, not its
@@ -121,7 +127,9 @@ def _validation_box_radius(frame) -> int:
     return int(np.clip(3 * fwhm, 6, 15))
 
 
-def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetrics | None:
+def validate_frame_wcs(
+    frame: SiderealFrame | RateTrackFrame, refit_stats: dict | None = None
+) -> WCSQualityMetrics | None:
     """Run absolute WCS validation on a frame and return the quality metrics.
 
     ``refit_stats`` (from :func:`fit_and_validate_wcs`) is folded into the

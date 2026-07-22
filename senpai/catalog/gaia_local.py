@@ -36,7 +36,8 @@ def query_by_ra_dec_bounds(
 
     Tile selection and reading are delegated to astroeasy's mirror reader
     (astroeasy.catalog.mirror); this wrapper applies senpai's defaults and
-    builds senpai's star dicts (see module docstring)."""
+    builds senpai's star dicts (see module docstring).
+    """
     if faint_lim is None:
         faint_lim = 20.0
     if bright_lim is None:
@@ -52,11 +53,26 @@ def query_by_ra_dec_bounds(
     return [_to_star(r, primary_filter, faint_lim) for r in a]
 
 
-def _to_star(row, primary_filter: str, faint_lim: float) -> dict[str, Any]:
-    """Build the same star dict as gaia.query_by_ra_dec_bounds (radians, synthetic
-    Johnson_V / Sloan_r from BP-RP, proper motion in rad/s)."""
+def _to_star(row: np.void, primary_filter: str, faint_lim: float) -> dict[str, Any]:
+    """Build the same star dict as gaia.query_by_ra_dec_bounds.
+
+    Coordinates are converted to radians, synthetic Johnson_V / Sloan_r are derived
+    from BP-RP, and proper motion is expressed in rad/s.
+
+    Args:
+        row: One record of the mirror's ``MIRROR_DTYPE`` structured array (RA/Dec in
+            degrees), as returned by ``query_mirror_box``.
+        primary_filter: Gaia band to use as the primary magnitude ('G', 'BP', 'RP').
+        faint_lim: Fallback magnitude assigned when no finite band magnitude is
+            available for the star.
+
+    Returns:
+        Star dict matching ``gaia.query_by_ra_dec_bounds`` (ra/dec in radians, mv,
+        magnitudes, catalog, source_id, proper motion, parallax).
+    """
     from senpai.catalog.gaia_transforms import (
-        gaia_bp_rp_to_johnson_v, gaia_bp_rp_to_sloan_r,
+        gaia_bp_rp_to_johnson_v,
+        gaia_bp_rp_to_sloan_r,
     )
 
     g, bp, rp = float(row["g"]), float(row["bp"]), float(row["rp"])

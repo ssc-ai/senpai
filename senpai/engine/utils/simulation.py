@@ -1,3 +1,5 @@
+"""Synthetic frame generation helpers (Gaussian PSF rendering and star models)."""
+
 import logging
 
 import numpy as np
@@ -10,6 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 def add_gaussian(source: dict, image: np.ndarray) -> None:
+    """Render a 2D Gaussian source and add it into an image in place.
+
+    Args:
+        source: Gaussian parameters with keys ``x_mean``, ``y_mean``,
+            ``x_stddev``, ``y_stddev`` and ``amplitude``.
+        image: The 2D image array to add the rendered Gaussian into; modified
+            in place within a bounding box of +/- 6 sigma around the center.
+    """
     x_mean, y_mean = source["x_mean"], source["y_mean"]
     x_stddev, y_stddev = source["x_stddev"], source["y_stddev"]
     amplitude = source["amplitude"]
@@ -34,17 +44,16 @@ def simulated_sidereal_frame(
     max_stars: int = 20,
     constant_signal: bool = False,
 ) -> np.ndarray:
-    """
-    Generate a simulated sidereal frame from a StarField object.
+    """Generate a simulated sidereal frame from a StarField object.
 
     Args:
-        starfield: StarField object containing star information
-        stddev: Standard deviation for the Gaussian PSF
-        max_stars: Maximum number of stars to simulate
-        constant_signal: Whether to use constant flux for all stars
+        starfield: StarField object containing star information.
+        stddev: Standard deviation for the Gaussian PSF.
+        max_stars: Maximum number of stars to simulate.
+        constant_signal: Whether to use constant flux for all stars.
 
     Returns:
-        Simulated image as a numpy array
+        Simulated image as a numpy array.
     """
     logger.info("Generating simulated sidereal frame")
 
@@ -87,12 +96,8 @@ def simulated_sidereal_frame(
         if x0 < -margin or x0 > width + margin or y0 < -margin or y0 > height + margin:
             continue
 
-        # Scale intensity based on magnitude or use constant signal
-        if constant_signal:
-            intensity = 1000.0
-        else:
-            # Convert magnitude to intensity (arbitrary scale)
-            intensity = 10 ** (0.4 * (20 - star.magnitude))
+        # Scale intensity based on magnitude (arbitrary scale) or use constant signal
+        intensity = 1000.0 if constant_signal else 10 ** (0.4 * (20 - star.magnitude))
 
         # Create source dictionary for add_gaussian
         source = {

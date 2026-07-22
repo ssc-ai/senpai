@@ -4,6 +4,8 @@ import logging
 
 import numpy as np
 
+from senpai.core.config import AppConfig
+from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import FWHMMetadata
 
 logger = logging.getLogger(__name__)
@@ -88,14 +90,13 @@ def _catalog_sat_level(peaks: list[float]) -> float:
 
 
 def measure_fwhm_from_catalog_stars(
-    fits_image,
+    fits_image: ProcessedFitsImage,
     catalog_stars: list,
     initial_fwhm: float,
-    config=None,
+    config: AppConfig | None = None,
     sat_level: float | None = None,
 ) -> FWHMMetadata:
-    """
-    Measure FWHM from well-isolated catalog stars.
+    """Measure FWHM from well-isolated catalog stars.
 
     Parameters
     ----------
@@ -112,7 +113,7 @@ def measure_fwhm_from_catalog_stars(
         (StarListImage.sat_level). When omitted, estimated from the
         catalog sample's own peak distribution (see _catalog_sat_level).
 
-    Returns
+    Returns:
     -------
     FWHMMetadata
         FWHM statistics and measurements

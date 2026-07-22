@@ -1,5 +1,6 @@
-"""Build a per-night photometric + observability calibration from processed
-batches, and render the night-level plots.
+"""Build a per-night photometric + observability calibration from processed batches.
+
+Also renders the night-level plots.
 
 Aggregates a night's per-batch ``senpai_*.json`` into ``night_calibration.json``
 + ``plot_data.json`` and renders the night plots (search rate, slew model, PSF
@@ -24,6 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Build (or re-render) a night's calibration from a processed-night directory.
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv`` when None.
+
+    Returns:
+        Process exit code (0 on success).
+    """
     import argparse
 
     from senpai.engine.observability.calibration import (

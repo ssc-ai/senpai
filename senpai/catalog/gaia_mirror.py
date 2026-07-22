@@ -1,5 +1,6 @@
-"""Build a trimmed local Gaia DR3 mirror (G <= mag_limit) for offline catalog
-queries — the data-engineering side of [[project-local-gaia-mirror]].
+"""Build a trimmed local Gaia DR3 mirror (G <= mag_limit) for offline catalog queries.
+
+The data-engineering side of [[project-local-gaia-mirror]].
 
 Online Gaia TAP fetches dominate the burr per-batch runtime (~120-170 s/batch).
 A trimmed all-sky mirror turns each fetch into a sub-second local read. Only the
@@ -94,7 +95,7 @@ def download_chunks(
             break
         lo, hi = i * step, (i + 1) * step
         adql = (
-            f"SELECT {cols} FROM gaiadr3.gaia_source "
+            f"SELECT {cols} FROM gaiadr3.gaia_source "  # noqa: S608  # ADQL from internal numeric params, no untrusted input
             f"WHERE phot_g_mean_mag <= {mag_limit} "
             f"AND random_index >= {lo} AND random_index < {hi}"
         )
@@ -108,10 +109,10 @@ def download_chunks(
                 _ex = _cf.ThreadPoolExecutor(max_workers=1)
                 try:
                     tbl = _ex.submit(
-                        lambda: Gaia.launch_job_async(adql).get_results()
+                        lambda adql=adql: Gaia.launch_job_async(adql).get_results()
                     ).result(timeout=job_timeout)
-                except _cf.TimeoutError:
-                    raise TimeoutError(f"job exceeded {job_timeout:.0f}s")
+                except _cf.TimeoutError as err:
+                    raise TimeoutError(f"job exceeded {job_timeout:.0f}s") from err
                 finally:
                     _ex.shutdown(wait=False)  # abandon a stuck worker thread
                 arr = np.empty(len(tbl), dtype=MIRROR_DTYPE)
@@ -180,7 +181,7 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
         order = np.argsort(tid, kind="stable")
         a, tid = a[order], tid[order]
         uniq, starts = np.unique(tid, return_index=True)
-        starts = list(starts) + [len(a)]
+        starts = [*list(starts), len(a)]
         for j, t in enumerate(uniq):
             part = a[starts[j]:starts[j + 1]]
             with open(os.path.join(mirror_dir, f"tile_{int(t):05d}.bin"), "ab") as fh:
@@ -199,7 +200,7 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
             "file": os.path.basename(tf),
             "ra_min": float(arr["ra"].min()), "ra_max": float(arr["ra"].max()),
             "dec_min": float(arr["dec"].min()), "dec_max": float(arr["dec"].max()),
-            "n": int(len(arr)),
+            "n": len(arr),
         }
         total += len(arr)
     with open(os.path.join(mirror_dir, "index.json"), "w") as fh:
@@ -208,6 +209,14 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Gaia-mirror CLI (``download`` or ``ingest`` subcommand).
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv`` when None.
+
+    Returns:
+        Process exit code (0 on success).
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser(description="Build/ingest a local Gaia DR3 mirror.")
     sub = p.add_subparsers(dest="cmd", required=True)

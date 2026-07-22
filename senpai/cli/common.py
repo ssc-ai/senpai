@@ -1,16 +1,38 @@
 """Shared CLI utilities for command/config saving, profiling, and serialization."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from senpai.core.config import AppConfig
+    from senpai.engine.models.senpai import SenpaiRunSummary
+    from senpai.engine.photometry.utils import (
+        SimplePhotometryResult,
+        SimplePhotometrySummary,
+    )
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
 
-def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
-    """Save command.txt and config.yaml to output_dir for reproducibility."""
+
+def save_run_metadata(output_dir: Path, module_name: str, config: AppConfig) -> None:
+    """Save command.txt and config.yaml to output_dir for reproducibility.
+
+    Args:
+        output_dir: Directory to write ``command.txt`` and ``config.yaml`` into.
+        module_name: Module path (e.g. ``"senpai.cli.detect"``) used as argv[0] in
+            the recorded command line.
+        config: Active application configuration, serialized to ``config.yaml``.
+    """
     import yaml
 
     output_dir = Path(output_dir)
@@ -43,11 +65,15 @@ _QUICKLOOK_PHOTOMETRY_DROP = frozenset({
 })
 
 
-def write_frame_quicklooks(summary, output_dir: Path) -> None:
+def write_frame_quicklooks(summary: SenpaiRunSummary, output_dir: Path) -> None:
     """Write compact per-frame quick-look JSONs (frame_{index}_{mode}.json).
 
-    Takes a SenpaiRunSummary: each frame gets its FrameSummary (detections,
-    WCS, streaks, scalar photometry) minus the bulk per-star arrays.
+    Each frame gets its FrameSummary (detections, WCS, streaks, scalar photometry)
+    minus the bulk per-star arrays.
+
+    Args:
+        summary: Run summary whose per-frame summaries are written out.
+        output_dir: Directory to write the per-frame quick-look JSON files into.
     """
     for fs in summary.frames:
         data = fs.model_dump(mode="json")
@@ -62,9 +88,18 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
     logger.info("Wrote %d per-frame quick-look JSONs", len(summary.frames))
 
 
-def profile_run(func, *args, run_id: str = "profile", **kwargs):
-    """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
-    saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result."""
+def profile_run(func: Callable[..., T], *args: object, run_id: str = "profile", **kwargs: object) -> T:
+    """Run ``func`` under cProfile and persist its top-30 cumulative stats.
+
+    Args:
+        func: Callable to profile.
+        *args: Positional arguments forwarded to ``func``.
+        run_id: Label used in the ``profile_{run_id}.txt`` output filename.
+        **kwargs: Keyword arguments forwarded to ``func``.
+
+    Returns:
+        The value returned by ``func``.
+    """
     import cProfile
     import io
     import pstats
@@ -92,10 +127,20 @@ def profile_run(func, *args, run_id: str = "profile", **kwargs):
     return result
 
 
-def serialize_photometry_to_json(results, summary, output_path: Path) -> None:
+def serialize_photometry_to_json(
+    results: list[SimplePhotometryResult],
+    summary: SimplePhotometrySummary,
+    output_path: Path,
+) -> None:
     """Serialize photometry results + summary to JSON.
 
-    Uses dataclasses.asdict for summary, result.star.model_dump() for Pydantic models.
+    Uses ``dataclasses.asdict`` for the summary and results, plus
+    ``result.star.model_dump()`` for the embedded Pydantic star models.
+
+    Args:
+        results: Per-star photometry results to serialize.
+        summary: Aggregate photometry summary statistics.
+        output_path: File path to write the combined JSON to.
     """
     photometry_output = {
         "summary": asdict(summary),

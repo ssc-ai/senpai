@@ -61,11 +61,15 @@ you can always provide your own config.yaml with --config <your_config.yaml> fla
 
 I want to:
 
-1. fit a single sidereal image:
+1. fit + detect on one or more frames (auto-routes single/multi, sidereal/rate):
 
 ```sh
-python -m senpai.cli.single --image <your_fits_file> --output_dir <your_output_directory> --plot
+python -m senpai.cli.detect -f <your_fits_file(s)_or_dir> -o <your_output_directory> -D
 ```
+
+`-D` enables non-star object detection (point sources in rate frames, streaks in sidereal/rate);
+omit it to fit WCS + stars only. See `python -m senpai.cli.detect --help` for all options, and
+`senpai.cli.batch` for whole-directory batch runs.
 
 
 
@@ -128,6 +132,65 @@ docker run -p 8000:8000 \
 This will mount your custom config file in place of the default containerize.yaml. Make sure your custom config file follows the same format as the default configuration.
 
 http://localhost:8000/docs
+
+## Configuration
+
+SENPAI is configured by a YAML file (validated by `senpai.core.config.AppConfig`), selected with
+`--config <file>`, the `SENPAI_CONFIG_PATH` environment variable, or the default
+`resources/config/local.yaml`. Every field can also be overridden by an environment variable using
+the nested delimiter `__` (case-insensitive); env vars take precedence over the YAML:
+
+```sh
+# override astrometry.solver_mode and detection.snr_threshold without editing the YAML
+ASTROMETRY__SOLVER_MODE=tetra3 DETECTION__SNR_THRESHOLD=5.0 \
+  python -m senpai.cli.detect -f <your_fits_file>
+```
+
+Top-level config sections:
+
+| Section | Purpose |
+| --- | --- |
+| `astrometry` | Plate solving: `solver_mode` (`dotnet` / `tetra3` / `chain` / `senpai`), index series + path, scale + search hints, SIP order. |
+| `star_catalog` | Star catalog `type` (`gaia` / `gaia_local` / `sdss` / `sstrc7`) and on-disk path. |
+| `detection` | Point-source + streak detection thresholds, sub-pixel centroid guard, WCS-refinement gating. |
+| `streak` | Streak-extraction parameters (max FWHM, masking). |
+| `photometry` | Aperture photometry, zero-point, limiting magnitude. |
+| `calibrations` | Master bias / dark / flat handling. |
+| `headers` / `observations` | FITS header-key mapping (exposure / time / site / pointing / tracking) for non-standard sensors. |
+| `validation` / `wcs_validation` / `chain_gate` | Detection / WCS quality gates and chain-consistency checks. |
+| `plotting` / `logging` / `runtime` | Debug/review plots, log level, output dir + run id. |
+
+See `resources/config/local.yaml` for a complete annotated example.
+
+## FITS header fields
+
+SENPAI reads the following keywords from each input frame's FITS header. Only a couple are
+strictly required; the rest improve accuracy, speed, or reproducibility when present. WCS
+keywords (`CRVAL*`, `CD*`/`PC*`, `CTYPE*`) are **not** read from input frames — SENPAI plate-solves
+the WCS itself, so they are outputs, not inputs. The keys below are what SENPAI reads directly;
+track-mode classification and some calibration/observability header handling are additionally
+configurable via the `headers` and `observations` config sections.
+
+| Field | Status | Format / example | Used for | If missing |
+| --- | --- | --- | --- | --- |
+| `DATE-OBS` | **Required** | ISO-8601 UTC — `2024-07-07T11:20:37.375` | Time-orders frames within a collect; sets the observation timestamp. | The collect cannot be processed (invalid-input error). |
+| `NAXIS1`, `NAXIS2` | **Required** | integer pixels — `2048` | Image dimensions. | Frame cannot be loaded (mandatory in any valid FITS image). |
+| `TRKMODE` | **Strongly recommended** | `rate` or `sidereal` | Classifies each frame (drives rate-track vs sidereal solving). | Defaults to `sidereal`; rate frames are misclassified and rate-track detection is skipped. |
+| `EXPTIME` | **Strongly recommended** | seconds, float — `1.0` | Streak-length and rate time-base in the shift solves. | Defaults to `1.0 s`; rate/streak scaling is wrong when the true exposure ≠ 1 s. |
+| `TELTKRA`, `TELTKDEC` | **Strongly recommended** (rate tracks) | arcsec/sec, float — `19.96` / `-30.23` | Mount track rate; seeds the rate→rate search window with the object's true pixel rate. | Falls back to the measured streak length (a less reliable first-pair seed). |
+| `OBJCTRA`/`OBJCTDEC` (or `RA`/`DEC`, `TELRA`/`TELDEC`, `CRVAL1`/`CRVAL2`) | **Strongly recommended** | sexagesimal or decimal degrees — `06 00 00` / `+12 00 00` | Boresight estimate used as a plate-solve position hint (speeds the solve, improves success). | Falls back to a blind plate solve — slower and more failure-prone. |
+| `IMGSETID` (or `IMAGESETID`, `IMAGEID`) | Observability | string / UUID | Image-set id logged once per collect for lookup / reproducibility. | Logged as `unknown`; core detection unaffected. |
+| `SENID`, `SITELAT`, `SITELONG`, `OBJECT` | Observability | string / sexagesimal — `OBS-01` | Logged once per collect (sensor, site, tracked object). | Logged as `unknown` / `?`; core detection unaffected. |
+
+Notes:
+
+- The plate-solve **scale** hint comes from config (`astrometry.min_width_degrees` /
+  `astrometry.max_width_degrees`), not a header field.
+- `TELTKRA`/`TELTKDEC` are the mount's commanded track rates, meaningful only on rate-tracked
+  frames. Only the first rate→rate pair uses this seed — every later pair re-measures — so a
+  missing or approximate value degrades gracefully.
+- SENPAI reports celestial (RA/Dec) positions and does not use an observer location;
+  `SITELAT`/`SITELONG` are read only for the per-collect log line.
 
 ## Citation
 

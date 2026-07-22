@@ -1,6 +1,9 @@
 """Detection, matching, fitting, and shared helpers for WCS refinement."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import maximum_filter
@@ -21,6 +24,9 @@ from senpai.engine.utils.wcs_ops import (
     filter_catalog_stars_by_radius,
 )
 
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,12 +35,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _local_maxima_above_floor(image, half, floor):
-    """(ys, xs, values) of pixels above ``floor`` that equal the maximum of
-    their (2*half+1)^2 window, matching ``maximum_filter(mode='constant')``
+def _local_maxima_above_floor(
+    image: np.ndarray, half: int, floor: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Find above-floor local maxima of each ``(2*half+1)^2`` window.
+
+    Returns pixels above ``floor`` that equal the maximum of their
+    ``(2*half+1)^2`` window, matching ``maximum_filter(mode='constant')``
     semantics for positive floors (out-of-bounds zeros never beat an
     above-floor pixel). Offsets run nearest-first so almost every
-    non-maximum dies on an immediate neighbor before the wide scans."""
+    non-maximum dies on an immediate neighbor before the wide scans.
+
+    Args:
+        image: 2D image array to search.
+        half: Half-window size in pixels; the full window is ``2*half+1``.
+        floor: Intensity floor; only pixels strictly above it are considered.
+
+    Returns:
+        A (ys, xs, values) tuple of parallel arrays giving the row indices,
+        column indices, and pixel values of the surviving local maxima.
+    """
     ys, xs = np.nonzero(image > floor)
     vals = image[ys, xs]
     h, w = image.shape
@@ -56,18 +76,24 @@ def _local_maxima_above_floor(image, half, floor):
     return ys, xs, vals
 
 
-def find_local_maxima(image, min_distance=30, threshold=None, max_detections=None):
-    """
-    Find local maxima in an image with minimum separation distance.
+def find_local_maxima(
+    image: np.ndarray,
+    min_distance: int = 30,
+    threshold: float | None = None,
+    max_detections: int | None = None,
+) -> np.ndarray:
+    """Find local maxima in an image with minimum separation distance.
 
     Args:
-        image: 2D numpy array
-        min_distance: Minimum pixel separation between maxima
-        threshold: Optional intensity threshold
-        max_detections: Maximum number of detections to return (returns brightest ones)
+        image: 2D numpy array.
+        min_distance: Minimum pixel separation between maxima.
+        threshold: Optional intensity threshold.
+        max_detections: Maximum number of detections to return (returns the
+            brightest ones).
 
     Returns:
-        Array of (y, x) coordinates of maxima
+        An ``(N, 2)`` array of (y, x) coordinates of maxima, brightest first
+        (an empty array if none are found).
     """
     size = 2 * min_distance + 1
     floor_base = max(0.0, float(threshold) if threshold is not None else 0.0)
@@ -132,19 +158,20 @@ def match_stars_to_detections(
     stars: list[StarInImage],
     detected_points: list[tuple[float, float]],
     max_distance: float = 20,
-):
-    """
-    Match catalog stars to detected points using bipartite matching.
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """Match catalog stars to detected points using bipartite matching.
 
     Args:
-        stars: List of StarInImage objects
-        detected_points: Array of (y, x) coordinates from local maxima detection
-        max_distance: Maximum allowed matching distance in pixels
+        stars: List of StarInImage objects.
+        detected_points: Array of (y, x) coordinates from local maxima
+            detection.
+        max_distance: Maximum allowed matching distance in pixels.
 
     Returns:
-        matched_pairs: List of (star_idx, detection_idx) pairs
-        unmatched_stars: List of star indices with no match
-        unmatched_detections: List of detection indices with no match
+        A tuple ``(matched_pairs, unmatched_stars, unmatched_detections)``:
+        ``matched_pairs`` is a list of ``(star_idx, detection_idx)`` pairs,
+        ``unmatched_stars`` the star indices with no match, and
+        ``unmatched_detections`` the detection indices with no match.
     """
     if not stars or len(detected_points) == 0:
         return [], list(range(len(stars))), list(range(len(detected_points)))
@@ -190,21 +217,21 @@ def match_stars_to_detections(
 
 
 def extract_counts_with_rectangular_aperture(
-    image, x, y, streak: StreakMetadata, background_annulus=True
-):
-    """
-    Extract counts from an image using a rectangular aperture aligned with a streak.
+    image: np.ndarray, x: float, y: float, streak: StreakMetadata, background_annulus: bool = True
+) -> tuple[float, float]:
+    """Extract counts using a rectangular aperture aligned with a streak.
 
     Args:
-        image: 2D numpy array containing the image data
-        x: x-coordinate of the star center
-        y: y-coordinate of the star center
-        streak: Streak object containing length, width, and angle information
-        background_annulus: Whether to subtract local background using an annulus
+        image: 2D numpy array containing the image data.
+        x: x-coordinate of the star center.
+        y: y-coordinate of the star center.
+        streak: Streak object containing length, width, and angle information.
+        background_annulus: Whether to subtract local background using an
+            annulus.
 
     Returns:
-        counts: Background-subtracted counts within the aperture
-        background: Local background level (per pixel)
+        A ``(counts, background)`` tuple: the background-subtracted counts
+        within the aperture and the local background level (per pixel).
     """
     from photutils.aperture import RectangularAnnulus, RectangularAperture
 
@@ -258,15 +285,18 @@ def extract_counts_with_rectangular_aperture(
 # ---------------------------------------------------------------------------
 
 
-def calculate_spatial_coverage(positions, image_shape):
+def calculate_spatial_coverage(
+    positions: np.ndarray | list[tuple[float, float]], image_shape: tuple[int, int]
+) -> dict[str, float]:
     """Calculate metrics for spatial coverage of reference stars.
 
     Args:
-        positions: Array of (x, y) coordinates
-        image_shape: (height, width) of the image
+        positions: Array or list of (x, y) coordinates.
+        image_shape: (height, width) of the image.
 
     Returns:
-        Dictionary of coverage metrics
+        Dictionary of coverage metrics (quadrant coverage, convex-hull area
+        ratio, normalized coordinate spread, and edge distances).
     """
     height, width = image_shape
     metrics = {}
@@ -329,17 +359,21 @@ def calculate_spatial_coverage(positions, image_shape):
 
 
 def determine_optimal_sip_order(
-    world_coords, pixel_coords, image_shape, max_order: int = 3
-):
-    """Determine optimal SIP order based on spatial coverage and number of reference stars.
+    world_coords: list[tuple[float, float]],
+    pixel_coords: list[tuple[float, float]],
+    image_shape: tuple[int, int],
+    max_order: int = 3,
+) -> int:
+    """Determine optimal SIP order from spatial coverage and star count.
 
     Args:
-        world_coords: List of (ra, dec) pairs
-        pixel_coords: List of (x, y) pairs
-        image_shape: (height, width) of image
+        world_coords: List of (ra, dec) pairs.
+        pixel_coords: List of (x, y) pairs.
+        image_shape: (height, width) of image.
+        max_order: Upper bound on the returned SIP order.
 
     Returns:
-        int: Optimal SIP order (1-5)
+        int: Optimal SIP order, clamped to ``max_order``.
     """
     n_stars = len(world_coords)
 
@@ -379,7 +413,7 @@ def determine_optimal_sip_order(
 
 
 def compute_snr_and_filter_stars(
-    frame,
+    frame: SiderealFrame | RateTrackFrame,
     catalog_stars: list[StarInSpace],
     min_snr: float = 8.0,
     min_stars_to_preserve: int = 6,
@@ -680,7 +714,7 @@ def fit_and_validate_wcs(
 
 
 def update_starfield_wcs(
-    frame,
+    frame: SiderealFrame | RateTrackFrame,
     new_wcs: WCSModel,
     limiting_magnitude: float | None = None,
 ) -> None:

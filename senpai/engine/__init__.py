@@ -1,14 +1,16 @@
-import logging
+"""SENPAI processing engine: detection, astrometry/WCS, photometry, and pipeline.
 
-# from engine.utils.astropy import setup_astropy
-# from engine.utils.mpl import setup_matplotlib
+Importing this package initializes engine-wide components (currently logging) via
+:func:`initialize_engine`.
+"""
+
+import logging
 
 logger = logging.getLogger(__name__)
 
 
-def initialize_engine():
+def initialize_engine() -> None:
     """Initialize all required engine components."""
-
     logger.info("Initializing engine...")
 
     # Set up matplotlib first (affects matplotlib imports)

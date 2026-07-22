@@ -26,15 +26,21 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING
 
 from senpai.cli.common import ensure_output_dir, save_run_metadata
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import CONFIG_DIR
 from senpai.core.logging import set_log_level
 from senpai.integrations.burr import BurrNight, FrameBatch
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from senpai.engine.models.images import ProcessedFitsImage
 
 # Default senpai config tuned to burr's FITS header conventions
 # (RA/DEC as float degrees, RA_RATE/DEC_RATE in deg/s, no TRKMODE override).
@@ -57,8 +63,18 @@ def _batch_output_dir(night_root: Path, batch: FrameBatch) -> Path:
 
 
 def _batch_already_done(batch_dir: Path, batch_id: str) -> bool:
-    """We consider a batch complete if both the full result and the summary
-    JSON exist. Anything less means we re-run — partial state is unsafe."""
+    """Return True if a batch is already fully processed.
+
+    We consider a batch complete if both the full result and the summary JSON
+    exist. Anything less means we re-run — partial state is unsafe.
+
+    Args:
+        batch_dir: Directory holding the batch's output files.
+        batch_id: Identifier of the batch (used in the result filenames).
+
+    Returns:
+        True if both the result and summary JSON files are present.
+    """
     return (
         (batch_dir / f"senpai_{batch_id}.json").is_file()
         and (batch_dir / f"senpai_{batch_id}_summary.json").is_file()
@@ -66,13 +82,20 @@ def _batch_already_done(batch_dir: Path, batch_id: str) -> bool:
 
 
 @contextmanager
-def _tee_logs(log_path: Path):
-    """Tee root-logger output into ``log_path`` for the duration of the block,
-    so each batch's full senpai processing log is saved beside its outputs
-    (WCS solve, frame-to-frame shift solves, photometry — the record needed to
-    diagnose per-frame failures). Captures whatever level the root logger is
-    set to; set ``config.logging.level: DEBUG`` for the most detail."""
+def _tee_logs(log_path: Path) -> Iterator[None]:
+    """Tee root-logger output into ``log_path`` for the duration of the block.
 
+    Each batch's full senpai processing log is saved beside its outputs (WCS solve,
+    frame-to-frame shift solves, photometry — the record needed to diagnose per-frame
+    failures). Captures whatever level the root logger is set to; set
+    ``config.logging.level: DEBUG`` for the most detail.
+
+    Args:
+        log_path: File to which root-logger output is written for the block.
+
+    Yields:
+        None; control returns to the caller while logging is teed to the file.
+    """
     root = logging.getLogger()
     handler = logging.FileHandler(log_path, mode="w")
     handler.setLevel(logging.NOTSET)
@@ -93,7 +116,6 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
 
     Returns a small manifest entry (paths + timing) for the night's manifest.
     """
-
     from senpai.engine.processing.collect import final_plots, process_senpai_collect
     from senpai.engine.utils.file_io import load_fits_files
 
@@ -149,9 +171,10 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
     }
 
 
-def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
-    """Fill in tracking mode ONLY for frames whose header carries no usable
-    ``TRKMODE`` — never overwrite a present one.
+def _apply_intended_track_mode_overrides(file_list: list[ProcessedFitsImage], batch: FrameBatch) -> None:
+    """Fill in tracking mode ONLY for frames whose header carries no usable ``TRKMODE``.
+
+    Never overwrite a present ``TRKMODE``.
 
     ``TRKMODE`` is authoritative: burr records sidereal vs rate as the mount
     *actually tracked*, and writes ``sidereal`` when it tracked sidereal (a raw
@@ -198,15 +221,16 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
 
 
 def _write_manifest(night_root: Path, night: BurrNight, entries: list[dict]) -> Path:
-    """A per-night manifest of what was processed, for the calibration and
-    dataset stages to consume without re-walking the data dir.
+    """Write a per-night manifest of what was processed.
+
+    Lets the calibration and dataset stages consume the results without re-walking
+    the data dir.
 
     Merges with any existing manifest (keyed by ``batch_id``) so running `night`
     repeatedly against the same ``-o`` — e.g. one task at a time, or resuming —
     accumulates batches rather than clobbering the prior run's. New entries
     replace same-id old ones; the union is written back in batch-id order.
     """
-
     path = night_root / "manifest.json"
     merged: dict[str, dict] = {}
     if path.is_file():
@@ -279,10 +303,18 @@ def _iter_filtered_batches(
 
 
 def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
-    """One or more BurrNights to process. ``--auto-nights`` splits a flat,
-    multi-night data dir (burr's "didn't split per night" bug) into one night
-    per observing session; otherwise it's the single run_state-delimited night."""
+    """Resolve one or more BurrNights to process from the parsed CLI arguments.
 
+    ``--auto-nights`` splits a flat, multi-night data dir (burr's "didn't split per
+    night" bug) into one night per observing session; otherwise it's the single
+    run_state-delimited night.
+
+    Args:
+        args: Parsed CLI arguments (uses ``auto_nights`` and the night/data-dir opts).
+
+    Returns:
+        The BurrNight objects to process.
+    """
     if not args.auto_nights:
         return [
             BurrNight.from_night_dir(
@@ -309,11 +341,13 @@ def _worker_init(
     config_path: str, log_level: str, detect: bool,
     save_processed_fits: bool = True, detect_streaks: bool = True,
 ) -> None:
-    """Per-worker setup for parallel batch processing. Spawned workers start with
-    no initialized config singleton, so each must load it; BLAS is already pinned
-    to 1 thread via the env set before the pool was created (inherited at import).
-    CLI overrides applied to the parent config must be re-applied here — workers
-    re-read the YAML and would otherwise silently drop them."""
+    """Per-worker setup for parallel batch processing.
+
+    Spawned workers start with no initialized config singleton, so each must load it;
+    BLAS is already pinned to 1 thread via the env set before the pool was created
+    (inherited at import). CLI overrides applied to the parent config must be
+    re-applied here — workers re-read the YAML and would otherwise silently drop them.
+    """
     config = initialize_config(Path(config_path))
     set_log_level(log_level)
     config.detection.detect = detect
@@ -333,10 +367,18 @@ def _failed_entry(batch: FrameBatch, exc: Exception) -> dict:
 
 
 def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path) -> int:
-    """Run every selected batch of one night; write its manifest. Returns 0 on
-    full success, 2 if any batch failed. With --jobs N>1, independent batches run
-    in parallel across N worker processes."""
+    """Run every selected batch of one night and write its manifest.
 
+    With ``--jobs N>1``, independent batches run in parallel across N worker processes.
+
+    Args:
+        night: The night whose batches are processed.
+        args: Parsed CLI arguments (task/limit/seq-key filters and job count).
+        output_root: Root directory under which night outputs are written.
+
+    Returns:
+        0 on full success, 2 if any batch failed.
+    """
     batches = list(_iter_filtered_batches(
         night, args.task, args.limit, args.max_frames, seq_key=args.seq_key
     ))
@@ -387,7 +429,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
             try:
                 entry = _run_batch(batch, batch_dir)
             except Exception as e:
-                logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                logger.exception("Batch %s failed", batch.batch_id)
                 entry = _failed_entry(batch, e)
                 n_failed += 1
             else:
@@ -441,7 +483,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
                     try:
                         entry = fut.result()
                     except Exception as e:
-                        logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                        logger.exception("Batch %s failed", batch.batch_id)
                         entry = _failed_entry(batch, e)
                         n_failed += 1
                     else:
@@ -463,7 +505,6 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
 
 def cmd_night(args: argparse.Namespace) -> int:
     """Process one (or, with --auto-nights, several) collected burr nights."""
-
     nights = _resolve_nights(args)
 
     if args.dry_run:
@@ -561,8 +602,8 @@ def cmd_flats(args: argparse.Namespace) -> int:
                 sigma=3.0,
                 maxiters=5,
             )
-        except Exception as e:
-            logger.exception("Night %s: master flat failed: %s", night.night_id, e)
+        except Exception:
+            logger.exception("Night %s: master flat failed", night.night_id)
             rc = 2
     return rc
 
@@ -607,7 +648,6 @@ def cmd_live(args: argparse.Namespace) -> int:
     becomes complete (matched command + expected frame count, or timeout
     after the last frame's arrival).
     """
-
     raise NotImplementedError(
         "senpai-burr live is not yet implemented. Use `night` against a "
         "completed night for now; live mode lands in a follow-up commit "
@@ -645,16 +685,33 @@ def cmd_plots(args: argparse.Namespace) -> int:
 
 
 def _export_worker_init(config_path: str) -> None:
-    """Per-worker config init for parallel dataset export — spawned workers start
-    with no config singleton, so each loads it (the exporter may consult config
-    when rebuilding a processed frame in place from raw)."""
+    """Per-worker config init for parallel dataset export.
+
+    Spawned workers start with no config singleton, so each loads it (the exporter
+    may consult config when rebuilding a processed frame in place from raw).
+
+    Args:
+        config_path: Path to the senpai config YAML each worker loads.
+    """
     initialize_config(Path(config_path))
 
 
-def _export_one_batch(task: tuple) -> tuple:
-    """Export one batch's SenpaiRunResult into the shared pool dir. Each call
-    writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json``
-    + FITS), so concurrent workers never collide. Returns (batch_id, ok, error)."""
+def _export_one_batch(
+    task: tuple[str, str, str, float, float | None, bool, bool],
+) -> tuple[str, bool, str | None]:
+    """Export one batch's SenpaiRunResult into the shared pool dir.
+
+    Each call writes uuid-named per-frame files (``*_point_sat.json`` /
+    ``*_line_star.json`` + FITS), so concurrent workers never collide.
+
+    Args:
+        task: Tuple of ``(result_path, batch_id, pool_dir, snr_cut,
+            max_streak_length, process_sidereal, link_source)``.
+
+    Returns:
+        ``(batch_id, ok, error)`` where ``ok`` is True on success and ``error`` is
+        the failure message (or None on success).
+    """
     from senpai.engine.models.senpai import SenpaiRunResult
     from senpai.export.coco import SenpaiCocoExporter
 
@@ -677,8 +734,9 @@ def _export_one_batch(task: tuple) -> tuple:
 
 
 def cmd_build_dataset(args: argparse.Namespace) -> int:
-    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool, then
-    (optionally) split it.
+    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool.
+
+    Optionally splits the pool into train/val/test afterwards.
 
     1. Collect every non-skipped batch's ``SenpaiRunResult`` across the nights.
     2. Export each via :class:`SenpaiCocoExporter` into ONE pool dir (per-frame
@@ -803,14 +861,16 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
 
 
 def cmd_split_dataset(args: argparse.Namespace) -> int:
-    """Split a ready-data pool (``build-dataset --export-only``) into
-    train/val/test + annotations. Cheap and re-runnable: ``--link`` symlinks the
-    images back into the pool, so the same pool can be re-split many times (e.g.
-    data-scaling ablations via ``--train-cap``) in seconds and ~0 extra disk.
+    """Split a ready-data pool (``build-dataset --export-only``) into train/val/test.
+
+    Also writes annotations. Cheap and re-runnable: ``--link`` symlinks the images
+    back into the pool, so the same pool can be re-split many times (e.g. data-scaling
+    ablations via ``--train-cap``) in seconds and ~0 extra disk.
 
     val/test are pinned to the end of the global temporal order (the held-out
     "future"); ``--train-cap N`` varies only the train size, leaving the val/test
-    boundary fixed."""
+    boundary fixed.
+    """
     from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
 
     pool_dir = Path(args.pool_dir)
@@ -856,6 +916,12 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the ``senpai-burr`` argument parser with all subcommands.
+
+    Returns:
+        The configured parser (subcommands: night, plots, build-dataset,
+        split-dataset), each with its ``func`` handler set as a default.
+    """
     parser = argparse.ArgumentParser(
         prog="senpai-burr",
         description="Drive senpai against burr-collected nights.",
@@ -1194,6 +1260,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``senpai-burr`` CLI: parse args and dispatch the subcommand.
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv`` when None.
+
+    Returns:
+        The exit code returned by the selected subcommand handler.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)

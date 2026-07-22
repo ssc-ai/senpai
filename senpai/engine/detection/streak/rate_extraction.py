@@ -6,12 +6,13 @@ import numpy as np
 from scipy.signal import convolve
 
 from senpai.engine.detection.kernels import rectangle_pyramoid
-from senpai.engine.detection.streak.extraction import (
+from senpai.engine.detection.streak.extraction_extra import (
     extract_streak_dims_robust,
     prepare_rate_frame,
     refine_robust_streak,
 )
 from senpai.engine.models.metadata import StreakMetadata
+from senpai.engine.models.senpai import RateTrackFrame
 from senpai.engine.models.starfield import StarInImage
 from senpai.engine.models.streak_measurement import StreakMeasurement
 from senpai.engine.utils.stats import fft_workers, robust_background_stats
@@ -20,13 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 def extract_rate_streak_measurement(
-    rate_frame,
+    rate_frame: RateTrackFrame,
     *,
     n_streaks: int = 10,
     initial_fwhm: float | None = None,
 ) -> tuple[StreakMeasurement | None, np.ndarray | None, float | None]:
-    """
-    Measure the characteristic star-streak in a single rate-track frame.
+    """Measure the characteristic star-streak in a single rate-track frame.
 
     Returns:
         (measurement, psf, measured_fwhm)
@@ -54,6 +54,15 @@ def extract_rate_streak_measurement(
 
 
 def build_streak_metadata(measurement: StreakMeasurement) -> StreakMetadata:
+    """Convert a streak measurement into serializable streak metadata.
+
+    Args:
+        measurement: The streak measurement providing rotation, length, and FWHM.
+
+    Returns:
+        A ``StreakMetadata`` with the pixel length, sine/cosine of the rotation angle,
+        and cross-sectional FWHM (0.0 when the measurement's FWHM is ``None``).
+    """
     theta = float(measurement.rotation)
     return StreakMetadata(
         pixel_length=float(measurement.length),
@@ -70,8 +79,7 @@ def extract_streak_centers_as_sources(
     max_sources: int = 200,
     threshold_sigma: float = 3.0,
 ) -> list[StarInImage]:
-    """
-    Extract streak centroids using matched filtering with a rectangular kernel.
+    """Extract streak centroids using matched filtering with a rectangular kernel.
 
     Uses the measured streak parameters (length, angle, FWHM) to create a matched
     filter kernel, then finds local maxima in the convolved image.
@@ -113,9 +121,9 @@ def extract_streak_centers_as_sources(
         sine_angle,
         cosine_angle,
         int(streak_fwhm * 2),
-        upsample=100,
+
         halo_fwhm=4,
-        halo_level=0,
+
     )
 
     # Normalize kernel to have unit sum (for proper SNR calculation); keep

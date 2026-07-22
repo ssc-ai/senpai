@@ -9,12 +9,13 @@ import numpy as np
 from senpai.astrometry import solve_field
 from senpai.catalog.runner import query_catalog
 from senpai.core.config import get_config
-from senpai.engine.detection.point.satellite import extract_point_sources
+from senpai.engine.detection.point.satellite_extra import extract_point_sources
 from senpai.engine.detection.streak.rate_extraction import (
     build_streak_metadata,
     extract_rate_streak_measurement,
     extract_streak_centers_as_sources,
 )
+from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import (
     DetectionMetadata,
     FrameMetadata,
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def process_rate_fits_rate(
-    fits_image,
+    fits_image: ProcessedFitsImage,
     *,
     run_id: str = "rate",
     attempt_wcs: bool = True,
@@ -48,6 +49,17 @@ def process_rate_fits_rate(
         Use ``process_senpai_collect([fits_image])`` instead, which routes
         through the unified collect pipeline with full feature support
         (streak detection, catalog filtering, stamp confirmation).
+
+    Args:
+        fits_image: The rate-track frame to process.
+        run_id: Identifier used for the run and output artifacts.
+        attempt_wcs: Whether to attempt an astrometric WCS solution.
+        max_sources: Maximum number of point sources to extract.
+        n_streaks: Number of star streaks to measure for characterization.
+        photometry: Whether to measure photometry for the frame.
+
+    Returns:
+        The serializable rate-track frame result.
     """
     import warnings
 

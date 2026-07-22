@@ -1,11 +1,10 @@
-"""
-Main entry point for API server.
-"""
+"""Main entry point for the API server."""
 
 import concurrent.futures
 import contextlib
 import logging
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import click
@@ -23,7 +22,7 @@ DEFAULT_EXECUTOR_MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
 
 def setup_routes(app: FastAPI) -> None:
-    """Configure application routes"""
+    """Configure application routes."""
     logger.info("Setting up routes...")
     # Import routes here to avoid circular imports
     from senpai.api.routes import astrometry, senpai
@@ -35,7 +34,19 @@ def setup_routes(app: FastAPI) -> None:
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage the app's process pool and astrometry checks over its lifetime.
+
+    Creates the shared ``ProcessPoolExecutor`` (stored on ``app.state.executor``)
+    and validates the astrometry install on startup, then shuts the executor
+    down on teardown.
+
+    Args:
+        app: The FastAPI application whose lifespan is being managed.
+
+    Yields:
+        None, once the app is ready to serve requests.
+    """
     max_workers_env = os.getenv("SENPAI_EXECUTOR_WORKERS")
     max_workers = int(max_workers_env) if max_workers_env else DEFAULT_EXECUTOR_MAX_WORKERS
     executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, initializer=_init_pool_worker)
@@ -51,7 +62,8 @@ async def lifespan(app: FastAPI):
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _init_pool_worker():
+def _init_pool_worker() -> None:
+    """Initialize per-worker config in a freshly spawned pool process."""
     from senpai.core.config import initialize_config
 
     cfg_path = os.getenv("SENPAI_CONFIG")
@@ -60,7 +72,7 @@ def _init_pool_worker():
 
 
 def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
-    """Application factory supporting both local and Lambda environments"""
+    """Application factory supporting both local and Lambda environments."""
     # Suppress specific warnings
     # Setup logging, will check if already configured
     # Example usage
@@ -110,7 +122,7 @@ def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
 
 
 @click.command()
-@click.option("--host", default="0.0.0.0", show_default=True)
+@click.option("--host", default="0.0.0.0", show_default=True)  # noqa: S104  # server CLI bind default, operator-controlled
 @click.option("--port", default=8000, show_default=True)
 @click.option("--workers", default=1, show_default=True, envvar="WORKERS")
 @click.option(
@@ -120,7 +132,7 @@ def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
     show_default=True,
 )
 def run_server(host: str, port: int, workers: int | None, config: Path | None = None) -> None:
-    """Run the API server locally"""
+    """Run the API server locally."""
     import uvicorn
 
     # Load config first

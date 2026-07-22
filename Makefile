@@ -71,11 +71,11 @@ coverage: ## Run tests with coverage + regenerate badges (tests.svg, coverage.sv
 .PHONY: lint format
 
 lint: ## Run linter (ruff)
-	uv run ruff check $(PACKAGE)/
+	uv run ruff check $(PACKAGE)/ tests/
 
 format: ## Format code and fix lint issues (ruff)
-	uv run ruff format $(PACKAGE)/
-	uv run ruff check --fix $(PACKAGE)/
+	uv run ruff format $(PACKAGE)/ tests/
+	uv run ruff check --fix $(PACKAGE)/ tests/
 
 ###################
 # Release         #
