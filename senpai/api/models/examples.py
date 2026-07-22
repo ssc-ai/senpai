@@ -1,4 +1,6 @@
-from typing import Any, Dict
+"""OpenAPI request/response example payloads for the API models."""
+
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel
@@ -8,17 +10,21 @@ from senpai.engine.models.starfield import ImageMetadata, StarInImage, StarListI
 
 
 class StarListImageExample(BaseModel):
-    def __init__(self):
+    """Lazily built example ``StarListImage`` for OpenAPI documentation."""
+
+    def __init__(self) -> None:
+        """Initialize the example with an empty (lazily loaded) value."""
         super().__init__()
         self._value: StarListImage | None = None
 
     @property
     def summary(self) -> str:
+        """Short human-readable summary of the example payload."""
         return "A list of stars in an image with image metadata"
 
     @property
     def value(self) -> StarListImage:
-        """Get example StarListImage value"""
+        """Get example StarListImage value."""
         if self._value is None:
             data = np.loadtxt(TEST_DATA_DIR / "x_y_counts_1024_1024.txt", delimiter="\t", dtype=float)
             self._value = StarListImage(
@@ -29,6 +35,6 @@ class StarListImageExample(BaseModel):
             )
         return self._value
 
-    def get_openapi_examples(self) -> Dict[str, Dict[str, Any]]:
-        """Convert to OpenAPI examples format"""
+    def get_openapi_examples(self) -> dict[str, dict[str, Any]]:
+        """Convert to OpenAPI examples format."""
         return [self.value]

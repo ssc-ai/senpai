@@ -1,5 +1,7 @@
+"""Pydantic models for WCS astrometric solutions and related metadata."""
+
 import logging
-from enum import Enum
+from enum import StrEnum
 
 import astropy.units as u
 import numpy as np
@@ -10,15 +12,20 @@ from astropy.wcs import WCS
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from senpai.core.config import AppConfig
+from senpai.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
-class WCSStatus(str, Enum):
+class WCSStatus(StrEnum):
+    """Provenance of a WCS solution, tracking how it was derived or refined."""
+
     NO_WCS = "NO_WCS"
     SIDEREAL_FIT_WCS = "SIDEREAL_FIT_WCS"
     PIXEL_SHIFTED_WCS = "PIXEL_SHIFTED_WCS"
     KERNEL_REFINED_WCS = "KERNEL_REFINED_WCS"
+    ASTROMETRY_REFIT_WCS = "ASTROMETRY_REFIT_WCS"
+    POST_REFIT_REFINED_WCS = "POST_REFIT_REFINED_WCS"
     # Refinement ran but the result failed the absolute image-based validation
     # (no significant star flux at the positions the WCS predicts). The WCS is
     # kept for inspection but must not be trusted for astrometry.
@@ -56,21 +63,56 @@ class WCSQualityMetrics(BaseModel):
 
     @field_serializer("frac_significant", "control_frac_significant")
     def _ser_frac(self, v: float) -> float:
+        """Round a fraction field to 3 decimal places.
+
+        Args:
+            v (float): the value to round.
+
+        Returns:
+            float: the rounded value.
+        """
         return round(v, 3)
 
     @field_serializer("refit_rms_px", "refit_rms_arcsec")
     def _ser_rms(self, v: float | None) -> float | None:
+        """Round an RMS field to 3 decimal places, passing through ``None``.
+
+        Args:
+            v (float | None): the value to round, or ``None``.
+
+        Returns:
+            float | None: the rounded value, or ``None`` if the input was ``None``.
+        """
         return round(v, 3) if v is not None else None
 
 
 class ReturnAstrometryConfig(BaseModel):
+    """Astrometry solver configuration reported alongside a solved field."""
+
     indices_series: str = Field(description="Indices series (5200/5200_LITE/4100/5200_LITE_4100)")
     max_sources: int = Field(description="Maximum number of sources to solve for")
     min_width_degrees: float = Field(description="Minimum width in degrees")
     max_width_degrees: float = Field(description="Maximum width in degrees")
 
     @classmethod
+    def from_settings(cls) -> "ReturnAstrometryConfig":
+        """Build the config from the global astrometry settings.
+
+        Returns:
+            ReturnAstrometryConfig: The config populated from ``settings.astrometry``.
+        """
+        return cls.from_app_config(settings)
+
+    @classmethod
     def from_app_config(cls, config: AppConfig) -> "ReturnAstrometryConfig":
+        """Build the config from an explicit :class:`AppConfig` instance.
+
+        Args:
+            config (AppConfig): the application config to read from.
+
+        Returns:
+            ReturnAstrometryConfig: The config populated from ``config.astrometry``.
+        """
         return cls(
             indices_series=config.astrometry.indices_series,
             max_sources=config.astrometry.max_sources,
@@ -80,6 +122,8 @@ class ReturnAstrometryConfig(BaseModel):
 
 
 class WCSModel(BaseModel):
+    """Serializable representation of a FITS WCS header, including SIP distortion."""
+
     model_config = ConfigDict(extra="allow")  # Allow extra fields for dynamic SIP coefficients
 
     WCSAXES: int
@@ -103,13 +147,14 @@ class WCSModel(BaseModel):
     LATPOLE: float | None = None
     EQUINOX: float | None = None
 
-    # SIP distortion coefficients (common ones defined, but extra='allow' permits higher-order coefficients)
+    # SIP distortion coefficients (common ones defined, but extra='allow' permits
+    # higher-order coefficients)
     A_ORDER: int | None = None
     B_ORDER: int | None = None
     AP_ORDER: int | None = None
     BP_ORDER: int | None = None
 
-    # Forward coefficients (common ones defined, but extra='allow' permits higher-order coefficients)
+    # Forward coefficients
     A_0_0: float | None = None
     A_0_1: float | None = None
     A_0_2: float | None = None
@@ -124,7 +169,7 @@ class WCSModel(BaseModel):
     B_1_1: float | None = None
     B_2_0: float | None = None
 
-    # Inverse coefficients (common ones defined, but extra='allow' permits higher-order coefficients)
+    # Inverse coefficients
     AP_0_0: float | None = None
     AP_0_1: float | None = None
     AP_0_2: float | None = None
@@ -141,6 +186,15 @@ class WCSModel(BaseModel):
 
     @classmethod
     def from_astrometrydotnet(cls, astrometry_net_wcs: PrimaryHDU) -> "WCSModel":
+        """Build a WCSModel from an astrometry.net WCS FITS HDU.
+
+        Args:
+            astrometry_net_wcs (PrimaryHDU): the astrometry.net ``wcs.fits`` primary HDU.
+
+        Returns:
+            WCSModel: the converted WCS model (CD-matrix headers are stored as PC with
+                unit CDELT).
+        """
         header = astrometry_net_wcs.header
 
         # Try PC matrix first
@@ -164,7 +218,9 @@ class WCSModel(BaseModel):
         # Get SIP coefficients if they exist
         sip_params = {}
         for key in header:
-            if key in ["A_ORDER", "B_ORDER", "AP_ORDER", "BP_ORDER"] or key.startswith(("A_", "B_", "AP_", "BP_")):
+            if key in ["A_ORDER", "B_ORDER", "AP_ORDER", "BP_ORDER"] or key.startswith(
+                ("A_", "B_", "AP_", "BP_")
+            ):
                 sip_params[key] = header[key]
 
         return cls(
@@ -192,7 +248,12 @@ class WCSModel(BaseModel):
             **sip_params,
         )
 
-    def to_astrometrydotnet_fits(self, output_path: str):
+    def to_astrometrydotnet_fits(self, output_path: str) -> None:
+        """Write this model as an astrometry.net-style WCS FITS file.
+
+        Args:
+            output_path (str): destination path for the FITS file.
+        """
         values = self.model_dump()
         values["IMAGEW"] = values["NAXIS1"]
         values["IMAGEH"] = values["NAXIS2"]
@@ -207,22 +268,18 @@ class WCSModel(BaseModel):
         hdu.writeto(output_path)
 
     @classmethod
-    def from_astropy_wcs(cls, astropy_wcs: WCS, image_shape=None):
-        """
-        Convert an Astropy WCS object to a WCSModel.
+    def from_astropy_wcs(
+        cls, astropy_wcs: WCS, image_shape: tuple[int, int] | None = None
+    ) -> "WCSModel":
+        """Convert an Astropy WCS object to a WCSModel.
 
-        Parameters
-        ----------
-        astropy_wcs : astropy.wcs.WCS
-            The Astropy WCS object to convert
-        image_shape : tuple, optional
-            The actual shape of the image (height, width). If provided,
-            this will override the pixel_shape in the WCS.
+        Args:
+            astropy_wcs (WCS): The Astropy WCS object to convert.
+            image_shape (tuple[int, int] | None): The actual shape of the image as
+                ``(height, width)``. If provided, this overrides the pixel_shape in the WCS.
 
-        Returns
-        -------
-        WCSModel
-            The converted WCS model
+        Returns:
+            WCSModel: The converted WCS model.
         """
         # Use relax=True to include SIP keywords in header
         header = astropy_wcs.to_header(relax=True)
@@ -292,7 +349,9 @@ class WCSModel(BaseModel):
         # First check header (with relax=True, SIP keywords should be included)
         sip_found_in_header = False
         for key in header:
-            if key in ["A_ORDER", "B_ORDER", "AP_ORDER", "BP_ORDER"] or key.startswith(("A_", "B_", "AP_", "BP_")):
+            if key in ["A_ORDER", "B_ORDER", "AP_ORDER", "BP_ORDER"] or key.startswith(
+                ("A_", "B_", "AP_", "BP_")
+            ):
                 wcs_dict[key] = header[key]
                 if key in ["A_ORDER", "B_ORDER"]:
                     sip_found_in_header = True
@@ -335,13 +394,13 @@ class WCSModel(BaseModel):
 
         return cls(**wcs_dict)
 
-    def to_astropy_wcs(self):
-        """Convert this model to a WCS object
+    def to_astropy_wcs(self) -> WCS | None:
+        """Convert this model to a WCS object.
 
         Returns:
-            astropy.wcs.WCS: a WCS object to do calcs with
+            astropy.wcs.WCS | None: A WCS object to do calcs with, or ``None``
+                if construction failed.
         """
-
         try:
             # Filter out None values from the model dump
             header_dict = {k: v for k, v in self.model_dump().items() if v is not None}
@@ -365,15 +424,21 @@ class WCSModel(BaseModel):
         return wcs
 
     def get_boresight(self) -> tuple[float, float]:
-        """Get the boresight coordinates (RA, Dec)"""
+        """Get the boresight coordinates.
+
+        Returns:
+            tuple[float, float]: ``(RA, Dec)`` of the reference point, in degrees.
+        """
         return self.CRVAL1, self.CRVAL2
 
-    def pix2world_0based(self, x: float | np.ndarray, y: float | np.ndarray) -> tuple[float, float]:
-        """Convert 0-based pixel coordinates to world coordinates (RA, Dec)
+    def pix2world_0based(
+        self, x: float | np.ndarray, y: float | np.ndarray
+    ) -> tuple[float, float]:
+        """Convert 0-based pixel coordinates to world coordinates (RA, Dec).
 
         Args:
-            x: 0-based x pixel coordinate(s)
-            y: 0-based y pixel coordinate(s)
+            x (float | np.ndarray): 0-based x pixel coordinate(s)
+            y (float | np.ndarray): 0-based y pixel coordinate(s)
 
         Returns:
             tuple[float, float]: (RA, Dec) in degrees
@@ -381,18 +446,15 @@ class WCSModel(BaseModel):
         wcs = self.to_astropy_wcs()
         # Add 1 to convert from 0-based to 1-based coordinates
         # SIP distortion is handled natively by astropy WCS
-        ra, dec = (
-            wcs.pixel_to_world(x + 1, y + 1).ra.deg,
-            wcs.pixel_to_world(x + 1, y + 1).dec.deg,
-        )
+        ra, dec = wcs.pixel_to_world(x + 1, y + 1).ra.deg, wcs.pixel_to_world(x + 1, y + 1).dec.deg
         return ra, dec
 
     def world2pix_0based(self, ra: float, dec: float) -> tuple[float, float]:
-        """Convert world coordinates (RA, Dec) to 0-based pixel coordinates
+        """Convert world coordinates (RA, Dec) to 0-based pixel coordinates.
 
         Args:
-            ra: Right Ascension in degrees
-            dec: Declination in degrees
+            ra (float): Right Ascension in degrees
+            dec (float): Declination in degrees
 
         Returns:
             tuple[float, float]: (x, y) pixel coordinates in 0-based indexing
@@ -412,8 +474,7 @@ class WCSModel(BaseModel):
         return x - 1, y - 1
 
     def get_fov_and_dimensions(self) -> tuple[float, float, int, int]:
-        """
-        Calculate the field of view and pixel dimensions from this WCS model.
+        """Calculate the field of view and pixel dimensions from this WCS model.
 
         Returns:
             tuple containing:
@@ -426,32 +487,25 @@ class WCSModel(BaseModel):
         pixel_width = self.NAXIS1
         pixel_height = self.NAXIS2
 
-        # Calculate the field of view width and height using radial-aware mapping
+        # Get the WCS object
+        wcs = self.to_astropy_wcs()
+
+        # Calculate the field of view width and height
+        # Get the coordinates of the corners of the image
         corners = [
-            (0.0, 0.0),  # bottom left
-            (float(pixel_width - 1), 0.0),  # bottom right
-            (0.0, float(pixel_height - 1)),  # top left
-            (float(pixel_width - 1), float(pixel_height - 1)),  # top right
+            [0, 0],  # bottom left
+            [pixel_width - 1, 0],  # bottom right
+            [0, pixel_height - 1],  # top left
+            [pixel_width - 1, pixel_height - 1],  # top right
         ]
 
-        # Convert to world coordinates using pix2world_0based (SIP handled natively)
-        world_corners = []
-        for x, y in corners:
-            try:
-                ra, dec = self.pix2world_0based(x, y)
-                world_corners.append((ra, dec))
-            except Exception:
-                # Fallback to astropy WCS if conversion fails
-                wcs = self.to_astropy_wcs()
-                ra, dec = wcs.wcs_pix2world([[x + 1, y + 1]], 0)[0]
-                world_corners.append((ra, dec))
+        # Convert to world coordinates
+        world_corners = wcs.wcs_pix2world(corners, 0)
 
         # Calculate the width and height FOV
         from astropy.coordinates import SkyCoord
 
-        ra_vals = [c[0] for c in world_corners]
-        dec_vals = [c[1] for c in world_corners]
-        sky_corners = SkyCoord(ra_vals, dec_vals, unit="deg")
+        sky_corners = SkyCoord(world_corners[:, 0], world_corners[:, 1], unit="deg")
 
         # Width: maximum separation between left and right edges
         width_separation1 = sky_corners[0].separation(sky_corners[1]).deg
@@ -467,6 +521,8 @@ class WCSModel(BaseModel):
 
 
 class WCSMetadata(BaseModel):
+    """Human-readable summary of a WCS solution (FOV, scale, and field center)."""
+
     x_ifov_arcsec: float
     y_ifov_arcsec: float
     x_fov_degrees: float
@@ -478,14 +534,38 @@ class WCSMetadata(BaseModel):
 
     @field_serializer("x_ifov_arcsec", "y_ifov_arcsec", "x_fov_degrees", "y_fov_degrees")
     def serialize_3digits(self, v: float) -> float:
+        """Round a field-of-view value to 3 decimal places for serialization.
+
+        Args:
+            v (float): The value to round.
+
+        Returns:
+            float: The value rounded to 3 decimal places.
+        """
         return round(v, 3)
 
     @field_serializer("RA_center_deg", "Dec_center_deg")
     def serialize_6digits(self, v: float) -> float:
+        """Round a center-coordinate value to 6 decimal places for serialization.
+
+        Args:
+            v (float): The value to round.
+
+        Returns:
+            float: The value rounded to 6 decimal places.
+        """
         return round(v, 6)
 
     @classmethod
     def from_wcs(cls, wcs: WCS) -> "WCSMetadata":
+        """Derive metadata (scale, FOV, and center) from an Astropy WCS.
+
+        Args:
+            wcs (WCS): The WCS to summarize.
+
+        Returns:
+            WCSMetadata: The computed metadata for the WCS.
+        """
         x_ifov, y_ifov = wcs.proj_plane_pixel_scales()
         x_fov_deg, y_fov_deg = np.array([x_ifov.value, y_ifov.value]) * np.array(wcs.pixel_shape)
 
@@ -499,6 +579,10 @@ class WCSMetadata(BaseModel):
             wcs.pixel_to_world(center_x, center_y).dec.deg,
         )
 
+        with np.errstate(invalid="ignore"):
+            ra_hms = Angle(ra_center, unit=u.deg).to_string(unit=u.hour, sep=":")
+            dec_dms = Angle(dec_center, unit=u.deg).to_string(unit=u.deg, sep=":")
+
         return cls(
             x_ifov_arcsec=x_ifov.to(u.arcsec).value,
             y_ifov_arcsec=y_ifov.to(u.arcsec).value,
@@ -506,12 +590,18 @@ class WCSMetadata(BaseModel):
             y_fov_degrees=y_fov_deg,
             RA_center_deg=ra_center,
             Dec_center_deg=dec_center,
-            RA_center_HMS=Angle(ra_center, unit=u.deg).to_string(unit=u.hour, sep=":"),
-            Dec_center_DMS=Angle(dec_center, unit=u.deg).to_string(unit=u.deg, sep=":"),
+            RA_center_HMS=ra_hms,
+            Dec_center_DMS=dec_dms,
         )
 
     @classmethod
     def from_wcsmodel(cls, wcs_model: WCSModel) -> "WCSMetadata":
+        """Derive metadata from a WCSModel by converting it to an Astropy WCS.
+
+        Args:
+            wcs_model (WCSModel): The WCS model to summarize.
+
+        Returns:
+            WCSMetadata: The computed metadata for the model.
+        """
         return cls.from_wcs(wcs_model.to_astropy_wcs())
-
-

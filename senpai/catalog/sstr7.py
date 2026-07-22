@@ -1,20 +1,25 @@
-import argparse
+"""Low-level readers and spatial queries for the SSTRC7 star catalog."""
+
 import math
 import os
 import struct
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
 from astropy import wcs
 
-DEFAULT_SSTR7_PATH = "/path/to/sstrc7"
+DEFAULT_SSTRC7_PATH = "/data/shared/sstrc7"
 RECORD_LEN = 30
 RECORD_LEN_BYTES = RECORD_LEN * 2
 
 
 @lru_cache(maxsize=10)
-def load_index(filename: str, numRaZones: int = 60, numDecZones: int = 1800):
+def load_index(
+    filename: str, numRaZones: int = 60, numDecZones: int = 1800
+) -> list[list[dict[str, Any]]]:
     """Map SSTRC index file entries to index vector and RA and Dec index maps.
+
     The SSTRC index files differ from the SSTRC catalog accelerator (index)
     files in that the only the zone position and length are stored as binary
     unsigned integers in a single file.
@@ -27,7 +32,6 @@ def load_index(filename: str, numRaZones: int = 60, numDecZones: int = 1800):
     Returns:
         A `list`, list of dictionaries with zone position and length
     """
-
     zoneIndex = [[{}] * numRaZones for i in range(numDecZones)]
 
     with open(filename, mode="rb") as f:
@@ -49,9 +53,8 @@ def select_zone(
     zoneIndex: list,
     numRaZones: int = 60,
     numDecZones: int = 1800,
-):
-    """Select a list of regions that intersect with the rectangular coordinate
-    bounds
+) -> list[dict[str, Any]]:
+    """Select a list of regions that intersect with the rectangular bounds.
 
     Args:
         ra_min: `float`, min RA bounds
@@ -66,7 +69,6 @@ def select_zone(
         A `list`, list of dictionaries with zone position and length that
             encompass the ra/dec min max
     """
-
     decZoneLimit = numDecZones - 1
     raZoneLimit = numRaZones - 1
 
@@ -84,7 +86,8 @@ def select_zone(
     minRAIndex = 0
     maxRAIndex = 0
 
-    def append_zones(minRAIndex, maxRAIndex, bound_func):
+    def append_zones(minRAIndex: int, maxRAIndex: int, bound_func: int) -> None:
+        """Append zones spanning the given RA index range to the selection list."""
         for spd in range(minSPDIndex, maxSPDIndex + 1):
             for ra in range(minRAIndex, maxRAIndex + 1):
                 selectZone = {
@@ -99,13 +102,9 @@ def select_zone(
                         else ("minRA" if (ra * zoneWidth < ra_min) else "inside")
                     )
                 elif bound_func == 1:
-                    selectZone["bound"] = (
-                        "minRA" if (ra * zoneWidth < ra_max) else "inside"
-                    )
+                    selectZone["bound"] = "minRA" if (ra * zoneWidth < ra_max) else "inside"
                 elif bound_func == 2:
-                    selectZone["bound"] = (
-                        "maxRA" if (ra * zoneWidth > ra_min) else "inside"
-                    )
+                    selectZone["bound"] = "maxRA" if (ra * zoneWidth > ra_min) else "inside"
 
                 if selectZone["length"] > 0:
                     selectZoneList.append(selectZone)
@@ -132,9 +131,20 @@ def select_zone(
     return selectZoneList
 
 
-def load_zone(currentZone, rootPath):
-    """Load the region with the records from the SSTRC catalog data file
-    between the beginning and ending records for the specified index entry.
+def load_zone(currentZone: dict[str, Any], rootPath: str) -> tuple[bytes, int, int]:
+    """Load the catalog records for a single index zone.
+
+    Reads the records from the SSTRC catalog data file between the beginning and
+    ending records for the specified index entry.
+
+    Args:
+        currentZone (dict[str, Any]): index entry with ``id``, ``pos``, and
+            ``length`` keys identifying the zone to load.
+        rootPath (str): root path to the SSTRC catalog data files.
+
+    Returns:
+        tuple[bytes, int, int]: the raw zone buffer, the byte offset of the
+            buffer start within the file, and the byte offset of the buffer end.
     """
     # Next, assure the proper zone catalog file is opened. Seek to the proper
     # file offset and read the entire zone region into the zone buffer
@@ -157,59 +167,40 @@ def load_zone(currentZone, rootPath):
 
 @lru_cache(maxsize=1024)
 def load_stars_for_zone(
-    id: int,
+    _id: int,
     pos: int,
     length: int,
     bound: str,
     rootPath: str,
-    filter_center: float = None,
-    faint_lim: float = None,
-    bright_lim: float = None,
-):
-    """Load stars for specified zone."""
-    buffer, start, end = load_zone({"id": id, "pos": pos, "length": length}, rootPath)
+    filter_center: float | None = None,
+) -> list[dict[str, Any]]:
+    """Load and parse all stars for a specified catalog zone.
+
+    Args:
+        _id (int): zone identifier (declination band).
+        pos (int): record offset of the zone within its catalog file.
+        length (int): number of records in the zone.
+        bound (str): bound type for the zone (``"minRA"``, ``"maxRA"``, or
+            ``"inside"``); controls iteration order.
+        rootPath (str): root path to the SSTRC catalog data files.
+        filter_center (float | None): optional wavelength to filter star
+            magnitudes by. Defaults to None.
+
+    Returns:
+        list[dict[str, Any]]: parsed star records for the zone.
+    """
+    buffer, start, end = load_zone({"id": _id, "pos": pos, "length": length}, rootPath)
     stars = []
     if bound == "minRA":
         for s in [
-            i * RECORD_LEN_BYTES
-            for i in reversed(range((end - start) // RECORD_LEN_BYTES))
+            i * RECORD_LEN_BYTES for i in reversed(range((end - start) // RECORD_LEN_BYTES))
         ]:
-            # Quick magnitude check first - skip expensive parsing if star doesn't meet criteria
-            if not quick_magnitude_check(
-                buffer[s : s + RECORD_LEN_BYTES], faint_lim, bright_lim
-            ):
-                continue
-
-            star = read_star(
-                buffer[s : s + RECORD_LEN_BYTES],
-                filter_center=filter_center,
-                faint_lim=None,  # Already filtered above
-                bright_lim=None,  # Already filtered above
-            )
+            star = read_star(buffer[s : s + RECORD_LEN_BYTES], filter_center=filter_center)
             stars.append(star)
-            # if star['ra'] < ra_min:
-            #     print('load minRA:', len(stars))
-            #     break
     else:
-        for s in [
-            i * RECORD_LEN_BYTES for i in range((end - start) // RECORD_LEN_BYTES)
-        ]:
-            # Quick magnitude check first - skip expensive parsing if star doesn't meet criteria
-            if not quick_magnitude_check(
-                buffer[s : s + RECORD_LEN_BYTES], faint_lim, bright_lim
-            ):
-                continue
-
-            star = read_star(
-                buffer[s : s + RECORD_LEN_BYTES],
-                filter_center=filter_center,
-                faint_lim=None,  # Already filtered above
-                bright_lim=None,  # Already filtered above
-            )
+        for s in [i * RECORD_LEN_BYTES for i in range((end - start) // RECORD_LEN_BYTES)]:
+            star = read_star(buffer[s : s + RECORD_LEN_BYTES], filter_center=filter_center)
             stars.append(star)
-            # if bound == 'maxRA' and star['ra'] > ra_max:
-            #     print('load maxRA:', len(stars))
-            #     break
 
     return stars
 
@@ -222,17 +213,18 @@ def query_by_los(
     ra: float,
     dec: float,
     rot: float = 0.0,
-    rootPath: str = DEFAULT_SSTR7_PATH,
+    rootPath: str = DEFAULT_SSTRC7_PATH,
     pad_mult: float = 0,
     origin: str = "center",
     filter_ob: bool = True,
     flipud: bool = False,
     fliplr: bool = False,
-    filter_center: float = None,
-):
-    """Query the catalog based on focal plane parameters and ra and dec line
-    of sight vector. Line of sight vector is defined as the top left corner
-    of the focal plane array.
+    filter_center: float | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Query the catalog by focal plane parameters and line-of-sight vector.
+
+    The line of sight vector is defined as the top left corner of the focal
+    plane array.
 
     Args:
         height: `int`, height in number of pixels
@@ -249,6 +241,7 @@ def query_by_los(
         filter_ob: `boolean`, remove stars outside pad
         flipud: `boolean`, flip row coordinates
         fliplr: `boolean`, flip column coordinates
+        filter_center: `float`, optional wavelength to filter stars by
 
     Returns:
         A `tuple`, containing:
@@ -256,7 +249,6 @@ def query_by_los(
             cc: `list`, list of column pixel locations
             mv: `list`, list of visual magnitudes
     """
-
     cmin, cmax, w = get_min_max_ra_dec(
         height, width, y_fov / height, x_fov / width, ra, dec, rot, pad_mult, origin
     )
@@ -299,12 +291,11 @@ def query_by_los_radec(
     x_fov: float,
     ra: float,
     dec: float,
-    rootPath: str = DEFAULT_SSTR7_PATH,
+    rootPath: str = DEFAULT_SSTRC7_PATH,
     origin: str = "center",
-    filter_center: float = None,
-):
-    """Query the catalog based on focal plane parameters and ra and dec line
-    of sight vector.
+    filter_center: float | None = None,
+) -> list[dict[str, Any]]:
+    """Query the catalog by focal plane parameters and line-of-sight vector.
 
     Args:
         y_fov: `float`, y fov in degrees
@@ -345,14 +336,11 @@ def query_by_min_max(
     ra_max: float,
     dec_min: float,
     dec_max: float,
-    rootPath: str = DEFAULT_SSTR7_PATH,
+    rootPath: str = DEFAULT_SSTRC7_PATH,
     clip_min_max: bool = True,
-    filter_center: float = None,
-    faint_lim: float = None,
-    bright_lim: float = None,
-):
-    """Query the catalog based on focal plane parameters and minimum and
-    maximum right ascension and declination.
+    filter_center: float | None = None,
+) -> list[dict[str, Any]]:
+    """Query the catalog by minimum and maximum right ascension and declination.
 
     Args:
         ra_min: `float`, min RA bounds
@@ -362,14 +350,12 @@ def query_by_min_max(
         rootPath: `string`, path to root directory. default: environment
             variable SATSIM_SSTR7_PATH
         clip_min_max: `boolean`, clip stars outsize of `ra_min` and `ra_max`
+        filter_center: `float`, optional wavelength to filter stars by
 
     Returns:
         A `list`, stars within the bounds of input parameters
     """
-
-    zoneIndex = load_index(
-        os.path.join(rootPath, "sstrc.acc"), numRaZones=60, numDecZones=1800
-    )
+    zoneIndex = load_index(os.path.join(rootPath, "sstrc.acc"), numRaZones=60, numDecZones=1800)
 
     zones = select_zone(
         ra_min, ra_max, dec_min, dec_max, zoneIndex, numRaZones=60, numDecZones=1800
@@ -384,13 +370,14 @@ def query_by_min_max(
             z["bound"],
             rootPath,
             filter_center=filter_center,
-            faint_lim=faint_lim,
-            bright_lim=bright_lim,
         )
 
         if clip_min_max:
 
-            def clip_stars():
+            def clip_stars(
+                z: dict[str, Any] = z, ss: list[dict[str, Any]] = ss
+            ) -> list[dict[str, Any]]:
+                """Trim a zone's stars to those inside the RA bound for that zone."""
                 if z["bound"] == "minRA":
                     for i in range(len(ss)):
                         if ss[i]["ra"] < ra_min:
@@ -409,56 +396,17 @@ def query_by_min_max(
     return stars
 
 
-def quick_magnitude_check(
-    buffer: bytes, faint_lim: float | None = None, bright_lim: float | None = None
-) -> bool:
-    """Quickly check if a star passes magnitude limits without full parsing.
-
-    Args:
-        buffer: `bytes`, 60-byte star record
-        faint_lim: `float`, faint magnitude limit
-        bright_lim: `float`, bright magnitude limit
-
-    Returns:
-        `bool`, True if star passes magnitude limits, False otherwise
-    """
-    if faint_lim is None and bright_lim is None:
-        return True  # No filtering needed
-
-    # Read just the magnitude data (bytes 14-50, 18 magnitudes)
-    raw_mv = struct.unpack("=hhhhhhhhhhhhhhhhhh", buffer[14 : 14 + 18 * 2])
-    raw_mv_array = np.asarray(raw_mv) * 1.0e-3
-
-    # Get the best magnitude using the same logic as read_star
-    mv = get_star_mv(raw_mv_array)
-
-    # Apply magnitude limits
-    if faint_lim is not None and mv >= faint_lim:
-        return False
-    if bright_lim is not None and mv <= bright_lim:
-        return False
-
-    return True
-
-
-def read_star(
-    buffer: bytes,
-    filter_center: float | None = None,
-    faint_lim: float | None = None,
-    bright_lim: float | None = None,
-):
+def read_star(buffer: bytes, filter_center: float | None = None) -> dict[str, Any]:
     """Reads a byte buffer and parses star parameters.
 
     Args:
         buffer: `list`, byte array of length 60 bytes
-        filter_center: `float`, optional wavelength to filter stars by
-        faint_lim: `float`, optional faint magnitude limit (stars fainter than this will be skipped)
-        bright_lim: `float`, optional bright magnitude limit (stars brighter than this will be skipped)
+        filter_center: `float`, optional wavelength to filter the star
+            magnitude by
 
     Returns:
-        A `dict`, the star position and magnitudes, or None if star is filtered out
+        A `dict`, the star position and magnitudes
     """
-
     mas2rad = 4.84813681109535993589914102358e-9
     year2sec = 3.1556952e7
 
@@ -502,89 +450,17 @@ def read_star(
         ]
     )
 
-    filter_names = [
-        "Gaia_G",
-        "Gaia_BP",
-        "Gaia_RP",
-        "Johnson_B",
-        "Johnson_V",
-        "Johnson_R",
-        "Johnson_I",
-        "Sloan_g",
-        "Sloan_r",
-        "Sloan_i",
-        "Sloan_z",
-        "2MASS_J",
-        "2MASS_H",
-        "2MASS_Ks",
-        "WISE_W1",
-        "WISE_W2",
-        "WISE_W3",
-        "WISE_W4",
-    ]
-
     ra, dec, ra_pm, dec_pm, parallax = raw[0:5]
 
     raw_mv_array = np.asarray(raw_mv) * 1.0e-3
 
-    # STEP 1: Create magnitudes dictionary with ALL available filter magnitudes
-    # This is the source of truth - all valid magnitudes go here first
-    magnitudes = {}
-    for filter_name, mag_value in zip(filter_names, raw_mv_array, strict=False):
-        if -32 < mag_value < 32:  # Valid magnitude range
-            magnitudes[filter_name] = float(mag_value)
+    centers = mv_centers[(raw_mv_array < 32) & (raw_mv_array > -32)]
+    mvs = raw_mv_array[(raw_mv_array < 32) & (raw_mv_array > -32)]
 
-    # STEP 2: Pick a primary magnitude FROM the magnitudes dict
-    # Priority order matches get_star_mv() for consistency
-    mv = None
-    if filter_center is not None:
-        # Interpolate from available magnitudes
-        # Need to reconstruct centers and mvs arrays for interpolation
-        centers = mv_centers[(raw_mv_array < 32) & (raw_mv_array > -32)]
-        mvs = raw_mv_array[(raw_mv_array < 32) & (raw_mv_array > -32)]
-        if len(centers) > 0 and len(mvs) > 0:
-            mv = np.interp(filter_center, centers, mvs)
-            if mv < -32 or mv > 32:
-                mv = None
-    else:
-        # Use priority order to pick primary from magnitudes dict
-        # This matches get_star_mv() priority: Johnson_V > Johnson_R > Sloan_r > Gaia_G > Sloan_g > Johnson_B
-        if "Johnson_V" in magnitudes:
-            mv = magnitudes["Johnson_V"]
-        elif "Johnson_R" in magnitudes:
-            mv = magnitudes["Johnson_R"]
-        elif "Sloan_r" in magnitudes:
-            mv = magnitudes["Sloan_r"]
-        elif "Gaia_G" in magnitudes:
-            mv = magnitudes["Gaia_G"]
-        elif "Sloan_g" in magnitudes:
-            mv = magnitudes["Sloan_g"]
-        elif "Johnson_B" in magnitudes:
-            mv = magnitudes["Johnson_B"]
-        elif len(magnitudes) > 0:
-            # Fallback: use first available magnitude
-            mv = next(iter(magnitudes.values()))
+    mv = np.interp(filter_center, centers, mvs) if filter_center is not None else get_star_mv(raw_mv_array)
 
-    # STEP 3: Ensure magnitudes dict is never empty and primary magnitude is set
-    # If no valid magnitudes found, this is an error case, but handle gracefully
-    if len(magnitudes) == 0:
-        # This should be rare - means all magnitudes are invalid
-        # Set a sentinel value and log a warning
-        mv = 32.0  # Invalid magnitude sentinel
-        magnitudes["Invalid"] = 32.0  # Mark as invalid
-    else:
-        # Ensure mv is set (should already be set above, but double-check)
-        if mv is None:
-            mv = next(iter(magnitudes.values()))  # Use first available
-
-    # Clamp mv to valid range
     if mv < -32 or mv > 32:
-        mv = 32.0
-
-    # CRITICAL: Ensure magnitudes dict is never None or empty
-    # This is the source of truth - if magnitude exists, magnitudes must exist
-    assert len(magnitudes) > 0, f"magnitudes dict is empty but mv={mv}"
-    assert mv is not None, "mv is None but magnitudes dict exists"
+        mv = 32
 
     return {
         "ra": ra * angleScale,
@@ -593,58 +469,37 @@ def read_star(
         "dec_pm": dec_pm * properMotionScale,
         "parallax": parallax * parallaxScale,
         "mv": mv,
-        "magnitudes": magnitudes,  # Always a non-empty dict
         "catalog": ", ".join(catalog_sources) if catalog_sources else "Unknown",
     }
 
 
 def get_star_mv(mv: list) -> float:
-    """Gets the best magnitude available for open band (silicon) observations.
-
-    For open band observations, we prioritize magnitudes that best match
-    silicon response, which is roughly similar to V-band or R-band.
+    """Gets the best visual magnitude available to be used for simulation.
 
     Args:
         mv: `list`, list of star magnitudes, see `read_star`
 
     Returns:
-        A `float`, the best available magnitude
+        A `float`, the visual magnitude
     """
-    # Priority order for open band (silicon response):
-    # 1. Johnson_V (closest to silicon peak response)
-    # 2. Johnson_R (good for silicon)
-    # 3. Sloan_r (similar to Johnson R)
-    # 4. Gaia_G (broad band, but may need color correction)
-    # 5. Sloan_g (blueward of silicon peak)
-    # 6. Johnson_B (too blue for silicon)
-
-    if mv[4] < 32:  # Johnson_V (index 4)
-        return mv[4]
-    if mv[5] < 32:  # Johnson_R (index 5)
-        return mv[5]
-    if mv[8] < 32:  # Sloan_r (index 8)
-        return mv[8]
-    if mv[0] < 32:  # Gaia_G (index 0) - broad band
+    if mv[0] < 32:  # Open
         return mv[0]
-    if mv[7] < 32:  # Sloan_g (index 7)
-        return mv[7]
-    if mv[3] < 32:  # Johnson_B (index 3)
+    if mv[5] < 32:  # Johnson_R
+        return mv[5]
+    if mv[8] < 32:  # Sloan_r
+        return mv[8]
+    if mv[4] < 32:  # Johnson_V
+        return mv[4]
+    if mv[3] < 32:  # Johnson_B
         return mv[3]
 
     return 32
 
 
 def get_wcs(
-    height: int,
-    width: int,
-    y_ifov: float,
-    x_ifov: float,
-    ra: float,
-    dec: float,
-    rot: float = 0.0,
-):
-    """Get an AstroPy world coordinate system (WCS) object used to transform
-    RA, Dec coordinates to focal plane array pixel coordinates.
+    height: int, width: int, y_ifov: float, x_ifov: float, ra: float, dec: float, rot: float = 0.0
+) -> wcs.WCS:
+    """Get an AstroPy WCS object for RA/Dec to pixel transformations.
 
     Args:
         height: `int`, height in number of pixels
@@ -658,7 +513,6 @@ def get_wcs(
     Returns:
         A `WCS`, used to transform RA, Dec to pixel coordinates
     """
-
     # TODO move to center
     crpix = [1, 1]
 
@@ -682,8 +536,8 @@ def get_min_max_ra_dec(
     rot: float = 0.0,
     pad_mult: float = 0.0,
     origin: str = "center",
-    offset: list = [0, 0],
-):
+    offset: list | None = None,
+) -> tuple[list[float], list[float], wcs.WCS]:
     """Get the min and max RA and Dec bounds based on focal plane parameters.
 
     Args:
@@ -705,12 +559,13 @@ def get_min_max_ra_dec(
             wcs: `WCS`, used to transform RA, Dec to pixel coordinates
 
     """
+    if offset is None:
+        offset = [0, 0]
 
     crpix = 0
 
     w = get_wcs(height, width, y_ifov, x_ifov, ra, dec, rot)
 
-    # pixcrd = np.array([[1,1],[1,height+1],[width+1,1],[width+1,height+1]], np.float_)
     hp = height * pad_mult
     wp = width * pad_mult
     pixcrd = np.array(
@@ -739,7 +594,7 @@ def get_min_max_ra_dec(
     world = w.wcs_pix2world(pixcrd, 1)
     cworld = w.wcs_pix2world(center, 1)
 
-    [cra, cdec] = cworld[0]
+    [cra, _cdec] = cworld[0]
 
     [minTheta, minPhi] = np.min(world, axis=0)
     [maxTheta, maxPhi] = np.max(world, axis=0)
@@ -776,7 +631,7 @@ def get_min_max_ra_dec(
     return cmin, cmax, w
 
 
-def decode_source_flags(source_flags):
+def decode_source_flags(source_flags: int) -> list[str]:
     """Decode source flags into a list of catalog and property names.
 
     Args:
@@ -818,14 +673,11 @@ def query_by_los_radec_with_rotation(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    rootPath: str = DEFAULT_SSTR7_PATH,
-    filter_center: float = None,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    rootPath: str = DEFAULT_SSTRC7_PATH,
+    filter_center: float | None = None,
     safety_margin: float = 0.1,  # Add 10% safety margin to ensure complete coverage
-):
-    """Query the catalog based on focal plane parameters, ra and dec line
-    of sight vector, and field rotation.
+) -> list[dict[str, Any]]:
+    """Query the catalog by focal plane parameters, line of sight, and rotation.
 
     Args:
         y_fov: `float`, y fov in degrees
@@ -873,329 +725,19 @@ def query_by_los_radec_with_rotation(
     )  # Correct for spherical distortion
     dec_corners = dec + rotated_corners[:, 1]
 
-    # Find min/max dec
+    # Find min/max ra/dec to define bounding box
+    min_ra = np.min(ra_corners)
+    max_ra = np.max(ra_corners)
     min_dec = np.min(dec_corners)
     max_dec = np.max(dec_corners)
 
-    # Normalize RA corners to [0, 360) range
-    ra_corners_normalized = np.mod(ra_corners, 360.0)
+    # Query stars within the bounding box
+    cmin = np.radians([min_ra, min_dec])
+    cmax = np.radians([max_ra, max_dec])
 
-    # Check if field crosses RA = 0/360 boundary
-    # This happens when the span of normalized corners is much larger than the FOV
-    ra_span = np.max(ra_corners_normalized) - np.min(ra_corners_normalized)
-    crosses_zero = ra_span > 180.0  # If span > 180°, we must have crossed the boundary
-
-    if crosses_zero:
-        # Field crosses RA = 0/360 boundary
-        # Find the RA values on each side of the boundary
-        ra_low_side = ra_corners_normalized[
-            ra_corners_normalized < 180.0
-        ]  # Values near 0
-        ra_high_side = ra_corners_normalized[
-            ra_corners_normalized >= 180.0
-        ]  # Values near 360
-
-        if len(ra_low_side) > 0 and len(ra_high_side) > 0:
-            # We need to query two ranges: [min_high, 360) and [0, max_low)
-            min_ra_high = np.min(ra_high_side)
-            max_ra_low = np.max(ra_low_side)
-
-            # Query first range: high RA values (near 360)
-            cmin1 = np.radians([min_ra_high, min_dec])
-            cmax1 = np.radians([360.0, max_dec])
-            stars1 = query_by_min_max(
-                cmin1[0],
-                cmax1[0],
-                cmin1[1],
-                cmax1[1],
-                rootPath,
-                filter_center=filter_center,
-                faint_lim=faint_lim,
-                bright_lim=bright_lim,
-            )
-
-            # Query second range: low RA values (near 0)
-            cmin2 = np.radians([0.0, min_dec])
-            cmax2 = np.radians([max_ra_low, max_dec])
-            stars2 = query_by_min_max(
-                cmin2[0],
-                cmax2[0],
-                cmin2[1],
-                cmax2[1],
-                rootPath,
-                filter_center=filter_center,
-                faint_lim=faint_lim,
-                bright_lim=bright_lim,
-            )
-
-            # Combine results
-            stars = stars1 + stars2
-        else:
-            # Shouldn't happen, but fall back to simple query
-            min_ra = np.min(ra_corners_normalized)
-            max_ra = np.max(ra_corners_normalized)
-            cmin = np.radians([min_ra, min_dec])
-            cmax = np.radians([max_ra, max_dec])
-            stars = query_by_min_max(
-                cmin[0],
-                cmax[0],
-                cmin[1],
-                cmax[1],
-                rootPath,
-                filter_center=filter_center,
-                faint_lim=faint_lim,
-                bright_lim=bright_lim,
-            )
-    else:
-        # Field doesn't cross boundary - simple case
-        min_ra = np.min(ra_corners_normalized)
-        max_ra = np.max(ra_corners_normalized)
-
-        # Query stars within the bounding box
-        cmin = np.radians([min_ra, min_dec])
-        cmax = np.radians([max_ra, max_dec])
-        stars = query_by_min_max(
-            cmin[0],
-            cmax[0],
-            cmin[1],
-            cmax[1],
-            rootPath,
-            filter_center=filter_center,
-            faint_lim=faint_lim,
-            bright_lim=bright_lim,
-        )
+    # Get stars from catalog
+    stars = query_by_min_max(
+        cmin[0], cmax[0], cmin[1], cmax[1], rootPath, filter_center=filter_center
+    )
 
     return stars
-
-
-def filter_catalog_by_magnitude(
-    source_path: str,
-    dest_path: str,
-    faint_lim: float,
-    bright_lim: float = -32.0,
-    numRaZones: int = 60,
-    numDecZones: int = 1800,
-    verbose: bool = True,
-):
-    """Filter an SSTRC7 catalog by magnitude and save to a new location.
-
-    This utility reads an existing SSTRC7 catalog, filters stars by magnitude,
-    and writes a new filtered catalog with updated index files. Preserves the
-    RA/Dec zone structure for efficient spatial queries.
-
-    Args:
-        source_path: `str`, path to source catalog directory
-        dest_path: `str`, path to destination catalog directory (will be created)
-        faint_lim: `float`, faint magnitude limit (stars fainter than this are excluded)
-        bright_lim: `float`, bright magnitude limit (stars brighter than this are excluded).
-            Default: -32.0 (includes all bright stars)
-        numRaZones: `int`, number of RA zones. default: 60
-        numDecZones: `int`, number of Dec zones. default: 1800
-        verbose: `bool`, print progress information
-
-    Returns:
-        None. Creates filtered catalog files in dest_path.
-
-    Example:
-        >>> filter_catalog_by_magnitude(
-        ...     source_path="/path/to/sstrc7",
-        ...     dest_path="/path/to/sstrc7_mag15",
-        ...     faint_lim=15.0
-        ... )
-    """
-    # Create destination directory if it doesn't exist
-    os.makedirs(dest_path, exist_ok=True)
-
-    if verbose:
-        print(f"Filtering catalog from {source_path} to {dest_path}")
-        print(f"Magnitude range: {bright_lim} < mag <= {faint_lim}")
-
-    # Load the original index to preserve RA zone structure
-    source_index_file = os.path.join(source_path, "sstrc.acc")
-    source_zone_index = load_index(
-        source_index_file, numRaZones=numRaZones, numDecZones=numDecZones
-    )
-
-    # Initialize new zone index
-    new_zone_index = []
-
-    total_kept = 0
-    total_original = 0
-
-    # Process each Dec zone
-    for dec_zone_id in range(numDecZones):
-        source_file = os.path.join(source_path, f"s{dec_zone_id:04d}.cat")
-        dest_file = os.path.join(dest_path, f"s{dec_zone_id:04d}.cat")
-
-        if not os.path.exists(source_file):
-            if verbose and dec_zone_id % 100 == 0:
-                print(f"Warning: Zone file {source_file} does not exist, skipping")
-            # Add empty zones to index
-            for _ in range(numRaZones):
-                new_zone_index.extend([0, 0])  # pos=0, length=0
-            continue
-
-        # Process each RA zone within this Dec zone
-        filtered_records = []
-        ra_zone_info = []  # Store (start_pos, length) for each RA zone
-
-        for ra_zone_id in range(numRaZones):
-            zone_info = source_zone_index[dec_zone_id][ra_zone_id]
-            zone_pos = zone_info["pos"]
-            zone_length = zone_info["length"]
-
-            if zone_length == 0:
-                ra_zone_info.append((len(filtered_records), 0))
-                continue
-
-            # Read this specific RA zone's data
-            with open(source_file, "rb") as f:
-                f.seek(zone_pos * RECORD_LEN_BYTES)
-                zone_data = f.read(zone_length * RECORD_LEN_BYTES)
-
-            # Filter stars in this RA zone
-            ra_zone_filtered = []
-            for i in range(zone_length):
-                start_idx = i * RECORD_LEN_BYTES
-                end_idx = start_idx + RECORD_LEN_BYTES
-                record = zone_data[start_idx:end_idx]
-
-                # Check magnitude
-                if quick_magnitude_check(
-                    record, faint_lim=faint_lim, bright_lim=bright_lim
-                ):
-                    ra_zone_filtered.append(record)
-
-            # Record where this RA zone starts in the filtered output and its length
-            ra_zone_start = len(filtered_records)
-            ra_zone_len = len(ra_zone_filtered)
-            ra_zone_info.append((ra_zone_start, ra_zone_len))
-
-            # Add filtered records to the output list
-            filtered_records.extend(ra_zone_filtered)
-
-            total_original += zone_length
-            total_kept += ra_zone_len
-
-        # Write filtered zone file
-        if filtered_records:
-            with open(dest_file, "wb") as f:
-                for record in filtered_records:
-                    f.write(record)
-
-        # Add RA zone info to index
-        for ra_start, ra_len in ra_zone_info:
-            new_zone_index.extend([ra_start, ra_len])
-
-        if verbose and dec_zone_id % 100 == 0:
-            zone_kept = sum(info[1] for info in ra_zone_info)
-            zone_original = sum(
-                source_zone_index[dec_zone_id][ra]["length"] for ra in range(numRaZones)
-            )
-            print(
-                f"Processed Dec zone {dec_zone_id}/{numDecZones}: {zone_kept}/{zone_original} stars kept"
-            )
-
-    # Write new index file
-    index_file = os.path.join(dest_path, "sstrc.acc")
-    with open(index_file, "wb") as f:
-        # Convert to numpy array and write as unsigned 32-bit integers
-        index_array = np.array(new_zone_index, dtype=np.uint32)
-        index_array.tofile(f)
-
-    if verbose:
-        print("\nFiltering complete!")
-        print(
-            f"Total stars: {total_kept:,}/{total_original:,} kept ({100 * total_kept / max(total_original, 1):.1f}%)"
-        )
-        print(f"New catalog written to: {dest_path}")
-        print(f"Index file: {index_file}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Filter SSTRC7 catalog by magnitude and save to a new directory",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Filter catalog to only include stars with magnitude <= 15
-  python sstr7.py /path/to/sstrc7 /path/to/sstrc7_mag15 --faint-lim 15.0
-
-  # Filter catalog with both bright and faint limits
-  python sstr7.py /path/to/sstrc7 /path/to/sstrc7_mag10to15 --faint-lim 15.0 --bright-lim 10.0
-
-  # Quiet mode (no progress output)
-  python sstr7.py /path/to/sstrc7 /path/to/sstrc7_mag15 --faint-lim 15.0 --quiet
-        """,
-    )
-
-    parser.add_argument(
-        "source_dir",
-        type=str,
-        help="Path to source SSTRC7 catalog directory",
-    )
-
-    parser.add_argument(
-        "output_dir",
-        type=str,
-        help="Path to output directory for filtered catalog (will be created if doesn't exist)",
-    )
-
-    parser.add_argument(
-        "--faint-lim",
-        type=float,
-        required=True,
-        help="Faint magnitude limit (stars fainter than this will be excluded)",
-    )
-
-    parser.add_argument(
-        "--bright-lim",
-        type=float,
-        default=-32.0,
-        help="Bright magnitude limit (stars brighter than this will be excluded). Default: -32.0 (no bright limit)",
-    )
-
-    parser.add_argument(
-        "--num-ra-zones",
-        type=int,
-        default=60,
-        help="Number of RA zones in catalog. Default: 60",
-    )
-
-    parser.add_argument(
-        "--num-dec-zones",
-        type=int,
-        default=1800,
-        help="Number of declination zones in catalog. Default: 1800",
-    )
-
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress progress output",
-    )
-
-    args = parser.parse_args()
-
-    # Validate that source directory exists
-    if not os.path.exists(args.source_dir):
-        print(f"Error: Source directory does not exist: {args.source_dir}")
-        exit(1)
-
-    # Check for index file in source directory
-    index_file = os.path.join(args.source_dir, "sstrc.acc")
-    if not os.path.exists(index_file):
-        print(f"Error: Index file not found: {index_file}")
-        print("Source directory may not be a valid SSTRC7 catalog")
-        exit(1)
-
-    # Run the filter
-    filter_catalog_by_magnitude(
-        source_path=args.source_dir,
-        dest_path=args.output_dir,
-        faint_lim=args.faint_lim,
-        bright_lim=args.bright_lim,
-        numRaZones=args.num_ra_zones,
-        numDecZones=args.num_dec_zones,
-        verbose=not args.quiet,
-    )

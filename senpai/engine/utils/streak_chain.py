@@ -9,15 +9,41 @@ the drift axis) can overrule a deviant extraction. Star line training labels
 and refinement kernels both inherit the corrected model.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import (
+        RateTrackFrame,
+        RateTrackFrameSerializable,
+        SenpaiRun,
+        SenpaiRunResult,
+        SiderealFrame,
+        SiderealFrameSerializable,
+    )
+
+    # A per-frame model, either live (numpy/datetime fields) or serialized
+    # (ISO-string timestamps); every accessor below is duck-typed via getattr.
+    Frame = RateTrackFrame | SiderealFrame | RateTrackFrameSerializable | SiderealFrameSerializable
+    Run = SenpaiRun | SenpaiRunResult
 
 logger = logging.getLogger(__name__)
 
 
-def _timestamp(frame):
+def _timestamp(frame: Frame) -> datetime | None:
+    """Extract a frame's timestamp as a datetime, tolerating ISO strings.
+
+    Args:
+        frame: A live or serialized per-frame model.
+
+    Returns:
+        The frame timestamp as a datetime, or None if absent or unparseable.
+    """
     ts = getattr(frame, "timestamp", None)
     if ts is None:
         return None
@@ -29,7 +55,16 @@ def _timestamp(frame):
     return ts
 
 
-def _exposure_seconds(frame) -> float | None:
+def _exposure_seconds(frame: Frame) -> float | None:
+    """Return a frame's exposure time in seconds, if available.
+
+    Args:
+        frame: A live or serialized per-frame model whose ``frame_metadata``
+            may be a model or a plain dict.
+
+    Returns:
+        The exposure time in seconds, or None if unset or zero.
+    """
     md = getattr(frame, "frame_metadata", None)
     exp = getattr(md, "exposure_time_seconds", None) if md is not None else None
     if exp is None and isinstance(md, dict):
@@ -37,11 +72,17 @@ def _exposure_seconds(frame) -> float | None:
     return float(exp) if exp else None
 
 
-def chain_drift_rates(senpai_run) -> list[tuple[float, float]]:
+def chain_drift_rates(senpai_run: Run) -> list[tuple[float, float]]:
     """Drift rate vectors (px/s) from the accepted hops of a run.
 
     Works on both live SenpaiRun objects and serialized SenpaiRunResult
     (ISO-string timestamps).
+
+    Args:
+        senpai_run: The run to read frames and accepted frame shifts from.
+
+    Returns:
+        One (x_rate, y_rate) pixel-per-second vector per valid, timed hop.
     """
     frames = {}
     for name in ("rate_track_frames", "sidereal_frames"):
@@ -67,7 +108,7 @@ def chain_drift_rates(senpai_run) -> list[tuple[float, float]]:
 
 
 def reconcile_streak_with_chain(
-    frame,
+    frame: Frame,
     rates: list[tuple[float, float]],
     length_tolerance: float = 0.5,
     angle_tolerance_deg: float = 25.0,
@@ -77,8 +118,20 @@ def reconcile_streak_with_chain(
     Only acts when the extraction is untrustworthy: the degenerate
     length==fwhm signature, a length off by more than *length_tolerance*
     (fractional), or an axis misaligned with the drift direction by more
-    than *angle_tolerance_deg*. Returns a description of what changed, or
-    None.
+    than *angle_tolerance_deg*.
+
+    Args:
+        frame: The rate-track frame whose ``streak`` model is corrected in place.
+        rates: Chain-derived drift-rate vectors (px/s) from
+            :func:`chain_drift_rates`; the median sets the expected geometry.
+        length_tolerance: Fractional length deviation tolerated before the
+            streak length is overruled.
+        angle_tolerance_deg: Maximum angular misalignment (degrees) tolerated
+            between the streak axis and the drift direction.
+
+    Returns:
+        A human-readable description of the corrections applied, or None when
+        the model is trusted or there is no meaningful streak to reconcile.
     """
     streak = getattr(frame, "streak", None)
     if streak is None or not rates:
@@ -141,13 +194,22 @@ def reconcile_streak_with_chain(
     return None
 
 
-def reconcile_run_streaks(senpai_run, length_tolerance: float = 0.5,
+def reconcile_run_streaks(senpai_run: Run, length_tolerance: float = 0.5,
                           angle_tolerance_deg: float = 25.0) -> int:
     """Reconcile every rate frame of a (possibly serialized) run in memory.
 
     Used at coco-export time so training labels get physical streak geometry
-    even when the saved run predates in-pipeline reconciliation. Returns the
-    number of frames changed.
+    even when the saved run predates in-pipeline reconciliation.
+
+    Args:
+        senpai_run: The run whose rate-track frames are reconciled in place.
+        length_tolerance: Fractional length deviation tolerated before a
+            streak length is overruled.
+        angle_tolerance_deg: Maximum angular misalignment (degrees) tolerated
+            between a streak axis and the drift direction.
+
+    Returns:
+        The number of frames whose streak model was changed.
     """
     rates = chain_drift_rates(senpai_run)
     if not rates:

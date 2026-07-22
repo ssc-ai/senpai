@@ -1,0 +1,71 @@
+name: Release
+
+# Publishing happens on dev -> main. When a version bump lands on main (i.e. a
+# release PR from dev is merged), this builds the wheel/sdist and publishes to
+# PyPI. A push to main that does NOT change the version is a safe no-op — the
+# "already on PyPI" guard skips the publish job. CI (lint + the test matrix)
+# runs on the dev PR itself via ci.yml, so main is only reached post-green.
+#
+# Auth: PyPI Trusted Publishing (OIDC) — no long-lived token in secrets.
+# One-time PyPI setup by a maintainer: add a pending/trusted publisher for
+# project "astro-senpai" pointing at this repo, workflow "release.yml",
+# environment "pypi".
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version and check PyPI
+        id: check
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if curl -sf "https://pypi.org/pypi/astro-senpai/$version/json" > /dev/null; then
+            echo "astro-senpai $version is already on PyPI — skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "astro-senpai $version is not on PyPI — will build and publish."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: guard
+    if: needs.guard.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+      contents: write   # push the version tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Build wheel + sdist
+        run: uv build
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Tag the release (if not already tagged)
+        env:
+          V: ${{ needs.guard.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/v$V" > /dev/null; then
+            echo "tag v$V already exists — leaving it."
+          else
+            git tag "v$V"
+            git push origin "v$V"
+          fi

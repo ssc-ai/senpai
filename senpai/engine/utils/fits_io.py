@@ -1,8 +1,9 @@
+"""FITS header extraction: coordinates, timing, site, pointing and track rates."""
+
 import argparse
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import arrow
 import astropy.units as u
@@ -21,15 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 def sexagesimal_to_decimal(value: str, units: str = "degrees") -> float:
-    """
-    Convert sexagesimal coordinates to decimal degrees.
+    """Convert sexagesimal coordinates to decimal degrees.
 
     Args:
-        value: String in sexagesimal format (e.g., "+20 44 48.24" or "14 15 39.7")
-        units: If provided, converts to the specified units
+        value: String in sexagesimal format (e.g., "+12 00 00" or
+            "06 00 00").
+        units: Either "degrees" (default) or "hours"; "hours" scales the
+            result by 15 to convert HMS to degrees.
 
     Returns:
-        float: Decimal degrees
+        float: Decimal degrees.
+
+    Raises:
+        ValueError: If the value cannot be parsed or ``units`` is unsupported.
     """
     # Clean up the input string
     value = value.strip()
@@ -79,13 +84,33 @@ def sexagesimal_to_decimal(value: str, units: str = "degrees") -> float:
     return decimal
 
 
-def extract_header_value(header: Header, key: str) -> Any:
+def extract_header_value(header: Header, key: str) -> str | int | float | bool | None:
+    """Return a header value by key, or None if the key is absent.
+
+    Args:
+        header: The FITS header to read from.
+        key: The header keyword to look up.
+
+    Returns:
+        The header value (str, int, float or bool), or None if not present.
+    """
     if key in header:
         return header[key]
     return None
 
 
 def float_nsew_to_decimal(value: str) -> float:
+    """Convert a signed cardinal-direction coordinate string to a float.
+
+    A trailing/embedded N/S/E/W is stripped and used to set the sign (S and W
+    are negative).
+
+    Args:
+        value: Coordinate string, optionally carrying a cardinal direction.
+
+    Returns:
+        The coordinate as a signed float.
+    """
     # Handle coordinates with cardinal directions (N, S, E, W)
     value = value.strip()
     cardinal = None
@@ -107,7 +132,23 @@ def float_nsew_to_decimal(value: str) -> float:
     return decimal
 
 
-def convert_to_decimal_degrees_unknown_format(value: str, units: str = None) -> float:
+def convert_to_decimal_degrees_unknown_format(value: str, units: str | None = None) -> float:
+    """Convert a coordinate of unknown format to decimal degrees.
+
+    Tries sexagesimal, plain float, and cardinal-direction parsing in turn,
+    then applies the requested units.
+
+    Args:
+        value: The coordinate string to convert.
+        units: Either "degrees" or "hours" ("hours" scales by 15).
+
+    Returns:
+        The coordinate in decimal degrees.
+
+    Raises:
+        ValueError: If the value cannot be converted or ``units`` is
+            unsupported.
+    """
     for converter in [sexagesimal_to_decimal, float, float_nsew_to_decimal]:
         try:
             value = converter(value)
@@ -126,7 +167,19 @@ def convert_to_decimal_degrees_unknown_format(value: str, units: str = None) -> 
     raise ValueError(f"Could not convert value to decimal degrees: {value}")
 
 
-def convert_to_decimal_kilometers(value: str, units: str = None) -> float:
+def convert_to_decimal_kilometers(value: str, units: str | None = None) -> float:
+    """Convert a distance value to kilometers.
+
+    Args:
+        value: The numeric distance as a string.
+        units: Either "kilometers" or "meters".
+
+    Returns:
+        The distance in kilometers.
+
+    Raises:
+        ValueError: If ``units`` is not "kilometers" or "meters".
+    """
     if units == "kilometers":
         return float(value)
     elif units == "meters":
@@ -136,7 +189,21 @@ def convert_to_decimal_kilometers(value: str, units: str = None) -> float:
         raise ValueError(f"Unsupported units: {units}")
 
 
-def convert_to_decimal_degrees(value, fmt: str = None, units: str = None) -> float:
+def convert_to_decimal_degrees(value: str | float, fmt: str | None = None, units: str | None = None) -> float:
+    """Convert a coordinate to decimal degrees using an explicit format.
+
+    Args:
+        value: The coordinate value (string or numeric).
+        fmt: The source format: "sexagesimal", "float" or "float NSEW".
+        units: Either "degrees" or "hours" ("hours" scales by 15); used for
+            the "sexagesimal" and "float" formats.
+
+    Returns:
+        The coordinate in decimal degrees.
+
+    Raises:
+        ValueError: If ``fmt`` or ``units`` is unsupported.
+    """
     if fmt == "sexagesimal":
         return sexagesimal_to_decimal(str(value), units)
     elif fmt == "float":
@@ -162,9 +229,10 @@ def extract_filter_from_header(header: Header) -> str | None:
     Tries configured header keys and normalizes common clear/open filter
     values to "Clear".
 
-    Returns
-    -------
-    str or None
+    Args:
+        header: The FITS header to read filter keywords from.
+
+    Returns:
         Normalized filter name, or None if not found.
     """
     config = get_config()
@@ -179,6 +247,17 @@ def extract_filter_from_header(header: Header) -> str | None:
 
 
 def extract_observation_time_from_header(header: Header) -> datetime | None:
+    """Extract the observation time from a FITS header.
+
+    Tries the configured observation-time keys (parsed with the configured
+    format, falling back to arrow), then a broad last-ditch date-header scan.
+
+    Args:
+        header: The FITS header to read time keywords from.
+
+    Returns:
+        The observation time as a datetime, or None if no time header is found.
+    """
     config = get_config()
     for key in config.headers.observation_time.observation_time_keys:
         observation_time = extract_header_value(header, key)
@@ -204,6 +283,14 @@ def extract_observation_time_from_header(header: Header) -> datetime | None:
 
 
 def extract_exposure_time_from_header(header: Header) -> float | None:
+    """Extract the exposure time (seconds) from a FITS header.
+
+    Args:
+        header: The FITS header to read exposure-time keywords from.
+
+    Returns:
+        The exposure time in seconds, or None if no key is present.
+    """
     config = get_config()
     for key in config.headers.exposure_time.exposure_time_keys:
         exposure_time = extract_header_value(header, key)
@@ -216,6 +303,15 @@ def extract_exposure_time_from_header(header: Header) -> float | None:
 
 
 def extract_observing_site_from_header(header: Header) -> SiteMetadata | None:
+    """Extract the observing site (lat/lon/altitude) from a FITS header.
+
+    Args:
+        header: The FITS header to read site keywords from.
+
+    Returns:
+        A SiteMetadata built from the configured latitude/longitude/altitude
+        keys, or None if latitude and longitude cannot both be determined.
+    """
     config = get_config()
 
     latitude = None
@@ -260,7 +356,19 @@ def extract_observing_site_from_header(header: Header) -> SiteMetadata | None:
         return None
 
 
-def extract_boresight_from_header(header: Header) -> tuple[float, float]:
+def extract_boresight_from_header(header: Header) -> tuple[float | None, float | None]:
+    """Extract the boresight pointing (RA, Dec) in degrees from a FITS header.
+
+    Uses the RA/Dec keys directly when present; otherwise reads Alt/Az and
+    converts to RA/Dec using the header's observation time and observing site.
+
+    Args:
+        header: The FITS header to read pointing keywords from.
+
+    Returns:
+        A (ra_deg, dec_deg) tuple, or (None, None) when the boresight cannot be
+        determined (missing pointing, time, or site information).
+    """
     config = get_config()
 
     ra = None
@@ -370,10 +478,19 @@ _RATE_UNIT_TO_ARCSEC_PER_SEC: dict[str, float] = {
 
 
 def _to_arcsec_per_second(value: float, unit: str) -> float:
-    """Normalize a track-rate value to arcseconds/second using the unit string
-    declared in ``config.headers.tracking.track_*_rate_unit``. Unknown unit
-    strings are treated as arcsec/s (the senpai default) with a warning."""
+    """Normalize a track-rate value to arcseconds/second.
 
+    The unit string comes from ``config.headers.tracking.track_*_rate_unit``.
+    Unknown unit strings are treated as arcsec/s (the senpai default) with a
+    warning.
+
+    Args:
+        value: The track-rate value in the given unit.
+        unit: The unit string the value is expressed in.
+
+    Returns:
+        The track rate in arcseconds per second.
+    """
     factor = _RATE_UNIT_TO_ARCSEC_PER_SEC.get(unit.strip().lower())
     if factor is None:
         logger.warning(
@@ -384,7 +501,20 @@ def _to_arcsec_per_second(value: float, unit: str) -> float:
     return value * factor
 
 
-def extract_track_rates_from_header(header: Header) -> tuple[float, float, TrackMode]:
+def extract_track_rates_from_header(header: Header) -> tuple[float | None, float | None, TrackMode]:
+    """Extract RA/Dec track rates (arcsec/s) and the track mode from a header.
+
+    Track mode is taken from the configured mode keys when unambiguous, then
+    falls back to inferring SIDEREAL/RATE from whether the track rates are zero.
+
+    Args:
+        header: The FITS header to read tracking keywords from.
+
+    Returns:
+        A (ra_rate, dec_rate, track_mode) tuple. The rates are in arcseconds
+        per second and may be None when the corresponding keys are absent;
+        ``track_mode`` is a :class:`TrackMode` (``UNKNOWN`` if undetermined).
+    """
     config = get_config()
 
     ra_rate = None
@@ -444,7 +574,12 @@ def extract_track_rates_from_header(header: Header) -> tuple[float, float, Track
     return ra_rate, dec_rate, mode_enum
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments for the FITS-header inspection CLI.
+
+    Returns:
+        The parsed arguments namespace (``fits_file`` and ``config``).
+    """
     parser = argparse.ArgumentParser(description="Extract information from FITS files based on configuration.")
     parser.add_argument("fits_file", help="Path to the FITS file to analyze")
     parser.add_argument(
@@ -457,7 +592,12 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def main():
+def main() -> int:
+    """Inspect a FITS file and print the extracted header information.
+
+    Returns:
+        Process exit code: 0 on success, 1 if the file could not be processed.
+    """
     args = parse_arguments()
 
     set_log_level(level="DEBUG")

@@ -29,12 +29,14 @@ import logging
 import numpy as np
 from astropy.stats import sigma_clipped_stats
 from pydantic import BaseModel, field_serializer
-from scipy.ndimage import label, maximum_filter, map_coordinates
+from scipy.ndimage import label, map_coordinates, maximum_filter
 from scipy.optimize import curve_fit
 
 from senpai.engine.detection.kernels import build_directional_filter_bank
-from senpai.engine.detection.streak.masking import analyze_source_shape_fwhm
+from senpai.engine.detection.streak.masking_extra import analyze_source_shape_fwhm
+from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.starfield import StarField
+from senpai.engine.photometry.color_terms import MultiBandCalibration
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +284,19 @@ def _characterize_component(
 # ---------------------------------------------------------------------------
 
 
-def _gauss1d(x, amp, mu, sig, bg):
+def _gauss1d(x: np.ndarray, amp: float, mu: float, sig: float, bg: float) -> np.ndarray:
+    """Evaluate a 1D Gaussian with a constant background.
+
+    Args:
+        x: Coordinate(s) at which to evaluate the Gaussian.
+        amp: Peak amplitude above the background.
+        mu: Center position of the Gaussian.
+        sig: Standard deviation of the Gaussian.
+        bg: Constant background level.
+
+    Returns:
+        The Gaussian-plus-background evaluated at ``x``.
+    """
     return amp * np.exp(-((x - mu) ** 2) / (2 * sig ** 2)) + bg
 
 
@@ -426,7 +440,7 @@ def _refine_streak_from_image(
             starts = np.concatenate(([0], gaps + 1))
             ends = np.concatenate((gaps, [len(above_half) - 1]))
             refined_length = candidate.length_pixels
-            for s, e in zip(starts, ends):
+            for s, e in zip(starts, ends, strict=False):
                 if above_half[s] <= peak_t <= above_half[e]:
                     refined_length = float(above_half[e] - above_half[s])
                     break
@@ -895,8 +909,8 @@ def _trace_and_build_candidate(
             sky = wcs.pixel_to_world(centroid_x, centroid_y)
             candidate.ra = float(sky.ra.deg)
             candidate.dec = float(sky.dec.deg)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to compute sky coordinates for candidate: %s", exc)
 
     # Rate estimate
     if exposure_time and exposure_time > 0:
@@ -1140,8 +1154,11 @@ def detect_streaks_in_sidereal(
     ]
 
     def _is_excluded_star_streak(candidate: StreakCandidate) -> bool:
-        """Candidate is a star trail (rate frames): matches the tracking angle
-        and either the approximate trail length or a star on its axis."""
+        """Return whether a candidate is an excluded star trail on rate frames.
+
+        A candidate is a star trail when it matches the tracking angle and either the
+        approximate trail length or a star lying on its axis.
+        """
         if exclude_angle_deg is None or not exclude_length_pixels:
             return False
         diff = abs(candidate.angle_deg - exclude_angle_deg) % 180
@@ -1393,7 +1410,7 @@ def detect_streaks_in_sidereal(
 
 
 def measure_streak_candidate_photometry(
-    image,
+    image: ProcessedFitsImage | np.ndarray,
     candidates: list[StreakCandidate],
     zero_point: float,
     zero_point_err: float | None = None,
@@ -1401,7 +1418,7 @@ def measure_streak_candidate_photometry(
     fwhm: float = 4.0,
     gain: float = 1.0,
     read_noise: float = 0.0,
-    multiband_calibration=None,
+    multiband_calibration: MultiBandCalibration | None = None,
     observation_filter: str | None = None,
 ) -> None:
     """Measure photometry for streak candidates using rectangular apertures.

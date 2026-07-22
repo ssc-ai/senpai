@@ -9,7 +9,7 @@ from senpai.astrometry import solve_field
 from senpai.catalog.runner import enforce_catalog, query_catalog
 from senpai.core.config import get_config
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
-from senpai.engine.detection.point.sidereal import extract_point_sources
+from senpai.engine.detection.point.sidereal_extra import extract_point_sources
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.starfield import StarField
 from senpai.engine.photometry.utils import (
@@ -30,28 +30,18 @@ def process_image_photometry(
     save_apertures: bool = False,
     verbose: bool = False,
 ) -> dict:
-    """
-    Process photometry on a single FITS image.
+    """Process photometry on a single FITS image.
 
-    Parameters
-    ----------
-    fits_path : str
-        Path to the FITS image
-    config : PhotometryConfig, optional
-        Photometry configuration
-    output_dir : Path, optional
-        Output directory for results
-    save_plots : bool
-        Whether to save diagnostic plots
-    save_apertures : bool
-        Whether to save aperture visualization
-    verbose : bool
-        Whether to print detailed output
+    Args:
+        fits_path: Path to the FITS image.
+        config: Photometry configuration; defaults are used when omitted.
+        output_dir: Output directory for results.
+        save_plots: Whether to save diagnostic plots.
+        save_apertures: Whether to save aperture visualization.
+        verbose: Whether to print detailed output.
 
-    Returns
-    -------
-    dict
-        Photometry results and summary
+    Returns:
+        A dictionary of photometry results and summary.
     """
     enforce_catalog()
 
@@ -82,7 +72,7 @@ def process_image_photometry(
 
         # Apply radius filtering if configured
         if app_config.astrometry.reduce_field_by_radius is not None:
-            from senpai.engine.utils.propagate_wcs import filter_catalog_stars_by_radius
+            from senpai.engine.utils.wcs_ops import filter_catalog_stars_by_radius
 
             catalog = filter_catalog_stars_by_radius(
                 catalog, starfield.image_metadata, app_config.astrometry.reduce_field_by_radius
@@ -184,8 +174,15 @@ def _save_photometry_plots(
     photometry_results: list,
     starfield: StarField,
     output_dir: Path,
-):
-    """Save diagnostic plots for photometry results."""
+) -> None:
+    """Save diagnostic plots for photometry results.
+
+    Args:
+        image: The processed image the photometry was measured on.
+        photometry_results: Per-source photometry results.
+        starfield: The solved starfield used to overlay markers.
+        output_dir: Directory the plot is written to.
+    """
     try:
         from senpai.engine.plotting.images import plot_single_frame
 
@@ -206,8 +203,14 @@ def _save_aperture_visualization(
     image: ProcessedFitsImage,
     photometry_results: list,
     output_dir: Path,
-):
-    """Save aperture visualization for photometry results."""
+) -> None:
+    """Save aperture visualization for photometry results.
+
+    Args:
+        image: The processed image the photometry was measured on.
+        photometry_results: Per-source photometry results with aperture geometry.
+        output_dir: Directory the visualization is written to.
+    """
     try:
         import matplotlib.pyplot as plt
         from photutils.aperture import CircularAnnulus, CircularAperture

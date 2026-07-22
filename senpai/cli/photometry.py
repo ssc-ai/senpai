@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-CLI for photometry measurements on FITS images.
+r"""CLI for photometry measurements on FITS images.
 
 This CLI provides a command-line interface for performing comprehensive
 photometry on astronomical images with WCS solutions.
@@ -35,8 +34,12 @@ from senpai.engine.processing.photometry_pipeline import process_image_photometr
 logger = logging.getLogger(__name__)
 
 
-def main():
-    """Main CLI function."""
+def main() -> None:
+    """Parse CLI arguments and run photometry on a single FITS image.
+
+    Raises:
+        Exception: Re-raises any error encountered while processing photometry.
+    """
     parser = argparse.ArgumentParser(description="Perform photometry on FITS images")
 
     # Required arguments

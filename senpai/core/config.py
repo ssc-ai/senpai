@@ -1,18 +1,53 @@
+"""Application configuration: pydantic-settings models and the process-global singleton.
+
+The configuration is a pydantic-settings tree rooted at :class:`AppConfig`, loaded from a
+YAML file (either flat sections at the top level or nested under a single ``app:`` key) with
+every field overridable through environment variables using ``__`` as the nesting delimiter
+(e.g. ``ASTROMETRY__CPULIMIT_SECONDS=60``). Environment variables take precedence over the
+YAML file.
+
+``initialize_config`` populates the module-global singleton returned by ``get_config``;
+:mod:`senpai.settings` exposes the same instance through a lazy ``settings`` proxy.
+"""
+
 import logging
+import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+from senpai.exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
 
 # Global singleton instance
 _config_instance: Optional["AppConfig"] = None
 
+# YAML file consumed by the next AppConfig construction; set (and reset) by
+# initialize_config so direct AppConfig(**kwargs) constructions read no file.
+_yaml_file_for_next_init: Path | None = None
+
 
 def load_yaml(path: Path) -> dict:
-    """Load YAML file into dictionary."""
+    """Load a YAML config file and return its ``app`` section.
+
+    Retained for backwards compatibility with configs nested under an ``app:`` key;
+    ``initialize_config`` accepts both nested and flat layouts.
+
+    Args:
+        path (Path): path to the YAML file.
+
+    Returns:
+        dict: the ``app`` section contents, or ``{}`` when the file is missing,
+            malformed, or has no ``app`` key.
+    """
     try:
         with path.open() as f:
             data = yaml.safe_load(f)
@@ -22,8 +57,72 @@ def load_yaml(path: Path) -> dict:
         return {}
 
 
+def _load_config_mapping(path: Path) -> dict:
+    """Load a YAML config file accepting both flat and ``app:``-nested layouts.
+
+    Args:
+        path (Path): path to the YAML file.
+
+    Returns:
+        dict: the config mapping (the ``app`` section when present, otherwise the whole
+            document), or ``{}`` when the file is missing or malformed.
+    """
+    try:
+        with path.open() as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        logger.error(f"Failed to load config from {path}: {e}")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    app_section = data.get("app")
+    if isinstance(app_section, dict):
+        return app_section
+    return data
+
+
+class _YamlConfigSource(PydanticBaseSettingsSource):
+    """Settings source reading the YAML file set by ``initialize_config``.
+
+    Loads the whole mapping in one shot (flat or ``app:``-nested) rather than
+    per-field, so ``__call__`` is overridden and ``get_field_value`` is unused.
+    """
+
+    def __init__(self, settings_cls: type[BaseSettings], yaml_file: Path | None) -> None:
+        """Store the target YAML path.
+
+        Args:
+            settings_cls (type[BaseSettings]): the settings class being configured.
+            yaml_file (Path | None): YAML file to read, or None for no file source.
+        """
+        super().__init__(settings_cls)
+        self._yaml_file = yaml_file
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:  # noqa: ANN401
+        """Unused per-field hook (the whole mapping is returned by ``__call__``).
+
+        Args:
+            field (Any): field being resolved (unused).
+            field_name (str): name of the field (unused).
+
+        Returns:
+            tuple[Any, str, bool]: a "no value" sentinel triple.
+        """
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        """Return the YAML mapping for this settings construction.
+
+        Returns:
+            dict[str, Any]: parsed config mapping, or ``{}`` when no file is set.
+        """
+        if self._yaml_file is None:
+            return {}
+        return _load_config_mapping(Path(self._yaml_file))
+
+
 class LoggingConfig(BaseModel):
-    """Logging configuration"""
+    """Logging configuration."""
 
     level: str = "INFO"
 
@@ -31,7 +130,7 @@ class LoggingConfig(BaseModel):
 
 
 class PlottingConfig(BaseModel):
-    """Plotting configuration"""
+    """Plotting configuration."""
 
     debug: bool = Field(description="Debug Plots")
     review: bool = Field(description="Review Plots")
@@ -51,6 +150,7 @@ class PlottingConfig(BaseModel):
         "into a paper where the caption replaces the on-figure title. The normal "
         "titled figure is still written.",
     )
+    output_dir: str = Field(default=".", description="Directory debug plots are written to.")
 
 
 class FastSolveConfig(BaseModel):
@@ -71,14 +171,15 @@ class FastSolveConfig(BaseModel):
 
 
 class AstrometryConfig(BaseModel):
-    """Astrometry(.net) configuration"""
+    """Astrometry(.net) configuration."""
 
-    solver_mode: Literal["dotnet", "tetra3", "chain"] = Field(
+    solver_mode: Literal["dotnet", "tetra3", "chain", "senpai"] = Field(
         default="dotnet",
         description="Plate-solve engine: 'dotnet' = astrometry.net via astroeasy (the original "
         "path), 'tetra3' = native catalog tiers only (T0 refine + T1 pattern match, no "
         "astrometry.net required), 'chain' = full escalation cascade (native tiers first, "
-        "astrometry.net backstop)",
+        "astrometry.net backstop), 'senpai' = in-process solver (astrometry PyPI package; "
+        "blind solve + same-cell verify + SIP-1 refine)",
     )
     fast_solve: FastSolveConfig = Field(
         default_factory=FastSolveConfig,
@@ -110,13 +211,55 @@ class AstrometryConfig(BaseModel):
         default=True,
         description="Enable SIP refit after initial solve using catalog stars for better edge distortion fitting",
     )
+    search_radius_degrees: float = Field(
+        default=5.0,
+        description="Radius around boresight (if provided) for astrometry to search for a fit.",
+    )
+    source_extractor: str = Field(
+        default="sextractor",
+        description=(
+            "Source extractor for plate solving. "
+            "Options: 'sextractor' (SEP/SExtractor, recommended), "
+            "'daofind' (photutils DAOFind), "
+            "'image2xy' (astrometry.net bundled binary)."
+        ),
+    )
+    sip_order: int = Field(
+        default=3,
+        description="SIP distortion polynomial order used by WCS refinement (0 disables SIP)",
+    )
+    min_logodds_threshold: float = Field(
+        default=21.0,
+        description="Minimum log-odds confidence for accepting a plate solution",
+    )
+    error_on_plate_solve_failure: bool = Field(
+        default=False,
+        description="If True, raise an exception if the image set has no WCS solution. "
+        "If False, record the failure on the run and return blank output.",
+    )
+    require_complete_indices: bool = Field(
+        default=False,
+        description="If True, fail at startup if the star index is not present and complete "
+        "(solver_mode 'senpai' only).",
+    )
+    release_index_cache_after_solve: bool = Field(
+        default=True,
+        description=(
+            "After each in-process plate solve (solver_mode 'senpai'), drop the astrometry "
+            "index files' page cache via posix_fadvise(POSIX_FADV_DONTNEED). The solver mmaps "
+            "index tiles whose pages otherwise linger as file-backed page cache and accumulate "
+            "toward the full index size across a run, so the process working set climbs like a "
+            "leak even though the memory is reclaimable. Releasing after each solve keeps it "
+            "flat; the cost is re-reading needed tiles from disk on the next solve."
+        ),
+    )
 
 
 class StarCatalogConfig(BaseModel):
-    """Star catalog configuration"""
+    """Star catalog configuration."""
 
     type: str = Field(description="Star catalog type")
-    path: Optional[str] = Field(
+    path: str | None = Field(
         default=None,
         description="Star catalog path (required for local catalogs like SSTRC7, not needed for online catalogs like SDSS)",
     )
@@ -135,8 +278,15 @@ class StarCatalogConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_catalog_config(self):
-        """Validate that path is provided for local catalogs but not required for online catalogs."""
+    def validate_catalog_config(self) -> "StarCatalogConfig":
+        """Validate that path is provided for local catalogs but not required for online catalogs.
+
+        Returns:
+            The validated configuration instance.
+
+        Raises:
+            ValueError: If a local catalog type is selected without a path.
+        """
         # Online catalogs don't need a path
         if self.type in ["sdss", "gaia"]:
             return self  # Path can be None for online catalogs
@@ -149,7 +299,7 @@ class StarCatalogConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    """CLI runtime configuration"""
+    """CLI runtime configuration."""
 
     run_id: str = Field(default="senpai", description="Run identifier")
     output_dir: str = Field(default=".", description="Output directory")
@@ -165,7 +315,7 @@ class RuntimeConfig(BaseModel):
 
 
 class DetectionConfig(BaseModel):
-    """Detection configuration"""
+    """Detection configuration."""
 
     detect: bool = Field(default=False, description="Detect point sources")
     detect_streaks: bool = Field(default=True, description="Run streak detection when detect=True")
@@ -176,6 +326,36 @@ class DetectionConfig(BaseModel):
     )
     streak_angle_tolerance_deg: float = Field(
         default=15.0, description="Angle tolerance for cross-frame streak matching"
+    )
+    require_wcs_refinement: bool = Field(
+        default=True,
+        description="Only produce detections on frames where WCS refinement succeeded",
+    )
+    centroid_guard_mode: Literal["fwhm", "fixed", "none"] = Field(
+        default="fwhm",
+        description=(
+            "Guard for the reported point-source position. The SEP sub-pixel centroid is "
+            "reported unless it disagrees with the brightest pixel by more than a threshold, "
+            "in which case the brightest pixel is reported instead (saturation/trail/blend "
+            "protection). 'fwhm': threshold = centroid_guard_value * FWHM (PSF-relative); "
+            "'fixed': threshold = centroid_guard_value pixels; 'none': always report the "
+            "sub-pixel centroid."
+        ),
+    )
+    centroid_guard_value: float = Field(
+        default=0.4,
+        description=(
+            "Threshold for centroid_guard_mode: a multiple of the PSF FWHM ('fwhm') or an "
+            "absolute pixel distance ('fixed'). Ignored when mode is 'none'."
+        ),
+    )
+    sidereal_point_detections: bool = Field(
+        default=True,
+        description=(
+            "Flag bright non-catalog point sources on solved sidereal frames as candidate "
+            "detections. Disable for pipelines that report detections only on rate-track "
+            "frames."
+        ),
     )
 
 
@@ -241,10 +421,13 @@ class StreakDetectionConfig(BaseModel):
         description="Misalignment between streak axis and drift axis beyond "
         "which the extracted angle is replaced",
     )
+    max_fwhm_for_streak_extraction: float = Field(
+        default=10.0, description="Maximum FWHM allowed by extract_streak_dims_robust()."
+    )
 
 
 class ValidationConfig(BaseModel):
-    """Configuration for box-based shift validation in rate tracking"""
+    """Configuration for box-based shift validation in rate tracking."""
 
     box_size: int = Field(
         default=11,
@@ -357,13 +540,13 @@ class ChainGateConfig(BaseModel):
 
 
 class ExposureTimeConfig(BaseModel):
-    """Configuration for exposure time header keys"""
+    """Configuration for exposure time header keys."""
 
     exposure_time_keys: list[str] = Field(default_factory=list, description="FITS header keys for exposure time")
 
 
 class ObservationTimeConfig(BaseModel):
-    """Configuration for observation time header keys"""
+    """Configuration for observation time header keys."""
 
     observation_time_keys: list[str] = Field(default_factory=list, description="FITS header keys for observation time")
     format: str = Field(
@@ -373,7 +556,7 @@ class ObservationTimeConfig(BaseModel):
 
 
 class SiteConfig(BaseModel):
-    """Configuration for observatory site header keys"""
+    """Configuration for observatory site header keys."""
 
     site_latitude_keys: list[str] = Field(default_factory=list, description="FITS header keys for site latitude")
     site_longitude_keys: list[str] = Field(default_factory=list, description="FITS header keys for site longitude")
@@ -387,7 +570,7 @@ class SiteConfig(BaseModel):
 
 
 class PointingConfig(BaseModel):
-    """Configuration for telescope pointing header keys"""
+    """Configuration for telescope pointing header keys."""
 
     boresight_azimuth_keys: list[str] = Field(
         default_factory=list, description="FITS header keys for boresight azimuth"
@@ -406,7 +589,7 @@ class PointingConfig(BaseModel):
 
 
 class TrackingConfig(BaseModel):
-    """Configuration for telescope tracking header keys"""
+    """Configuration for telescope tracking header keys."""
 
     track_ra_rate_keys: list[str] = Field(default_factory=list, description="FITS header keys for RA tracking rate")
     track_dec_rate_keys: list[str] = Field(default_factory=list, description="FITS header keys for DEC tracking rate")
@@ -428,7 +611,7 @@ class TrackingConfig(BaseModel):
 
 
 class HeadersConfig(BaseModel):
-    """Configuration for FITS header mappings"""
+    """Configuration for FITS header mappings."""
 
     exposure_time: ExposureTimeConfig = Field(
         default_factory=ExposureTimeConfig,
@@ -453,6 +636,12 @@ class PhotometryConfig(BaseModel):
     Single source of truth for all photometry knobs — the engine
     (senpai.engine.photometry.utils) uses this class directly.
     """
+
+    enable: bool = Field(
+        default=True,
+        description="Run the per-frame photometry stage (zero point, limiting magnitude, "
+        "detection photometry) after detection. Disable for detection-only runs.",
+    )
 
     # Aperture photometry: fixed aperture size as multiple of FWHM
     aperture_radius_factor: float = Field(default=2.0, description="Aperture radius as multiple of FWHM")
@@ -523,7 +712,7 @@ class PhotometryConfig(BaseModel):
 
 
 class CalibrationsConfig(BaseModel):
-    """Configuration for calibration frames (flats, darks, etc.)"""
+    """Configuration for calibration frames (flats, darks, etc.)."""
 
     master_flats_dir: str | None = Field(default=None, description="Directory containing master flat files")
     master_darks_dir: str | None = Field(default=None, description="Directory containing master dark files")
@@ -581,8 +770,45 @@ class CalibrationsConfig(BaseModel):
     oversample_threshold: float = Field(default=4.0, description="Only scale images if FWHM > this threshold")
 
 
-class AppConfig(BaseModel):
-    """Application configuration"""
+class ObservationsConfig(BaseModel):
+    """Observation-pointing configuration for the detection-pointing core.
+
+    Consumed by :mod:`senpai.engine.pointing` when deriving per-detection RA/Dec
+    and uncertainties from the refined WCS.
+    """
+
+    centroid_localization_std_pix: float | None = Field(
+        default=None,
+        description=(
+            "1-sigma centroid-localization uncertainty, in pixels. Drives the per-observation "
+            "WCS-Jacobian uncertainty derivation. Left unset (null), the derived RA/Dec "
+            "uncertainties are None."
+        ),
+    )
+    uncertainty_warn_threshold_deg: float = Field(
+        default=1.0,
+        description=(
+            "Emit a warning when a WCS-derived RA/Dec uncertainty exceeds this threshold "
+            "(degrees). Observability only; the value is still emitted."
+        ),
+    )
+    time_offsets_s: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Per-sensor clock offset, in seconds, SUBTRACTED from the reported exposure window. "
+            "Keyed by sensor id."
+        ),
+    )
+
+
+class AppConfig(BaseSettings):
+    """Application configuration.
+
+    Loaded from a YAML file via ``initialize_config`` with environment-variable
+    overrides (``__`` nesting delimiter, e.g. ``DETECTION__SNR_THRESHOLD=5``).
+    Environment variables take precedence over YAML values. The top level is
+    frozen; runtime-mutable sections (``runtime``, ``plotting``) stay mutable.
+    """
 
     version: str = Field(description="Application version")
     debug: bool = Field(default=False, description="Debug mode")
@@ -611,16 +837,50 @@ class AppConfig(BaseModel):
         default_factory=CalibrationsConfig,
         description="Calibration frames configuration",
     )
+    observations: ObservationsConfig = Field(
+        default_factory=ObservationsConfig,
+        description="Observation-pointing configuration",
+    )
 
-    model_config = ConfigDict(frozen=True)
+    model_config = SettingsConfigDict(env_nested_delimiter="__", frozen=True, extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Order the settings sources: init kwargs, then env vars, then the YAML file.
+
+        Args:
+            settings_cls (type[BaseSettings]): the settings class being configured.
+            init_settings (PydanticBaseSettingsSource): source for values passed at init.
+            env_settings (PydanticBaseSettingsSource): source for environment variables.
+            dotenv_settings (PydanticBaseSettingsSource): source for ``.env`` files (unused).
+            file_secret_settings (PydanticBaseSettingsSource): file-secret source (unused).
+
+        Returns:
+            tuple[PydanticBaseSettingsSource, ...]: the ordered sources; earlier sources
+                take precedence, so environment variables override the YAML file.
+        """
+        return (
+            init_settings,
+            env_settings,
+            _YamlConfigSource(settings_cls, yaml_file=_yaml_file_for_next_init),
+        )
 
 
 def get_config() -> AppConfig:
     """Get the global config instance.
 
     Returns:
-        AppConfig: The global configuration instance. If not initialized,
-        loads the default development configuration.
+        AppConfig: The global configuration instance.
+
+    Raises:
+        RuntimeError: if the config has not been initialized yet.
     """
     global _config_instance
 
@@ -631,50 +891,71 @@ def get_config() -> AppConfig:
 
 
 def initialize_config(config_path: Path) -> AppConfig:
-    """Initialize the global config instance.
+    """Initialize the global config instance from a YAML file.
+
+    The file may be flat (sections at the top level) or nested under a single
+    ``app:`` key. Environment variables (``__`` nesting delimiter) override the
+    file's values.
 
     Args:
-        config_path: Path to override config YAML.
+        config_path (Path): Path to the config YAML.
 
     Returns:
-        AppConfig: Configuration instance
+        AppConfig: Configuration instance.
+
+    Raises:
+        Exception: whatever pydantic raises when the merged configuration is invalid.
     """
-    global _config_instance
+    global _config_instance, _yaml_file_for_next_init
 
-    # Load base config
     logger.info(f"Loading configuration from {config_path}")
-    config_data = load_yaml(config_path)
-
-    # Create and validate config
+    _yaml_file_for_next_init = Path(config_path)
     try:
-        config = AppConfig(**config_data)
+        config = AppConfig()
     except Exception as e:
         logger.error(f"Configuration validation failed: {e}")
         raise
+    finally:
+        # Direct AppConfig(**kwargs) constructions must not re-read this file.
+        _yaml_file_for_next_init = None
 
-    # Set the singleton instance
     _config_instance = config
     return config
 
 
 def get_or_initialize_config(config_path: Path | None = None) -> AppConfig:
-    """Get a loaded config, if none, load config_path or LOCAL_OVERRIDE
+    """Get the loaded config; if none, load ``config_path``, ``SENPAI_CONFIG_PATH``, or the local override.
 
     Args:
-        AppConfig: Configuration instance
+        config_path (Path | None): explicit config path to load when uninitialized.
 
     Returns:
-        AppConfig: Configuration instance
+        AppConfig: Configuration instance.
     """
     try:
         config = get_config()
     except RuntimeError:
         if config_path:
             config = initialize_config(config_path)
+        elif os.environ.get("SENPAI_CONFIG_PATH"):
+            env_path = Path(os.environ["SENPAI_CONFIG_PATH"])
+            logger.info(f"No config initialized, using SENPAI_CONFIG_PATH={env_path}")
+            config = initialize_config(env_path)
         else:
             from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 
-            logger.info(f"No config intialized, using {LOCAL_APP_CONFIG_OVERRIDE}")
+            # The local override lives in the source tree's resources/config and is NOT
+            # packaged in the wheel. In an installed context (e.g. a downstream v3 thin
+            # wrapper importing astro-senpai) it is absent, and loading it would yield a
+            # confusing multi-field pydantic validation cascade. Fail with a clear,
+            # actionable message instead: callers must supply a config.
+            if not LOCAL_APP_CONFIG_OVERRIDE.exists():
+                raise ConfigError(
+                    "No SENPAI configuration available: pass a config path, set the "
+                    "SENPAI_CONFIG_PATH environment variable, or (for a source checkout) "
+                    f"provide {LOCAL_APP_CONFIG_OVERRIDE}."
+                ) from None
+            logger.info(f"No config initialized, using {LOCAL_APP_CONFIG_OVERRIDE}")
             config = initialize_config(LOCAL_APP_CONFIG_OVERRIDE)
 
     return config

@@ -1,6 +1,8 @@
-"""Back-compat shim. Replot moved to :mod:`senpai.engine.plotting.replot`
-(it regenerates per-frame plots from any SenpaiRun batch dir — nothing
-burr-specific). Import from there; this re-export is kept so old paths work.
+"""Back-compat shim for the relocated replot module.
+
+Replot moved to :mod:`senpai.engine.plotting.replot` (it regenerates per-frame
+plots from any SenpaiRun batch dir — nothing burr-specific). Import from there;
+this re-export is kept so old paths keep working.
 """
 
 from senpai.engine.plotting.replot import (  # noqa: F401

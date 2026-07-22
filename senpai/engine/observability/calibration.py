@@ -17,13 +17,21 @@ geometric aggregates (extinction, Az/Alt coverage) drop those frames.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+    from types import ModuleType
+
+    import numpy as np
+    from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
 
@@ -111,13 +119,19 @@ class FramePhoto:
 
     @property
     def has_wcs(self) -> bool:
+        """Whether the frame solved a WCS (has an RA/Dec field center).
+
+        Returns:
+            True when both ``ra_center_deg`` and ``dec_center_deg`` are set.
+        """
         return self.ra_center_deg is not None and self.dec_center_deg is not None
 
 
 @dataclass(slots=True)
 class FrameTiming:
-    """Minimal timing + pointing record kept for EVERY frame in the night,
-    including frames that produced no photometry (dome closed, cloud, failed
+    """Minimal timing + pointing record kept for every frame in the night.
+
+    Includes frames that produced no photometry (dome closed, cloud, failed
     plate-solve). Inter-frame overhead — readout + settle + slew — is mount
     mechanics and frame cadence, independent of whether the photometry was
     usable, so the overhead model is fit from this complete timeline rather than
@@ -143,6 +157,15 @@ class FrameTiming:
 
 
 def _safe_iso(ts: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp string, tolerating missing/invalid input.
+
+    Args:
+        ts: An ISO-8601 timestamp string, or None.
+
+    Returns:
+        The parsed :class:`~datetime.datetime`, or None when ``ts`` is empty
+        or not a valid ISO-8601 string.
+    """
     if not ts:
         return None
     try:
@@ -152,20 +175,37 @@ def _safe_iso(ts: str | None) -> datetime | None:
 
 
 def _airmass(altitude_deg: float | None) -> float | None:
-    """Plane-parallel airmass = sec(zenith). Good to ~3.5; we clip above
-    altitude < 3° to avoid divergence in plots."""
+    """Plane-parallel airmass, ``sec(zenith)``.
+
+    Good to ~3.5; altitudes below 3° are clipped (returned as None) to avoid
+    divergence in plots.
+
+    Args:
+        altitude_deg: Target altitude in degrees, or None.
+
+    Returns:
+        The airmass, or None when the altitude is missing or below 3°.
+    """
     if altitude_deg is None or altitude_deg <= 3.0:
         return None
     z = math.radians(90.0 - altitude_deg)
     return 1.0 / math.cos(z)
 
 
-def _sky_mu(f: "FramePhoto") -> float | None:
-    """Sky surface brightness in mag/arcsec², from the captured flat-fielded sky
-    level. With m = ZP − 2.5·log10(flux/t_exp), one pixel's sky flux is at
-    m_pix = ZP − 2.5·log10(sky_adu/t_exp); converting per-pixel → per-arcsec²
-    adds 2.5·log10(pixel_area) = 5·log10(pixscale). Returns None if any input
-    (ZP / sky / exposure / plate scale) is missing."""
+def _sky_mu(f: FramePhoto) -> float | None:
+    """Sky surface brightness in mag/arcsec² from the flat-fielded sky level.
+
+    With ``m = ZP − 2.5·log10(flux/t_exp)`` one pixel's sky flux is at
+    ``m_pix = ZP − 2.5·log10(sky_adu/t_exp)``; converting per-pixel →
+    per-arcsec² adds ``2.5·log10(pixel_area) = 5·log10(pixscale)``.
+
+    Args:
+        f: The frame whose sky brightness is computed.
+
+    Returns:
+        Sky surface brightness in mag/arcsec², or None if any input
+        (zero point, sky level, exposure, or plate scale) is missing.
+    """
     if (f.zero_point is None or f.sky_adu is None or f.sky_adu <= 0
             or not f.exposure_time or not f.pixel_scale_arcsec):
         return None
@@ -176,17 +216,29 @@ def _sky_mu(f: "FramePhoto") -> float | None:
 def _compute_alt_az(
     ra_deg: float, dec_deg: float, when: datetime, site: dict[str, Any] | None
 ) -> tuple[float, float] | None:
-    """RA/Dec + UTC + site → (altitude_deg, azimuth_deg). Returns None if astropy
-    is unavailable or site is incomplete. Imports are lazy so a calibration
-    can be loaded without astropy when only ZP aggregates are needed."""
+    """Convert RA/Dec + UTC + site to horizontal ``(altitude_deg, azimuth_deg)``.
 
+    Imports are lazy so a calibration can be loaded without astropy when only
+    zero-point aggregates are needed.
+
+    Args:
+        ra_deg: Right ascension in degrees (ICRS).
+        dec_deg: Declination in degrees (ICRS).
+        when: Observation time (UTC).
+        site: Site dict with ``latitude``/``longitude`` (and optional
+            ``altitude_km``), or None.
+
+    Returns:
+        ``(altitude_deg, azimuth_deg)``, or None if astropy is unavailable or
+        the site is incomplete.
+    """
     if not site or site.get("latitude") is None or site.get("longitude") is None:
         return None
 
     try:
+        from astropy import units as u
         from astropy.coordinates import AltAz, EarthLocation, SkyCoord
         from astropy.time import Time
-        from astropy import units as u
     except ImportError:
         logger.debug("astropy unavailable; skipping alt/az conversion")
         return None
@@ -201,12 +253,21 @@ def _compute_alt_az(
     return float(aa.alt.deg), float(aa.az.deg)
 
 
-def _add_moon_geometry(calib: "NightCalibration") -> None:
-    """Fill per-frame Moon separation/altitude and the night's Moon illumination,
-    in place. Vectorized (one astropy ephemeris call for all frames). No-op if
-    astropy or the site is unavailable. Moonglow degrades depth (sky background)
-    but not the zero point, so the depth/SNR plots use this to mask or model it."""
+def _add_moon_geometry(calib: NightCalibration) -> None:
+    """Fill per-frame Moon separation/altitude and the night's illumination.
 
+    Mutates ``calib`` in place. Vectorized (one astropy ephemeris call for all
+    frames). No-op if astropy or the site is unavailable. Moonglow degrades
+    depth (sky background) but not the zero point, so the depth/SNR plots use
+    this to mask or model it.
+
+    Args:
+        calib: The night calibration whose frames and ``moon_illumination`` are
+            populated in place.
+
+    Returns:
+        None. Results are written onto ``calib`` and its frames.
+    """
     site = calib.site
     if not site or site.get("latitude") is None or site.get("longitude") is None:
         return
@@ -216,11 +277,10 @@ def _add_moon_geometry(calib: "NightCalibration") -> None:
     if not fr:
         return
     try:
-        from astropy.coordinates import (AltAz, EarthLocation, SkyCoord,
-                                         get_body, get_sun)
-        from astropy.time import Time
-        from astropy import units as u
         import numpy as np
+        from astropy import units as u
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body, get_sun
+        from astropy.time import Time
     except ImportError:
         logger.debug("astropy unavailable; skipping moon geometry")
         return
@@ -234,7 +294,7 @@ def _add_moon_geometry(calib: "NightCalibration") -> None:
                       [f.dec_center_deg for f in fr] * u.deg)
     seps = np.atleast_1d(fields.separation(moon).deg)
     malt = np.atleast_1d(moon.transform_to(AltAz(obstime=times, location=loc)).alt.deg)
-    for f, s, a in zip(fr, seps, malt):
+    for f, s, a in zip(fr, seps, malt, strict=False):
         f.moon_sep_deg = float(s)
         f.moon_alt_deg = float(a)
     # Illumination from the Sun–Moon elongation at mid-night.
@@ -251,10 +311,22 @@ def _extract_frame_photo(
     site: dict[str, Any] | None,
     track_mode_default: str,
 ) -> FramePhoto | None:
-    """Pull a FramePhoto from one serialized ``SiderealFrameSerializable`` or
-    ``RateTrackFrameSerializable``. Returns None for frames with no photometry
-    summary at all — they carry no calibration signal."""
+    """Pull a :class:`FramePhoto` from one serialized frame dict.
 
+    Handles both ``SiderealFrameSerializable`` and ``RateTrackFrameSerializable``
+    shapes.
+
+    Args:
+        frame_dict: One frame's serialized SenpaiRun output.
+        batch_id: The burr batch id the frame belongs to.
+        site: The site dict (for alt/az), or None.
+        track_mode_default: Track mode to assume when the frame metadata omits
+            it (``"sidereal"`` or ``"rate"``).
+
+    Returns:
+        The extracted :class:`FramePhoto`, or None for frames with no photometry
+        summary at all (they carry no calibration signal).
+    """
     summary = frame_dict.get("photometry_summary")
     if not summary:
         # No photometry was measured; nothing to aggregate.
@@ -396,20 +468,30 @@ def _extract_frame_photo(
 def _extract_frame_timing(
     frame_dict: dict[str, Any], track_mode_default: str
 ) -> tuple[FrameTiming, float, float] | None:
-    """Timestamp + exposure + commanded boresight pointing for ONE frame, for the
-    inter-frame overhead (slew/settle/readout) model.
+    """Timestamp + exposure + commanded boresight pointing for one frame.
 
-    Unlike :func:`_extract_frame_photo` this keeps frames with no photometry —
-    slew/settle is mount mechanics, independent of the photometry — and reads the
-    *commanded* boresight RA/Dec (present even when no WCS solved) rather than the
-    plate-solved field center. ``fov_sq_deg`` is taken only when a WCS solved, so
-    the contiguous-grid step uses a measured FoV from good frames only.
+    Feeds the inter-frame overhead (slew/settle/readout) model. Unlike
+    :func:`_extract_frame_photo` this keeps frames with no photometry —
+    slew/settle is mount mechanics, independent of the photometry — and reads
+    the *commanded* boresight RA/Dec (present even when no WCS solved) rather
+    than the plate-solved field center. ``fov_sq_deg`` is taken only when a WCS
+    solved, so the contiguous-grid step uses a measured FoV from good frames
+    only.
 
-    alt/az is left unset here and filled later in a single vectorized astropy pass
-    (see :func:`_fill_timing_altaz`); the boresight RA/Dec is returned alongside
-    the record for that pass. Returns None when timestamp, exposure, or pointing
-    is missing (the frame can't be placed on the slew timeline)."""
+    alt/az is left unset here and filled later in a single vectorized astropy
+    pass (see :func:`_fill_timing_altaz`); the boresight RA/Dec is returned
+    alongside the record for that pass.
 
+    Args:
+        frame_dict: One frame's serialized SenpaiRun output.
+        track_mode_default: Track mode to assume when the frame metadata omits
+            it.
+
+    Returns:
+        ``(timing, boresight_ra_deg, boresight_dec_deg)``, or None when the
+        timestamp, exposure, or pointing is missing (the frame can't be placed
+        on the slew timeline).
+    """
     fmd = frame_dict.get("frame_metadata") or {}
     ts = _safe_iso(frame_dict.get("timestamp") or fmd.get("observation_time"))
     exposure = fmd.get("exposure_time_seconds")
@@ -442,20 +524,30 @@ def _fill_timing_altaz(
     decs: list[float],
     site: dict[str, Any] | None,
 ) -> None:
-    """Fill boresight alt/az on the timing records in place, in one vectorized
-    astropy call (mirrors :func:`_add_moon_geometry`). No-op when astropy or the
-    site is unavailable — alt/az stays None and the overhead model simply finds
-    no usable pairs and falls back."""
+    """Fill boresight alt/az on the timing records in place.
 
+    Uses one vectorized astropy call (mirrors :func:`_add_moon_geometry`). No-op
+    when astropy or the site is unavailable — alt/az stays None and the overhead
+    model simply finds no usable pairs and falls back.
+
+    Args:
+        timings: Per-frame timing records to fill (mutated in place).
+        ras: Boresight right ascensions (deg), parallel to ``timings``.
+        decs: Boresight declinations (deg), parallel to ``timings``.
+        site: The site dict, or None.
+
+    Returns:
+        None. ``altitude_deg`` / ``azimuth_deg`` are written onto each record.
+    """
     if not timings:
         return
     if not site or site.get("latitude") is None or site.get("longitude") is None:
         return
     try:
+        import numpy as np
+        from astropy import units as u
         from astropy.coordinates import AltAz, EarthLocation, SkyCoord
         from astropy.time import Time
-        from astropy import units as u
-        import numpy as np
     except ImportError:
         logger.debug("astropy unavailable; skipping boresight alt/az")
         return
@@ -468,7 +560,7 @@ def _fill_timing_altaz(
     aa = sky.transform_to(AltAz(obstime=times, location=loc))
     alt = np.atleast_1d(aa.alt.deg)
     az = np.atleast_1d(aa.az.deg)
-    for t, al, a in zip(timings, alt, az):
+    for t, al, a in zip(timings, alt, az, strict=False):
         t.altitude_deg = float(al)
         t.azimuth_deg = float(a)
 
@@ -490,9 +582,11 @@ class ZeroPointStat:
 
 @dataclass(slots=True)
 class ExtinctionFit:
-    """Bouguer linear fit ``zero_point = m0 - k * airmass`` over a filter's
-    frames. ``k`` is the extinction coefficient (mag/airmass, conventionally
-    positive on clear nights); ``m0`` is the extra-atmospheric zero point."""
+    """Bouguer linear fit ``zero_point = m0 - k * airmass`` over a filter's frames.
+
+    ``k`` is the extinction coefficient (mag/airmass, conventionally positive on
+    clear nights); ``m0`` is the extra-atmospheric zero point.
+    """
 
     filter_name: str
     m0: float          # zero point at zero airmass (extra-atmospheric)
@@ -535,11 +629,21 @@ class NightCalibration:
     source_dir: str | None = None
 
     def conditions(self) -> dict[str, Any]:
-        """One-line-per-night observing-conditions summary (PSF, sky, extinction,
-        Moon) for cross-night tracking. Medians over the night's frames."""
+        """Summarize the night's observing conditions for cross-night tracking.
+
+        A one-line-per-night digest (PSF, sky, extinction, Moon), taking medians
+        over the night's frames.
+
+        Returns:
+            A dict of scalar condition metrics keyed by name (Moon illumination
+            and separation, extinction ``k`` and zenith transmission, FWHM, CCD
+            temperature, sky level/brightness, detector gain, limiting mag, and
+            frame counts). Missing metrics are None.
+        """
         import statistics as st
 
-        def _med(xs):
+        def _med(xs: list[float | None]) -> float | None:
+            """Median of the non-None values in ``xs`` (None if all missing)."""
             xs = [x for x in xs if x is not None]
             return float(st.median(xs)) if xs else None
 
@@ -591,6 +695,14 @@ class NightCalibration:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the calibration products to a JSON-native dict.
+
+        Excludes non-product fields (``frame_timings``, ``source_dir``) by
+        design; dataclass fields are flattened via :func:`_asdict_safe`.
+
+        Returns:
+            A JSON-serializable dict of the night's calibration products.
+        """
         return {
             "night_id": self.night_id,
             "sensor": self.sensor,
@@ -613,8 +725,16 @@ class NightCalibration:
         }
 
 
-def _asdict_safe(obj: Any) -> Any:
-    """Pure-stdlib dataclass→dict that handles our datetime fields."""
+def _asdict_safe(obj: object) -> object:
+    """Pure-stdlib dataclass→dict that handles our datetime fields.
+
+    Args:
+        obj: A dataclass instance to flatten, or any other value.
+
+    Returns:
+        A dict (with datetime fields ISO-formatted) when ``obj`` is a dataclass,
+        otherwise ``obj`` unchanged.
+    """
     from dataclasses import asdict, is_dataclass
 
     if is_dataclass(obj):
@@ -640,9 +760,18 @@ _CCD_WARM_MARGIN_C = 5.0
 
 
 def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
-    """Mark frames taken well above the night's CCD setpoint and return a summary
-    (or None when no CCDTEMP telemetry is present). The setpoint is the median
-    temperature — robust as long as warm frames aren't the majority."""
+    """Flag frames taken well above the night's CCD setpoint and summarize them.
+
+    Sets ``ccd_warm`` on each frame in place. The setpoint is the median
+    temperature — robust as long as warm frames aren't the majority.
+
+    Args:
+        frames: The night's frames; ``ccd_warm`` is written on each in place.
+
+    Returns:
+        A summary dict (setpoint/threshold/counts/min-max °C), or None when
+        fewer than five frames carry CCDTEMP telemetry.
+    """
     import statistics as st
 
     temps = [f.ccd_temp_c for f in frames if f.ccd_temp_c is not None]
@@ -662,19 +791,35 @@ def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
 
 
 def _zp_frames(frames: list[FramePhoto]) -> list[FramePhoto]:
-    """Frames whose photometry is trustworthy for the night's zero point: the
-    sidereal-tracked frames. Rate-tracked frames image stars as streaks, so
-    their aperture photometry — and any ZP derived from it — is unreliable and
-    must not define the night's photometric calibration. CCD-warm frames (sensor
-    above setpoint, elevated dark current / hot pixels) are excluded too."""
+    """Select frames whose photometry is trustworthy for the night's zero point.
 
+    Keeps the sidereal-tracked frames only. Rate-tracked frames image stars as
+    streaks, so their aperture photometry — and any ZP derived from it — is
+    unreliable and must not define the night's photometric calibration. CCD-warm
+    frames (sensor above setpoint, elevated dark current / hot pixels) are
+    excluded too.
+
+    Args:
+        frames: All of the night's frames.
+
+    Returns:
+        The sidereal, non-CCD-warm frames.
+    """
     return [f for f in frames if f.track_mode == "sidereal" and not f.ccd_warm]
 
 
 def _isolated_flags(f: FramePhoto) -> list[bool]:
-    """Per-star isolation flags parallel to ``stars_mag``; legacy runs that
-    predate ``stars_isolated`` retention default to all-isolated."""
+    """Per-star isolation flags parallel to ``stars_mag``.
 
+    Legacy runs that predate ``stars_isolated`` retention default to
+    all-isolated.
+
+    Args:
+        f: The frame whose per-star isolation flags are returned.
+
+    Returns:
+        A bool per catalog star (True = isolated), parallel to ``f.stars_mag``.
+    """
     return f.stars_isolated or [True] * len(f.stars_mag)
 
 
@@ -696,9 +841,20 @@ _MOON_SEP_MIN_DEG = 45.0
 
 
 def _moon_ok(f: FramePhoto, min_sep: float = _MOON_SEP_MIN_DEG) -> bool:
-    """False when the frame is within ``min_sep`` of an *above-horizon* Moon
-    (moonglow inflates sky background → depth loss). Frames with no Moon
-    geometry, or taken with the Moon down, pass."""
+    """Whether a frame is clear of moonglow.
+
+    Moonglow (from an above-horizon Moon within ``min_sep``) inflates the sky
+    background and costs depth. Frames with no Moon geometry, or taken with the
+    Moon down, pass.
+
+    Args:
+        f: The frame to test.
+        min_sep: Minimum acceptable field-to-Moon separation, in degrees.
+
+    Returns:
+        False when the frame is within ``min_sep`` of an above-horizon Moon;
+        True otherwise.
+    """
     if f.moon_sep_deg is None:
         return True
     if f.moon_alt_deg is not None and f.moon_alt_deg < 0:
@@ -714,7 +870,14 @@ def _clear_sky_zp_band(frames: list[FramePhoto]) -> tuple[float, float] | None:
     photometric zero point and the scatter of frames within ±0.4 mag of it is
     the clear-sky stability. Frames within ±sigma of the mode are a "weather
     mask": photometric-condition frames with the cloud-attenuated ones dropped.
-    Returns None if too few sidereal frames to estimate."""
+
+    Args:
+        frames: The night's frames.
+
+    Returns:
+        ``(mode, sigma)`` of the clear-sky zero-point cluster, or None if there
+        are too few sidereal frames to estimate.
+    """
     import numpy as np
 
     zps = np.array([f.zero_point for f in _zp_frames(frames)
@@ -751,12 +914,23 @@ def _snr_consistent(snr: float, mag: float, f: FramePhoto,
     By definition SNR ≈ limiting_snr (3) at the frame's lim50 and scales with
     flux (×10^0.4 per mag) in the background-dominated regime, so the frame
     predicts each star's SNR from its magnitude alone. Stars measured far
-    above that (×{tolerance}) are real flux wrongly attributed — bright-star
+    above that (×``tolerance``) are real flux wrongly attributed — bright-star
     wings/spikes outside the isolation radius, variables, bad cross-matches.
     They are ~2% of isolated SNR≥5 stars but carry ×10–80 flux excess, enough
     to fabricate entire faint-end bins. Saturated/bright stars always pass
-    (measured ≤ predicted there)."""
+    (measured ≤ predicted there).
 
+    Args:
+        snr: The star's measured signal-to-noise ratio.
+        mag: The star's catalog magnitude.
+        f: The frame the star was measured in (for its limiting magnitude).
+        tolerance: Multiple of the predicted SNR above which a measurement is
+            rejected as inconsistent.
+
+    Returns:
+        True when the measured SNR is plausible for the catalog magnitude (or
+        the frame has no limiting magnitude to test against).
+    """
     if f.limiting_magnitude_50 is None:
         return True
     snr_pred = 3.0 * 10 ** (0.4 * (f.limiting_magnitude_50 - mag))
@@ -764,8 +938,14 @@ def _snr_consistent(snr: float, mag: float, f: FramePhoto,
 
 
 def _summarize_zp(frames: list[FramePhoto]) -> dict[str, ZeroPointStat]:
-    """Median + 16/84 percentile of zero_point per filter (sidereal frames)."""
+    """Median + 16/84 percentile of ``zero_point`` per filter (sidereal frames).
 
+    Args:
+        frames: The night's frames (only sidereal, non-warm frames contribute).
+
+    Returns:
+        A :class:`ZeroPointStat` per filter name.
+    """
     import statistics
 
     by_filter: dict[str, list[FramePhoto]] = {}
@@ -791,6 +971,15 @@ def _summarize_zp(frames: list[FramePhoto]) -> dict[str, ZeroPointStat]:
 
 
 def _percentile(sorted_xs: list[float], q: float) -> float:
+    """Linearly-interpolated ``q``-quantile of an already-sorted list.
+
+    Args:
+        sorted_xs: Values sorted ascending.
+        q: Quantile in ``[0, 1]`` (e.g. 0.16 for the 16th percentile).
+
+    Returns:
+        The interpolated quantile, or NaN when ``sorted_xs`` is empty.
+    """
     if not sorted_xs:
         return float("nan")
     if len(sorted_xs) == 1:
@@ -830,8 +1019,8 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
         return None
     edges = np.arange(X.min(), X.max() + _EXT_BIN_W, _EXT_BIN_W)
     cx, cmed, cenv = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        zz = Z[(X >= lo) & (X < hi)]
+    for lo, hi in itertools.pairwise(edges):
+        zz = Z[(lo <= X) & (hi > X)]
         if len(zz) >= 5:
             cx.append(float((lo + hi) / 2))
             cmed.append(float(np.median(zz)))
@@ -852,7 +1041,7 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
     sigma2 = sum(r * r for r in resid) / max(n - 2, 1)
     slope_err = math.sqrt(sigma2 / ssxx) if sigma2 > 0 else 0.0
     m0_err = math.sqrt(sigma2 * (1 / n + mx * mx / ssxx)) if sigma2 > 0 else 0.0
-    clear_fraction = float(np.mean(Z >= (m0 + slope * X) - _EXT_CLEAR_TOL))
+    clear_fraction = float(np.mean((m0 + slope * X) - _EXT_CLEAR_TOL <= Z))
     return {
         "k": -slope, "k_err": slope_err, "m0": m0, "m0_err": m0_err,
         "n": len(pairs), "airmass_range": (float(X.min()), float(X.max())),
@@ -862,10 +1051,19 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
 
 
 def _fit_extinction(frames: list[FramePhoto]) -> dict[str, ExtinctionFit]:
-    """Per-filter cloud-robust Bouguer fit ``zero_point = m0 - k * airmass`` via
-    the upper-envelope method (see _extinction_envelope_fit). k = -slope. This is
-    the authoritative extinction used in night_calibration.json and for the
-    airmass-normalization across the SNR plots."""
+    """Per-filter cloud-robust Bouguer fit ``zero_point = m0 - k * airmass``.
+
+    Uses the upper-envelope method (see :func:`_extinction_envelope_fit`);
+    ``k = -slope``. This is the authoritative extinction used in
+    ``night_calibration.json`` and for the airmass-normalization across the SNR
+    plots.
+
+    Args:
+        frames: The night's frames (only sidereal, non-warm frames contribute).
+
+    Returns:
+        An :class:`ExtinctionFit` per filter name that had a constrainable fit.
+    """
     by_filter: dict[str, list[tuple[float, float]]] = {}
     for f in _zp_frames(frames):
         if f.zero_point is None or f.airmass is None:
@@ -898,7 +1096,16 @@ def _summarize_limiting_mag(
     stars' trails (a spurious detection floor), so a limiting mag read off them
     is unreliable. The night's authoritative depth comes from the sidereal legs
     (the raw rate per-frame values are still retained on each FramePhoto for
-    limiting-case studies)."""
+    limiting-case studies).
+
+    Args:
+        frames: The night's frames (only sidereal, non-warm frames contribute).
+        attr: The :class:`FramePhoto` attribute to summarize (e.g.
+            ``"limiting_magnitude_50"`` or ``"limiting_magnitude_90"``).
+
+    Returns:
+        The median of ``attr`` per filter name.
+    """
     import statistics
 
     by_filter: dict[str, list[float]] = {}
@@ -915,10 +1122,21 @@ def _summarize_limiting_mag(
 
 
 def analyze_night(night_dir: str | Path) -> NightCalibration:
-    """Build a :class:`NightCalibration` from the output of
-    ``python -m senpai.cli.burr night <night_dir> -o <output>`` — i.e. a dir
-    that contains ``manifest.json`` and a ``batches/`` tree of SenpaiRun JSONs."""
+    """Build a :class:`NightCalibration` from a processed night directory.
 
+    The directory is the output of
+    ``python -m senpai.cli.burr night <night_dir> -o <output>`` — i.e. a dir
+    that contains ``manifest.json`` and a ``batches/`` tree of SenpaiRun JSONs.
+
+    Args:
+        night_dir: The processed-night directory containing ``manifest.json``.
+
+    Returns:
+        The aggregated :class:`NightCalibration` for the night.
+
+    Raises:
+        FileNotFoundError: If ``night_dir`` has no ``manifest.json``.
+    """
     night_dir = Path(night_dir)
     manifest_path = night_dir / "manifest.json"
     if not manifest_path.is_file():
@@ -1016,8 +1234,15 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
 
 
 def save_calibration(calib: NightCalibration, output_dir: str | Path) -> Path:
-    """Write the aggregated calibration JSON. Returns the file path."""
+    """Write the aggregated calibration JSON to ``night_calibration.json``.
 
+    Args:
+        calib: The night calibration to serialize.
+        output_dir: Directory to write into (created if absent).
+
+    Returns:
+        The path to the written ``night_calibration.json``.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "night_calibration.json"
@@ -1027,9 +1252,20 @@ def save_calibration(calib: NightCalibration, output_dir: str | Path) -> Path:
     return path
 
 
-def _jsonify(obj: Any) -> Any:
-    """Recursively convert numpy / datetime values to JSON-native types so the
-    plotted arrays round-trip through plot_data.json."""
+def _jsonify(obj: object) -> object:
+    """Recursively convert numpy / datetime values to JSON-native types.
+
+    Ensures the plotted arrays round-trip through ``plot_data.json``.
+
+    Args:
+        obj: Any value; dicts, lists, and tuples are recursed into, numpy
+            scalars/arrays and datetimes are converted, everything else passes
+            through.
+
+    Returns:
+        A structurally identical value with numpy/datetime leaves replaced by
+        JSON-native (``float``/``int``/``str``/``list``) equivalents.
+    """
     import numpy as np
 
     if isinstance(obj, dict):
@@ -1055,12 +1291,21 @@ def _jsonify(obj: Any) -> Any:
 _PLOT_BUILDERS: dict[str, tuple] = {}
 
 
-def build_plot_data(calib: NightCalibration) -> dict:
-    """Run ALL calibration plot analysis up front and return a JSON-serializable
-    dict — the actual plotted arrays (gray clouds, binned points, fit lines),
-    not the raw per-frame data. This is the single analysis stage; renderers
-    consume only this dict, so plots can be regenerated from plot_data.json
-    without reprocessing the batch JSONs."""
+def build_plot_data(calib: NightCalibration) -> dict[str, object]:
+    """Run all calibration plot analysis up front into a JSON-serializable dict.
+
+    The dict holds the actual plotted arrays (gray clouds, binned points, fit
+    lines), not the raw per-frame data. This is the single analysis stage;
+    renderers consume only this dict, so plots can be regenerated from
+    ``plot_data.json`` without reprocessing the batch JSONs.
+
+    Args:
+        calib: The night calibration to analyze.
+
+    Returns:
+        A dict with ``version``, ``meta``, and ``plots`` keys, where ``plots``
+        maps each plot name to its precomputed data dict.
+    """
     meta = {
         "night_id": calib.night_id,
         "site": calib.site,
@@ -1075,8 +1320,16 @@ def build_plot_data(calib: NightCalibration) -> dict:
     return _jsonify({"version": 1, "meta": meta, "plots": plots})
 
 
-def save_plot_data(plot_data: dict, output_dir: str | Path) -> Path:
-    """Write the plotted-data dict to <output_dir>/plot_data.json."""
+def save_plot_data(plot_data: dict[str, object], output_dir: str | Path) -> Path:
+    """Write the plotted-data dict to ``<output_dir>/plot_data.json``.
+
+    Args:
+        plot_data: The dict produced by :func:`build_plot_data`.
+        output_dir: Directory to write into (created if absent).
+
+    Returns:
+        The path to the written ``plot_data.json``.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "plot_data.json"
@@ -1086,8 +1339,15 @@ def save_plot_data(plot_data: dict, output_dir: str | Path) -> Path:
     return path
 
 
-def load_plot_data(path: str | Path) -> dict:
-    """Load a previously written plot_data.json."""
+def load_plot_data(path: str | Path) -> dict[str, object]:
+    """Load a previously written ``plot_data.json``.
+
+    Args:
+        path: Path to the ``plot_data.json`` file.
+
+    Returns:
+        The parsed plot-data dict.
+    """
     with open(path) as f:
         return json.load(f)
 
@@ -1110,10 +1370,20 @@ _NIGHTS_COLS = [
 
 
 def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> str:
-    """Aggregate every night's conditions into one table for tracking PSF / sky /
-    extinction vs Moon phase & weather across nights. Reads each
-    ``<root>/*/calibration/night_calibration.json`` (its ``conditions`` block).
-    Returns the formatted table; optionally also writes a CSV."""
+    """Aggregate every night's conditions into one cross-night table.
+
+    For tracking PSF / sky / extinction vs Moon phase & weather across nights.
+    Reads each ``<root>/*/calibration/night_calibration.json`` (its
+    ``conditions`` block).
+
+    Args:
+        root: Directory containing per-night ``*/calibration/`` subtrees.
+        csv_path: Optional path to also write the table as CSV.
+
+    Returns:
+        The formatted text table (or a "no data" message when no
+        ``night_calibration.json`` is found).
+    """
     root = Path(root)
     rows: list[dict] = []
     for nc_path in sorted(root.glob("*/calibration/night_calibration.json")):
@@ -1157,17 +1427,26 @@ def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> st
     return table
 
 
-def plot_calibration(source, output_dir: str | Path,
+def plot_calibration(source: NightCalibration | dict[str, object],
+                     output_dir: str | Path,
                      *, save_data: bool = True) -> list[Path]:
-    """Render the calibration plot set. Quietly skips plots that have no data.
+    """Render the calibration plot set, quietly skipping plots that lack data.
 
-    ``source`` is either a NightCalibration (live: the analysis is run via
-    build_plot_data and, unless save_data=False, dumped to plot_data.json) or a
-    plot_data dict already loaded from plot_data.json (replot: no reprocessing).
     matplotlib is imported lazily so this module loads cheaply when only the
     aggregation is needed.
-    """
 
+    Args:
+        source: Either a :class:`NightCalibration` (live: the analysis is run
+            via :func:`build_plot_data` and, unless ``save_data=False``, dumped
+            to ``plot_data.json``) or a plot-data dict already loaded from
+            ``plot_data.json`` (replot: no reprocessing).
+        output_dir: Directory the PNGs (and, when live, ``plot_data.json``) are
+            written into (created if absent).
+        save_data: When ``source`` is live, also write ``plot_data.json``.
+
+    Returns:
+        Paths of the rendered PNG files.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -1197,11 +1476,22 @@ def plot_calibration(source, output_dir: str | Path,
     return paths
 
 
-def _save(fig, path: Path) -> Path:
+def _save(fig: Figure, path: Path) -> Path:
+    """Save a figure to ``path`` (plus a title-less paper-ready copy if enabled).
+
+    Args:
+        fig: The matplotlib figure to save. It is closed afterwards.
+        path: Destination PNG path.
+
+    Returns:
+        The ``path`` that was written.
+    """
     import matplotlib.pyplot as plt
 
     from senpai.engine.plotting.psf import (
-        clean_copy_path, paper_ready_enabled, strip_titles,
+        clean_copy_path,
+        paper_ready_enabled,
+        strip_titles,
     )
 
     fig.tight_layout()
@@ -1222,7 +1512,16 @@ def _save(fig, path: Path) -> Path:
 # Registered in _PLOT_BUILDERS at the bottom of this section.
 
 
-def _data_limiting_magnitude_hist(calib: NightCalibration):
+def _data_limiting_magnitude_hist(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the limiting-magnitude histogram data (per-filter 50%-limit lists).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"by_filter": {filter: [lim50, ...]}}`` over sidereal frames, or None
+        when no sidereal frame has a 50% limiting magnitude.
+    """
     by_filter: dict[str, list] = {}
     for f in _zp_frames(calib.frames):
         if f.limiting_magnitude_50 is not None:
@@ -1231,7 +1530,22 @@ def _data_limiting_magnitude_hist(calib: NightCalibration):
     return {"by_filter": by_filter} if by_filter else None
 
 
-def _render_limiting_magnitude_hist(d, meta, output_dir, plt, np) -> Path:
+def _render_limiting_magnitude_hist(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the per-filter limiting-magnitude histogram.
+
+    Args:
+        d: Plot data from :func:`_data_limiting_magnitude_hist`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(8, 5))
     for filt in sorted(d["by_filter"]):
         xs = d["by_filter"][filt]
@@ -1244,7 +1558,17 @@ def _render_limiting_magnitude_hist(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "limiting_magnitude_hist.png")
 
 
-def _data_extinction_curve(calib: NightCalibration):
+def _data_extinction_curve(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the extinction-curve data (per-filter ZP-vs-airmass + envelope fit).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"series": [...]}`` with one entry per filter (raw points, per-bin
+        median/envelope, and the fitted ``k``/``m0``), or None when no filter
+        has a constrainable fit.
+    """
     # Frame ZP vs airmass, fit cloud-robustly by the upper envelope (same
     # _extinction_envelope_fit that feeds night_calibration.json, so the plot's
     # red line == the reported k). Cloud drops points below the clear-sky line;
@@ -1272,13 +1596,28 @@ def _data_extinction_curve(calib: NightCalibration):
     return {"series": series} if series else None
 
 
-def _render_extinction_curve(d, meta, output_dir, plt, np) -> Path:
+def _render_extinction_curve(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the cloud-robust extinction (ZP vs airmass) curve.
+
+    Args:
+        d: Plot data from :func:`_data_extinction_curve`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(10, 7))
     series = d["series"]
     multi = len(series) > 1
     cmap = plt.cm.viridis(np.linspace(0, 0.85, max(len(series), 1)))
     title_bits = []
-    for color, s in zip(cmap, series):
+    for color, s in zip(cmap, series, strict=False):
         pre = f"{s['filter']} " if multi else ""
         X = np.array(s["airmass"])
         line_x = np.linspace(X.min(), X.max(), 50)
@@ -1319,7 +1658,16 @@ def _render_extinction_curve(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "extinction_curve.png")
 
 
-def _data_alt_az_coverage(calib: NightCalibration):
+def _data_alt_az_coverage(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the Az/Alt coverage polar-scatter data (one point per frame).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"thetas", "rs", "colors", "has_time", "n"}`` where ``colors`` is
+        seconds since the first frame, or None when no frame has alt/az.
+    """
     aa = [(f.azimuth_deg, f.altitude_deg, f.timestamp) for f in calib.frames
           if f.azimuth_deg is not None and f.altitude_deg is not None]
     if not aa:
@@ -1335,7 +1683,22 @@ def _data_alt_az_coverage(calib: NightCalibration):
     }
 
 
-def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
+def _render_alt_az_coverage(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the Az/Alt coverage polar scatter, colored by time-into-night.
+
+    Args:
+        d: Plot data from :func:`_data_alt_az_coverage`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig = plt.figure(figsize=(7, 7))
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
@@ -1352,9 +1715,20 @@ def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "alt_az_coverage.png")
 
 
-def _data_zp_drift(calib: NightCalibration):
-    import numpy as np
+def _data_zp_drift(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the zero-point-drift data (per-filter scatter + 20-min binned track).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"per_filter", "n_filters"}`` with per-filter scatter timestamps/ZPs
+        and binned medians with 16/84 error bars, or None when no sidereal
+        frame has both a timestamp and a zero point.
+    """
     from datetime import timedelta
+
+    import numpy as np
 
     drift = [(f.timestamp, f.zero_point, f.filter_name or "unknown")
              for f in _zp_frames(calib.frames)
@@ -1371,7 +1745,7 @@ def _data_zp_drift(calib: NightCalibration):
         secs = np.array([(x - t0).total_seconds() for x in xs])
         edges = np.arange(0.0, secs.max() + BIN_SECONDS, BIN_SECONDS)
         cx, cy, e_lo, e_hi = [], [], [], []
-        for lo, hi in zip(edges[:-1], edges[1:]):
+        for lo, hi in itertools.pairwise(edges):
             in_bin = ys[(secs >= lo) & (secs < hi)]
             if len(in_bin) < 3:
                 continue
@@ -1388,7 +1762,22 @@ def _data_zp_drift(calib: NightCalibration):
     return {"per_filter": per_filter, "n_filters": len(per_filter)}
 
 
-def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
+def _render_zp_drift(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render zero-point drift over the night (scatter + binned error bars).
+
+    Args:
+        d: Plot data from :func:`_data_zp_drift`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     from datetime import datetime as _dt
 
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -1425,7 +1814,16 @@ def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
 # to electrons) is drawn with its ±1σ spread.
 
 
-def _data_gain(calib: "NightCalibration"):
+def _data_gain(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the detector-gain-vs-sky-level data (per-frame gain + night median).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"sky_adu", "gain", "median", "std", "n"}`` over frames with a
+        per-frame gain estimate, or None when fewer than three qualify.
+    """
     pts = [(f.sky_adu, f.gain_e_per_adu) for f in calib.frames
            if f.gain_e_per_adu is not None and f.sky_adu is not None]
     if len(pts) < 3:
@@ -1441,7 +1839,22 @@ def _data_gain(calib: "NightCalibration"):
     }
 
 
-def _render_gain(d, meta, output_dir, plt, np) -> Path:
+def _render_gain(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render detector gain vs sky level with the night-median band.
+
+    Args:
+        d: Plot data from :func:`_data_gain`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.scatter(d["sky_adu"], d["gain"], s=12, alpha=0.5, color="tab:blue",
                label=f"per-frame (n={d['n']})")
@@ -1477,26 +1890,45 @@ _SLEW_ENV_MIN_PTS = 6         # min pairs per distance bin to anchor the envelop
 _SLEW_DIST_BINS = [0.25, 0.5, 1, 2, 4, 8, 15, 25, 40, 60, 90, 180]
 
 
-def _angsep_deg(alt1, az1, alt2, az2) -> float:
-    """Great-circle separation (deg) in the mount's alt/az frame — the same
-    slew metric burr's coverage optimizer uses."""
+def _angsep_deg(alt1: float, az1: float, alt2: float, az2: float) -> float:
+    """Great-circle separation between two alt/az pointings.
+
+    This is the same slew metric burr's coverage optimizer uses.
+
+    Args:
+        alt1: Altitude of the first pointing (deg).
+        az1: Azimuth of the first pointing (deg).
+        alt2: Altitude of the second pointing (deg).
+        az2: Azimuth of the second pointing (deg).
+
+    Returns:
+        The angular separation in degrees.
+    """
     a1, a2 = math.radians(alt1), math.radians(alt2)
     d = (math.sin((a2 - a1) / 2) ** 2
          + math.cos(a1) * math.cos(a2) * math.sin(math.radians(az2 - az1) / 2) ** 2)
     return math.degrees(2 * math.asin(min(1.0, math.sqrt(d))))
 
 
-def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
-    """Time-consecutive (separation_deg, overhead_s) pairs shared by the slew fit
-    and its empirical fallback, so both see the same gap/clock filtering.
+def _slew_pairs(
+    timings: Sequence[FrameTiming | FramePhoto],
+) -> tuple[list[FrameTiming | FramePhoto], list[float], list[float]]:
+    """Time-consecutive ``(separation_deg, overhead_s)`` pairs.
 
-    Pairs are consecutive in time across ALL frames (sidereal and rate) — sorting
-    a single track mode would skip over interleaved frames and inflate the gaps.
-    ``timings`` is any sequence of records exposing ``timestamp``,
-    ``exposure_time``, ``altitude_deg``, ``azimuth_deg`` (FrameTiming for the
-    full timeline; FramePhoto works too). Returns the sorted, usable records plus
-    parallel separation/overhead lists."""
+    Shared by the slew fit and its empirical fallback so both see the same
+    gap/clock filtering. Pairs are consecutive in time across ALL frames
+    (sidereal and rate) — sorting a single track mode would skip over
+    interleaved frames and inflate the gaps.
 
+    Args:
+        timings: Any sequence of records exposing ``timestamp``,
+            ``exposure_time``, ``altitude_deg``, ``azimuth_deg`` (FrameTiming
+            for the full timeline; FramePhoto works too).
+
+    Returns:
+        ``(sorted_usable_records, separations_deg, overheads_s)`` — the sorted
+        usable records plus parallel per-pair separation and overhead lists.
+    """
     fr = sorted(
         (f for f in timings
          if f.timestamp and f.exposure_time
@@ -1504,7 +1936,7 @@ def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
         key=lambda f: f.timestamp,
     )
     dist, over = [], []
-    for a, b in zip(fr, fr[1:]):
+    for a, b in itertools.pairwise(fr):
         dt = (b.timestamp - a.timestamp).total_seconds()
         ov = dt - a.exposure_time            # DATE-OBS = exposure start
         if ov <= 0 or dt >= _SLEW_MAX_GAP_S:  # clock glitch / long pause
@@ -1515,15 +1947,25 @@ def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
     return fr, dist, over
 
 
-def _empirical_overhead(timings) -> tuple[float | None, str]:
-    """Best-effort inter-frame overhead when the full two-regime fit can't be
-    constrained (too few distinct slew distances — e.g. a night that parked on a
-    handful of fields). Uses the night's *observed* cadence rather than a flat
-    guess: the median overhead of pairs that actually slewed (≥ _SLEW_MIN_DEG —
-    readout + settle + slew, the cadence-relevant quantity), or, when too few of
-    those exist, the median over all usable pairs (at least readout + settle).
-    Returns (overhead_s, label), or (None, "") when there's no usable timing at
-    all so the caller can apply its last-resort default."""
+def _empirical_overhead(
+    timings: Sequence[FrameTiming | FramePhoto],
+) -> tuple[float | None, str]:
+    """Best-effort inter-frame overhead when the two-regime fit can't constrain.
+
+    Used when there are too few distinct slew distances (e.g. a night that
+    parked on a handful of fields). Uses the night's *observed* cadence rather
+    than a flat guess: the median overhead of pairs that actually slewed
+    (``>= _SLEW_MIN_DEG`` — readout + settle + slew, the cadence-relevant
+    quantity), or, when too few of those exist, the median over all usable pairs
+    (at least readout + settle).
+
+    Args:
+        timings: The night's per-frame timing/pointing records.
+
+    Returns:
+        ``(overhead_s, label)``, or ``(None, "")`` when there's no usable timing
+        at all so the caller can apply its last-resort default.
+    """
     import numpy as np
 
     _fr, dist, over = _slew_pairs(timings)
@@ -1536,9 +1978,10 @@ def _empirical_overhead(timings) -> tuple[float | None, str]:
     return float(np.median(over)), "median observed inter-frame gap"
 
 
-def _fit_slew_model(timings) -> dict | None:
-    """Fit the inter-frame overhead model (readout + settle + slew) from the
-    night's time-ordered frames.
+def _fit_slew_model(
+    timings: Sequence[FrameTiming | FramePhoto],
+) -> dict[str, object] | None:
+    """Fit the inter-frame overhead model (readout + settle + slew) for the night.
 
     ``timings`` is the night's per-frame timing+pointing records (FrameTiming),
     which cover EVERY frame — including the non-photometry ones (dome closed,
@@ -1552,10 +1995,14 @@ def _fit_slew_model(timings) -> dict | None:
     separation is rate-track motion rather than a slew, and to contingent delays
     (plate-solve retries, downloads) that only ever sit *above* the floor.
 
-    Returns the fitted scalars, the contiguous-grid cadence overhead (one
-    FoV-width slew), and the raw (separation, overhead) cloud + envelope for
-    plotting; or None if there aren't enough usable pairs (the caller then uses
-    _empirical_overhead).
+    Args:
+        timings: The night's per-frame timing/pointing records.
+
+    Returns:
+        A dict of the fitted scalars, the contiguous-grid cadence overhead (one
+        FoV-width slew), and the raw ``(separation, overhead)`` cloud + envelope
+        for plotting; or None if there aren't enough usable pairs (the caller
+        then uses :func:`_empirical_overhead`).
     """
     import numpy as np
 
@@ -1574,7 +2021,7 @@ def _fit_slew_model(timings) -> dict | None:
     # overhead = bias + separation / slew_rate  (bias = readout + settle).
     edges = np.array(_SLEW_DIST_BINS)
     ex, ey, en = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         m = (dist >= lo) & (dist < hi)
         if int(m.sum()) >= _SLEW_ENV_MIN_PTS:
             ex.append(float(np.median(dist[m])))
@@ -1602,7 +2049,7 @@ def _fit_slew_model(timings) -> dict | None:
         "bias_s": float(bias),
         "fov_width_deg": fov_width,
         "grid_overhead_s": grid_overhead,
-        "n_pairs": int(len(dist)),
+        "n_pairs": len(dist),
         "n_slew": int((dist >= _SLEW_MIN_DEG).sum()),
         "dist": dist,
         "overhead": over,
@@ -1610,7 +2057,21 @@ def _fit_slew_model(timings) -> dict | None:
     }
 
 
-def _data_search_rate(calib: NightCalibration):
+def _data_search_rate(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the search-rate-vs-magnitude data (deg²/hour to a target 3σ).
+
+    Scales each star's measured SNR to the target detection SNR to get its
+    required exposure, adds the fitted inter-frame overhead, and converts to a
+    per-field sky-area rate; the SNR is debiased for the per-night noise floor.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        A dict of the per-star scatter, binned medians, limiting-magnitude
+        band, noise-floor SNR, and the overhead model used, or None when no
+        qualifying isolated sidereal stars exist.
+    """
     import numpy as np
 
     # Search rate = sky area/hour surveyable while still reaching a TARGET-σ (3σ)
@@ -1660,15 +2121,21 @@ def _data_search_rate(calib: NightCalibration):
         if f.limiting_magnitude_50 is not None:
             lim50s.append(f.limiting_magnitude_50)
         lim = f.limiting_magnitude_50 if f.limiting_magnitude_50 is not None else np.nan
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if not iso:
                 continue
-            m_l.append(m); s_l.append(s); e_l.append(f.exposure_time)
-            fov_l.append(f.fov_sq_deg); lim_l.append(lim)
+            m_l.append(m)
+            s_l.append(s)
+            e_l.append(f.exposure_time)
+            fov_l.append(f.fov_sq_deg)
+            lim_l.append(lim)
     if not m_l:
         return None
-    mg = np.array(m_l); sn = np.array(s_l); ex = np.array(e_l)
-    fv = np.array(fov_l); lim = np.array(lim_l)
+    mg = np.array(m_l)
+    sn = np.array(s_l)
+    ex = np.array(e_l)
+    fv = np.array(fov_l)
+    lim = np.array(lim_l)
     median_lim50 = float(np.median(lim50s)) if lim50s else None
     # 16/84 spread of the per-frame 50%-limiting magnitude, for the ± band on
     # the limiting-mag line (mirrors snr_vs_mag_weathermasked).
@@ -1699,7 +2166,7 @@ def _data_search_rate(calib: NightCalibration):
     bin_edges = np.arange(math.floor(mags.min() / bin_width) * bin_width,
                           mags.max() + bin_width, bin_width)
     centers, medians, err_lo, err_hi = [], [], [], []
-    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+    for lo, hi in itertools.pairwise(bin_edges):
         in_bin = rates[(mags >= lo) & (mags < hi)]
         if len(in_bin) < 5:
             continue
@@ -1713,7 +2180,7 @@ def _data_search_rate(calib: NightCalibration):
         "binned": {"x": centers, "y": medians, "err_lo": err_lo, "err_hi": err_hi},
         "median_lim50": median_lim50,
         "lim50": lim50_band,
-        "n_stars": int(len(mags)), "target_snr": target_snr,
+        "n_stars": len(mags), "target_snr": target_snr,
         "noise_floor_snr": s_noise,
         "overhead_s": overhead_s,
         "overhead_src": overhead_src,  # None when the full fit was used
@@ -1725,7 +2192,22 @@ def _data_search_rate(calib: NightCalibration):
     }
 
 
-def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
+def _render_search_rate(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render search rate vs magnitude with the binned track and limiting mag.
+
+    Args:
+        d: Plot data from :func:`_data_search_rate`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.scatter(d["mags"], d["rates"], alpha=0.3, s=10, color="lightgray",
                label="Individual stars")
@@ -1768,11 +2250,35 @@ def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "search_rate.png")
 
 
-def _data_slew_model(calib: NightCalibration):
+def _data_slew_model(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the slew-overhead-model data by fitting the night's timeline.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        The :func:`_fit_slew_model` result dict, or None when the fit can't be
+        constrained.
+    """
     return _fit_slew_model(calib.frame_timings or calib.frames)
 
 
-def _render_slew_model(d, meta, output_dir, plt, np) -> Path:
+def _render_slew_model(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the inter-frame overhead model (readout floor + slew line).
+
+    Args:
+        d: Plot data from :func:`_data_slew_model`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     dist = np.clip(np.asarray(d["dist"], float), 0.01, None)  # log axis: >0
     over = np.asarray(d["overhead"], float)
     readout, settle = d["readout_s"], d["settle_s"]
@@ -1840,8 +2346,18 @@ _CONC_DEFOCUS = 0.7       # C below this ≈ defocused
 
 
 def _batch_result_paths(source_dir: str) -> dict[str, Path]:
-    """{batch_id: result JSON path}, re-anchored on source_dir when the
-    manifest's absolute paths are stale (drive remounted elsewhere)."""
+    """Map each batch id to its result JSON path.
+
+    Re-anchored on ``source_dir`` when the manifest's absolute paths are stale
+    (drive remounted elsewhere).
+
+    Args:
+        source_dir: The processed-night directory (holds ``manifest.json``).
+
+    Returns:
+        ``{batch_id: result_json_path}`` for every batch whose result JSON was
+        found.
+    """
     import glob as _glob
     md = json.loads((Path(source_dir) / "manifest.json").read_text())
     out: dict[str, Path] = {}
@@ -1860,7 +2376,17 @@ def _batch_result_paths(source_dir: str) -> dict[str, Path]:
     return out
 
 
-def _sidereal_frame_dict(batch_path: Path, index: int) -> dict | None:
+def _sidereal_frame_dict(batch_path: Path, index: int) -> dict[str, object] | None:
+    """Load one sidereal frame's serialized dict from a batch result JSON.
+
+    Args:
+        batch_path: Path to the batch's SenpaiRun result JSON.
+        index: The ``index`` of the sidereal frame to return.
+
+    Returns:
+        The matching frame dict, or None when the JSON is unreadable or no
+        sidereal frame has that index.
+    """
     try:
         run = json.loads(batch_path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -1871,10 +2397,26 @@ def _sidereal_frame_dict(batch_path: Path, index: int) -> dict | None:
     return None
 
 
-def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int,
-                     max_stars: int = _PSF_MAX_STARS):
-    """Median-stacked, peak-normalized PSF stamp from a frame's bright, isolated,
-    unsaturated catalog stars. Returns (stamp2d, n_stars) or (None, 0)."""
+def _psf_stack_stamp(
+    fits_path: str, catalog_stars: list[dict[str, object]], fwhm: float,
+    half: int, max_stars: int = _PSF_MAX_STARS,
+) -> tuple[np.ndarray | None, int]:
+    """Median-stacked, peak-normalized PSF stamp from a frame's best stars.
+
+    Stacks subpixel-aligned stamps of the frame's bright, isolated, unsaturated
+    catalog stars (cosmic rays rejected via a median filter).
+
+    Args:
+        fits_path: Path to the raw FITS frame to read pixels from.
+        catalog_stars: Catalog star dicts with ``x``/``y`` (and ``magnitude``).
+        fwhm: The frame's detection FWHM (px), used for a centroid sanity gate.
+        half: Half-width of the square stamp; the stamp is ``(2*half+1)²`` px.
+        max_stars: Maximum number of stars to stack.
+
+    Returns:
+        ``(stamp2d, n_stars)`` with the stacked stamp and star count, or
+        ``(None, 0)`` when too few usable stars survive.
+    """
     import numpy as np
     from astropy.io import fits
     from scipy import ndimage
@@ -1935,14 +2477,27 @@ def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int
     return np.median(np.stack(stamps), axis=0), len(stamps)
 
 
-def _radial_profile(stamp, half, np, rstep=0.5):
-    """Azimuthally-averaged (ring-median) radial profile, peak-normalized."""
+def _radial_profile(
+    stamp: np.ndarray, half: int, np: ModuleType, rstep: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Azimuthally-averaged (ring-median) radial profile, peak-normalized.
+
+    Args:
+        stamp: The 2D PSF stamp.
+        half: Stamp half-width (center is at ``(half, half)``).
+        np: The imported ``numpy`` module.
+        rstep: Radial bin width in pixels.
+
+    Returns:
+        ``(radii, profile)`` — the ring radii and the peak-normalized median
+        flux in each ring.
+    """
     n = stamp.shape[0]
     yy, xx = np.mgrid[0:n, 0:n]
     rr = np.hypot(xx - half, yy - half)
     edges = np.arange(0.0, half + rstep, rstep)
     r, prof = [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         m = (rr >= lo) & (rr < hi)
         if m.any():
             r.append((lo + hi) / 2)
@@ -1953,9 +2508,20 @@ def _radial_profile(stamp, half, np, rstep=0.5):
     return np.array(r), prof
 
 
-def _cut_width(profile, np, level: float = 0.5) -> float:
-    """Full width at ``level`` × peak, from the outermost interpolated crossings
-    of a 1D cut through the peak."""
+def _cut_width(profile: np.ndarray, np: ModuleType, level: float = 0.5) -> float:
+    """Full width at ``level`` × peak of a 1D cut through the peak.
+
+    Measured from the outermost interpolated crossings of the level.
+
+    Args:
+        profile: The 1D flux cut.
+        np: The imported ``numpy`` module.
+        level: Fraction of the peak at which the width is measured.
+
+    Returns:
+        The full width in pixels, or NaN when fewer than two samples exceed the
+        level.
+    """
     profile = np.asarray(profile)
     thr = profile.max() * level
     above = np.where(profile >= thr)[0]
@@ -1970,8 +2536,16 @@ def _cut_width(profile, np, level: float = 0.5) -> float:
     return float(right - left)
 
 
-def _cut_fwhm(profile, np) -> float:
-    """FWHM (full width at half max) of a 1D cut through the peak."""
+def _cut_fwhm(profile: np.ndarray, np: ModuleType) -> float:
+    """FWHM (full width at half max) of a 1D cut through the peak.
+
+    Args:
+        profile: The 1D flux cut.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        The full width at half maximum, in pixels.
+    """
     return _cut_width(profile, np, 0.5)
 
 
@@ -1979,14 +2553,24 @@ def _cut_fwhm(profile, np) -> float:
 _GAUSS_W25_OVER_W50 = math.sqrt(math.log(4) / math.log(2))  # = √2
 
 
-def _profile_shape(profile, np) -> dict:
+def _profile_shape(profile: np.ndarray, np: ModuleType) -> dict[str, float]:
     """Multi-level widths + a Gaussianity ``spike_index`` for a 1D PSF cut.
 
-    spike_index = (FW¼M/FWHM) / √2:  ≈1 Gaussian (focused), ≫1 a narrow core on
-    a broad halo (half-max FWHM is then spurious — it latches the spike), <1 a
-    flat-top / donut. When the index is high, ``robust_fwhm`` (FW¼M/√2, the
+    ``spike_index = (FW¼M/FWHM) / √2``:  ≈1 Gaussian (focused), ≫1 a narrow core
+    on a broad halo (half-max FWHM is then spurious — it latches the spike), <1
+    a flat-top / donut. When the index is high, ``robust_fwhm`` (FW¼M/√2, the
     Gaussian-equivalent width from the quarter-max level) better reflects the
-    real PSF extent than the half-max width."""
+    real PSF extent than the half-max width.
+
+    Args:
+        profile: The 1D flux cut.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        ``{"fwhm", "fwqm", "fw3qm", "spike_index", "robust_fwhm"}`` — the
+        half-/quarter-/three-quarter-max widths plus the spike index and robust
+        FWHM (values may be NaN when the profile is degenerate).
+    """
     w50 = _cut_width(profile, np, 0.5)
     w25 = _cut_width(profile, np, 0.25)
     w75 = _cut_width(profile, np, 0.75)
@@ -1997,12 +2581,21 @@ def _profile_shape(profile, np) -> dict:
             "spike_index": index, "robust_fwhm": robust}
 
 
-def _wcs_sky_axes(wcs_dict: dict):
-    """Unit vectors in pixel (x, y) space pointing East (+RA) and North (+Dec)
-    at the frame center, from the solved WCS header dict. Returns
-    (east_unit, north_unit) or None. Lets us cut the PSF along sky axes so an
-    elongation reads directly as RA vs Dec tracking error rather than detector
-    x/y (this camera is rotated ~35° + flipped relative to the sky)."""
+def _wcs_sky_axes(wcs_dict: dict[str, object]) -> tuple[np.ndarray, np.ndarray] | None:
+    """Pixel-space unit vectors pointing East (+RA) and North (+Dec).
+
+    Computed at the frame center from the solved WCS header dict. Lets us cut
+    the PSF along sky axes so an elongation reads directly as RA vs Dec tracking
+    error rather than detector x/y (this camera is rotated ~35° + flipped
+    relative to the sky).
+
+    Args:
+        wcs_dict: The solved WCS header as a card-name → value dict.
+
+    Returns:
+        ``(east_unit, north_unit)`` unit vectors in pixel (x, y) space, or None
+        when the WCS is absent or the vectors are degenerate.
+    """
     if not wcs_dict:
         return None
     try:
@@ -2032,9 +2625,22 @@ def _wcs_sky_axes(wcs_dict: dict):
         return None
 
 
-def _sample_line(stamp, half, unit, np):
-    """Sample the stamp along a line through its center in pixel direction
-    ``unit`` (x, y), one sample per pixel from -half to +half."""
+def _sample_line(
+    stamp: np.ndarray, half: int, unit: np.ndarray, np: ModuleType,
+) -> np.ndarray:
+    """Sample the stamp along a line through its center in a pixel direction.
+
+    One sample per pixel from ``-half`` to ``+half`` along ``unit``.
+
+    Args:
+        stamp: The 2D PSF stamp.
+        half: Stamp half-width (center is at ``(half, half)``).
+        unit: Pixel-space ``(x, y)`` unit direction to sample along.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        The interpolated 1D flux cut along ``unit``.
+    """
     from scipy.ndimage import map_coordinates
 
     t = np.arange(-half, half + 1.0)
@@ -2043,7 +2649,21 @@ def _sample_line(stamp, half, unit, np):
     return map_coordinates(stamp, [ys, xs], order=1, mode="constant", cval=0.0)
 
 
-def _data_psf_profile(calib: NightCalibration):
+def _data_psf_profile(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the empirical-PSF-by-seeing-band data (2D stack + radial & cuts).
+
+    Bins the night's sidereal frames into seeing bands by detection FWHM and,
+    for the clearest frame in each band, median-stacks isolated-star stamps from
+    the raw FITS and reads off the radial profile and sky-axis cuts.
+
+    Args:
+        calib: The night calibration (must have ``source_dir`` set).
+
+    Returns:
+        ``{"half", "bands", "pixel_scale_arcsec"}`` with one entry per seeing
+        band, or None when there is no source dir / too few frames / no usable
+        stack.
+    """
     import numpy as np
 
     if not calib.source_dir:
@@ -2143,7 +2763,22 @@ def _data_psf_profile(calib: NightCalibration):
     return {"half": half, "bands": bands, "pixel_scale_arcsec": psc}
 
 
-def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
+def _render_psf_profile(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the empirical PSF by seeing band (2D stacks, radial & cuts).
+
+    Args:
+        d: Plot data from :func:`_data_psf_profile`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     bands = d["bands"]
     half = d["half"]
     psc = d.get("pixel_scale_arcsec")
@@ -2159,7 +2794,7 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     fig = plt.figure(figsize=(max(13.0, 4.4 * nb), 10.5))
     gs = fig.add_gridspec(2, 2 * nb, height_ratios=[1.05, 1.0])
 
-    for i, (b, c) in enumerate(zip(bands, colors)):
+    for i, (b, _c) in enumerate(zip(bands, colors, strict=False)):
         ax = fig.add_subplot(gs[0, 2 * i:2 * i + 2])
         stamp = np.asarray(b["stamp2d"])
         ext = [-half, half, -half, half]
@@ -2173,7 +2808,7 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
             for u, name, col in ((b["north_unit"], "N", "white"),
                                  (b["east_unit"], "E", "deepskyblue")):
                 ax.annotate("", xy=(L * u[0], L * u[1]), xytext=(0, 0),
-                            arrowprops=dict(arrowstyle="->", color=col, lw=1.4))
+                            arrowprops={"arrowstyle": "->", "color": col, "lw": 1.4})
                 ax.text(L * 1.12 * u[0], L * 1.12 * u[1], name, color=col,
                         fontsize=9, ha="center", va="center")
         ax.set_xlim(-win, win)
@@ -2189,7 +2824,7 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
 
     axr = fig.add_subplot(gs[1, :nb])
     axc = fig.add_subplot(gs[1, nb:])
-    for b, c in zip(bands, colors):
+    for b, c in zip(bands, colors, strict=False):
         spike = max(b.get("spike_ra") or 0, b.get("spike_dec") or 0)
         # Flag when half-max FWHM is unreliable (narrow core on a broad halo).
         flag = f"  ⚠spike {spike:.1f}× → FW¼M {b.get('fwqm_ra', 0):.0f}/" \
@@ -2232,7 +2867,17 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "psf_profile.png")
 
 
-def _data_ccd_temperature(calib: NightCalibration):
+def _data_ccd_temperature(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the CCD-temperature-vs-time data (with the warm-frame cut markers).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"minutes", "temp", "warm", "median_c", "threshold_c", "n_warm",
+        "n_total", "max_c"}``, or None when fewer than five frames carry
+        CCDTEMP telemetry.
+    """
     import statistics as st
 
     pts = [(f.timestamp, f.ccd_temp_c, bool(f.ccd_warm)) for f in calib.frames
@@ -2255,7 +2900,22 @@ def _data_ccd_temperature(calib: NightCalibration):
     }
 
 
-def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
+def _render_ccd_temperature(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render CCD temperature vs time, marking excluded warm frames.
+
+    Args:
+        d: Plot data from :func:`_data_ccd_temperature`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     m = np.array(d["minutes"])
     t = np.array(d["temp"])
     warm = np.array(d["warm"], dtype=bool)
@@ -2279,7 +2939,21 @@ def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "ccd_temperature.png")
 
 
-def _data_psf_concentration(calib: NightCalibration):
+def _data_psf_concentration(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the PSF-concentration-vs-time focus-diagnostic data.
+
+    Samples frames across the night, stacks their PSFs, and records the central
+    concentration ``C = center/peak`` (~1 focused, low for a defocus donut),
+    plus a handful of showcase thumbnails.
+
+    Args:
+        calib: The night calibration (must have ``source_dir`` set).
+
+    Returns:
+        ``{"half", "defocus_c", "minutes", "C", "fwhm_det", "n_defocused",
+        "n_sampled", "showcase"}``, or None when there is no source dir / too
+        few usable frames.
+    """
     import numpy as np
 
     if not calib.source_dir:
@@ -2350,7 +3024,22 @@ def _data_psf_concentration(calib: NightCalibration):
     }
 
 
-def _render_psf_concentration(d, meta, output_dir, plt, np) -> Path:
+def _render_psf_concentration(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the PSF focus diagnostic (concentration timeline + thumbnails).
+
+    Args:
+        d: Plot data from :func:`_data_psf_concentration`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     show = d["showcase"]
     half = d["half"]
     thr = d["defocus_c"]
@@ -2416,7 +3105,19 @@ _PLOT_BUILDERS.update({
 })
 
 
-def _data_snr_vs_exposure(calib: NightCalibration):
+def _data_snr_vs_exposure(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the SNR-vs-exposure data, faceted by task and pooled.
+
+    Weather-masked (clear-sky ZP band), airmass-normalized, and Moon-masked;
+    binned by magnitude within each observing task.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"std_exps", "bins", "order", "faceted", "pooled"}``, or None when the
+        clear-sky band can't be found or no task has usable points.
+    """
     import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
@@ -2435,7 +3136,7 @@ def _data_snr_vs_exposure(calib: NightCalibration):
                 if f.airmass is not None else 1.0)
         by_task.setdefault(_frame_task(f), []).extend(
             (f.exposure_time, m, s * corr)
-            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False)
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     order = [t for t in ("coverage", "photometric", "calsats", "other")
@@ -2449,7 +3150,16 @@ def _data_snr_vs_exposure(calib: NightCalibration):
                           math.ceil(a_exp.max()) + 1))
     bins = list(range(math.floor(a_mag.min()), math.ceil(a_mag.max())))
 
-    def _series(pts):
+    def _series(pts: list[tuple[float, float, float]]) -> list[dict[str, object]]:
+        """Bin ``(exposure, mag, snr)`` points into per-magnitude-bin curves.
+
+        Args:
+            pts: ``(exposure_s, catalog_mag, airmass-corrected_snr)`` triples.
+
+        Returns:
+            One dict per magnitude bin with ``bin`` and parallel exposure/SNR
+            arrays (``x``/``y``) and SEM error bars (``e_lo``/``e_hi``).
+        """
         e = np.array([p[0] for p in pts])
         m = np.array([p[1] for p in pts])
         s = np.array([p[2] for p in pts])
@@ -2482,7 +3192,23 @@ def _data_snr_vs_exposure(calib: NightCalibration):
     }
 
 
-def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
+def _render_snr_vs_exposure(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> list[Path]:
+    """Render SNR vs exposure, both faceted by task and pooled by magnitude.
+
+    Args:
+        d: Plot data from :func:`_data_snr_vs_exposure`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNGs are written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Paths of the written PNGs (the by-task figure, and the by-magnitude
+        figure when pooled data exists).
+    """
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     std_exps, bins, order = d["std_exps"], d["bins"], d["order"]
@@ -2493,7 +3219,7 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
     fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5),
                              sharey=True, squeeze=False)
     axes = axes[0]
-    for ax, tk in zip(axes, order):
+    for ax, tk in zip(axes, order, strict=False):
         for ser in d["faceted"].get(tk, []):
             ax.errorbar(ser["x"], ser["y"], yerr=[ser["e_lo"], ser["e_hi"]],
                         fmt="o-", color=color_of[ser["bin"]], alpha=0.8,
@@ -2538,7 +3264,19 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
     return paths
 
 
-def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
+def _data_snr_vs_mag_weathermasked(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the SNR-vs-magnitude data, one curve per standard exposure.
+
+    Restricted to the calibration tasks (coverage + photometric), weather-masked
+    to the clear-sky ZP band, airmass-normalized, and Moon-masked.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"std_exps", "lines", "lim50", "min_meas_snr", "zp_mode", "zp_sig"}``,
+        or None when the clear-sky band can't be found or no points qualify.
+    """
     import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
@@ -2563,7 +3301,7 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
                 if f.airmass is not None else 1.0)
         mag_pts.extend(
             (f.exposure_time, m, s * corr)
-            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False)
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     if not mag_pts:
@@ -2600,7 +3338,22 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
             "min_meas_snr": ref_snr, "zp_mode": zp_mode, "zp_sig": zp_sig}
 
 
-def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_mag_weathermasked(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render SNR vs magnitude (one curve per exposure) with the limiting mag.
+
+    Args:
+        d: Plot data from :func:`_data_snr_vs_mag_weathermasked`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     std_exps = d["std_exps"]
     fig, ax = plt.subplots(figsize=(10, 7))
     cmap = plt.cm.viridis(np.linspace(0, 0.9, max(len(std_exps), 1)))
@@ -2637,7 +3390,17 @@ _PLOT_BUILDERS.update({
 })
 
 
-def _data_moon_az_el(calib: NightCalibration):
+def _data_moon_az_el(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the pointings + Moon-track polar data (Az/El colored by separation).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"theta", "r", "sep", "track"}`` — the frame pointings, Moon
+        separations, and (when astropy is available) the Moon's above-horizon
+        track — or None when no frame has both Moon geometry and alt/az.
+    """
     import numpy as np
 
     moon_frames = [f for f in calib.frames
@@ -2647,9 +3410,9 @@ def _data_moon_az_el(calib: NightCalibration):
         return None
     track = None
     try:
+        from astropy import units as u
         from astropy.coordinates import AltAz, EarthLocation, get_body
         from astropy.time import Time
-        from astropy import units as u
         site = calib.site or {}
         loc = EarthLocation(
             lat=site["latitude"] * u.deg, lon=site["longitude"] * u.deg,
@@ -2672,7 +3435,22 @@ def _data_moon_az_el(calib: NightCalibration):
     }
 
 
-def _render_moon_az_el(d, meta, output_dir, plt, np) -> Path:
+def _render_moon_az_el(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the pointings + Moon polar plot colored by Moon separation.
+
+    Args:
+        d: Plot data from :func:`_data_moon_az_el`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig = plt.figure(figsize=(8, 8))
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
@@ -2693,7 +3471,22 @@ def _render_moon_az_el(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "moon_az_el.png")
 
 
-def _data_snr_vs_moon_distance(calib: NightCalibration):
+def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the ΔSNR-vs-Moon-separation data (per-cell far-Moon baseline).
+
+    Each star's SNR is compared to the median SNR of same-exposure, same-mag
+    stars measured far from the Moon, so the residual is the moonglow penalty in
+    magnitudes; an all-stars series and a bright-complete series bracket
+    survivorship bias.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"series": [...]}`` with the scatter, binned medians, and linear fit
+        per series, or None when the clear-sky band is missing or too few
+        points qualify.
+    """
     import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
@@ -2705,11 +3498,19 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
     min_meas_snr = 3.0
     FAR = 60.0
 
-    def _norm_stars(f):
+    def _norm_stars(f: FramePhoto) -> Iterator[tuple[int, float, float]]:
+        """Yield ``(exposure_s, mag, airmass-corrected_snr)`` for usable stars.
+
+        Args:
+            f: The frame whose isolated, consistent, SNR≥3 stars are yielded.
+
+        Yields:
+            ``(rounded_exposure_s, catalog_mag, corrected_snr)`` per star.
+        """
         kk = ext_k.get(f.filter_name or "unknown", k_default)
         corr = (10 ** (0.4 * kk * (f.airmass - 1.0))
                 if f.airmass is not None else 1.0)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f):
                 yield round(f.exposure_time), m, s * corr
 
@@ -2742,9 +3543,26 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
     mag_arr = np.array(mag_arr)
     edges = np.arange(0, math.ceil(sep_arr.max() / 10) * 10 + 10, 10)
 
-    def _series(mask, name, dot_color, dot_alpha, bin_color, fit_color):
+    def _series(
+        mask: np.ndarray, name: str, dot_color: str, dot_alpha: float,
+        bin_color: str, fit_color: str,
+    ) -> dict[str, object]:
+        """Build one ΔSNR-vs-separation series (scatter + bins + linear fit).
+
+        Args:
+            mask: Boolean array selecting which points belong to this series.
+            name: Series label (used in the legend).
+            dot_color: Scatter-point color.
+            dot_alpha: Scatter-point alpha.
+            bin_color: Binned-median marker color.
+            fit_color: Linear-fit line color.
+
+        Returns:
+            A dict of the masked scatter, binned medians with 16/84 error bars,
+            the linear fit (or None), and the plot styling.
+        """
         cx, cy, e_lo, e_hi = [], [], [], []
-        for lo, hi in zip(edges[:-1], edges[1:]):
+        for lo, hi in itertools.pairwise(edges):
             v = dmag_arr[mask & (sep_arr >= lo) & (sep_arr < hi)]
             if len(v) >= 20:
                 md = float(np.median(v))
@@ -2771,7 +3589,22 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
     return {"series": series}
 
 
-def _render_snr_vs_moon_distance(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_moon_distance(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the SNR penalty vs Moon distance (all-stars vs bright-complete).
+
+    Args:
+        d: Plot data from :func:`_data_snr_vs_moon_distance`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(10, 7))
     for s in d["series"]:
         ax.scatter(s["sep"], s["dmag"], s=6, alpha=s["dot_alpha"],
@@ -2800,9 +3633,22 @@ def _render_snr_vs_moon_distance(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "snr_vs_moon_distance.png")
 
 
-def _usable_cal_frames(calib, zp_mode, zp_sig):
-    """Weather-masked calibration-taskset frames with Moon geometry (shared by
-    the two fixed-magnitude Moon plots)."""
+def _usable_cal_frames(
+    calib: NightCalibration, zp_mode: float, zp_sig: float,
+) -> list[FramePhoto]:
+    """Weather-masked calibration-taskset frames that carry Moon geometry.
+
+    Shared by the two fixed-magnitude Moon plots.
+
+    Args:
+        calib: The night calibration.
+        zp_mode: Clear-sky zero-point mode (the weather-mask center).
+        zp_sig: Clear-sky zero-point scatter (the weather-mask half-width).
+
+    Returns:
+        Sidereal, coverage/photometric frames within ``zp_sig`` of ``zp_mode``
+        that have a Moon separation.
+    """
     return [f for f in _zp_frames(calib.frames)
             if f.zero_point is not None and f.exposure_time and f.stars_mag
             and abs(f.zero_point - zp_mode) <= zp_sig
@@ -2810,16 +3656,38 @@ def _usable_cal_frames(calib, zp_mode, zp_sig):
             and f.moon_sep_deg is not None]
 
 
-def _best_sampled_mag(usable, min_meas_snr):
+def _best_sampled_mag(usable: list[FramePhoto], min_meas_snr: float) -> int | None:
+    """Find the integer magnitude bin with the most well-measured isolated stars.
+
+    Args:
+        usable: The weather-masked calibration frames to scan.
+        min_meas_snr: Minimum SNR for a star to count as well-measured.
+
+    Returns:
+        The best-sampled integer magnitude, or None when no star qualifies.
+    """
     mag_tot: dict[int, int] = {}
     for f in usable:
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s and s >= min_meas_snr:
                 mag_tot[int(m)] = mag_tot.get(int(m), 0) + 1
     return max(mag_tot, key=mag_tot.get) if mag_tot else None
 
 
-def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
+def _data_snr_vs_exposure_6s_explained(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the data showing the pooled 6s SNR "dip" is a program offset.
+
+    At a fixed well-sampled magnitude, tracks SNR vs exposure separately for the
+    coverage and photometric tasks; the constant offset between them (a Moon +
+    airmass program shift) explains the apparent dip in the pooled curve.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"best_mag", "prog", "annotation", "xticks"}``, or None when the
+        clear-sky band is missing or too few points qualify.
+    """
     import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
@@ -2845,7 +3713,7 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
         corr = (10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default)
                        * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
         ex = round(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if (iso and m and s > _PLOT_SNR_FLOOR
                     and _snr_consistent(s, m, f) and best_mag <= m < best_mag + 1):
                 prog[tk].setdefault(ex, []).append(s * corr)
@@ -2873,7 +3741,22 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
             "annotation": annotation, "xticks": xticks}
 
 
-def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_exposure_6s_explained(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the coverage-vs-photometric SNR-vs-exposure offset explanation.
+
+    Args:
+        d: Plot data from :func:`_data_snr_vs_exposure_6s_explained`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     pcolor = {"coverage": "tab:blue", "photometric": "tab:orange"}
     fig, ax = plt.subplots(figsize=(10, 7))
     for tk, dd in d["prog"].items():
@@ -2891,7 +3774,7 @@ def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
             f"Whole-program shift (Moon + airmass),\nnot a 6s effect.",
             xy=(1, ann["p1"]), xytext=(0.32, 0.10), textcoords="axes fraction",
             fontsize=9, ha="left",
-            arrowprops=dict(arrowstyle="->", color="gray"))
+            arrowprops={"arrowstyle": "->", "color": "gray"})
     ax.set_yscale("log")
     if d["xticks"]:
         ax.set_xticks(d["xticks"])
@@ -2905,7 +3788,20 @@ def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "snr_vs_exposure_6s_explained.png")
 
 
-def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
+def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the Moon-penalty data at a fixed magnitude, √t-collapsed.
+
+    Fixes on the best-sampled magnitude, corrects nearby stars to that
+    magnitude with a fitted SNR-vs-mag slope, collapses the exposure dependence
+    via ``SNR/√t``, and bins the result against Moon separation.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"target", "sep", "snrt", "binned", "moon_cut"}``, or None when the
+        clear-sky band is missing or fewer than 100 points qualify.
+    """
     import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
@@ -2927,7 +3823,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
         corr = (10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default)
                        * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
         rt = math.sqrt(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if (iso and m and s and s >= min_meas_snr
                     and target - 2 <= m < target + 2):
                 sm.append(m)
@@ -2938,7 +3834,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
         corr = (10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default)
                        * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
         rt = math.sqrt(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if (iso and m and s and s >= min_meas_snr
                     and _snr_consistent(s, m, f)
                     and target - 1 <= m < target + 1):
@@ -2950,7 +3846,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
     snrt = np.array([p[1] for p in pts])
     edges = np.arange(0, math.ceil(msep.max() / 10) * 10 + 10, 10)
     cx, cy, cerr = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         v = snrt[(msep >= lo) & (msep < hi)]
         if len(v) >= 20:
             cx.append((lo + hi) / 2)
@@ -2961,7 +3857,22 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
             "moon_cut": _MOON_SEP_MIN_DEG}
 
 
-def _render_snr_vs_moon_fixedmag(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_moon_fixedmag(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render the fixed-magnitude, √t-collapsed Moon penalty vs separation.
+
+    Args:
+        d: Plot data from :func:`_data_snr_vs_moon_fixedmag`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.scatter(d["sep"], d["snrt"], s=6, alpha=0.10, color="lightgray",
                label="individual stars")
@@ -2992,7 +3903,16 @@ _PLOT_BUILDERS.update({
 })
 
 
-def _data_fwhm(calib: NightCalibration):
+def _data_fwhm(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the PSF-FWHM-vs-time data (colored by airmass, with median band).
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"t", "fwhm", "airmass", "median_fwhm", "p16", "p84"}``, or None when
+        no frame has both an FWHM and a timestamp.
+    """
     import numpy as np
 
     pts = [(f.timestamp, f.fwhm_px, f.airmass) for f in calib.frames
@@ -3010,7 +3930,22 @@ def _data_fwhm(calib: NightCalibration):
     }
 
 
-def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
+def _render_fwhm(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render PSF FWHM over the night, colored by airmass, with a median band.
+
+    Args:
+        d: Plot data from :func:`_data_fwhm`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     from datetime import datetime as _dt
 
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -3033,7 +3968,20 @@ def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "fwhm_vs_time.png")
 
 
-def _data_sky_background(calib: NightCalibration):
+def _data_sky_background(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the sky-background-vs-Moon-separation data (μ or ADU, binned).
+
+    Uses per-pixel surface brightness μ (mag/arcsec²) when available, else the
+    raw sky level in ADU, colored by altitude and binned by Moon separation.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"sep", "adu", "mu", "alt", "has_mu", "binned", "median_adu",
+        "median_mu"}``, or None when fewer than ten frames have both a sky level
+        and Moon geometry.
+    """
     import numpy as np
 
     rows = []  # (moon_sep, sky_adu, mu_or_nan, altitude)
@@ -3053,7 +4001,7 @@ def _data_sky_background(calib: NightCalibration):
     yvals = mu if has_mu else adu
     edges = np.arange(0, math.ceil(sep.max() / 10) * 10 + 10, 10)
     cx, cy, e_lo, e_hi = [], [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         v = yvals[(sep >= lo) & (sep < hi)]
         v = v[np.isfinite(v)]
         if len(v) >= 5:
@@ -3073,7 +4021,22 @@ def _data_sky_background(calib: NightCalibration):
     }
 
 
-def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
+def _render_sky_background(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render sky background vs Moon separation (μ or ADU), colored by altitude.
+
+    Args:
+        d: Plot data from :func:`_data_sky_background`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     fig, ax = plt.subplots(figsize=(10, 6))
     sep = np.array(d["sep"])
     alt = np.array(d["alt"])
@@ -3107,10 +4070,12 @@ def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "sky_background_vs_moon.png")
 
 
-def _data_sky_background_altaz(calib: NightCalibration):
-    """Sky brightness as a function of where the telescope was pointed (alt/az)
-    rather than Moon separation — the diagnostic that still works on a new-Moon
-    night, where the Moon-separation plot is uninformative.
+def _data_sky_background_altaz(calib: NightCalibration) -> dict[str, object] | None:
+    """Build the sky-brightness-vs-pointing (alt/az) data.
+
+    A diagnostic based on where the telescope pointed rather than on Moon
+    separation — it still works on a new-Moon night, where the Moon-separation
+    plot is uninformative.
 
     Two signals: (1) the zenith trend — natural sky brightens toward the horizon
     (longer airglow/atmosphere path), so μ should rise toward zenith; (2)
@@ -3122,7 +4087,15 @@ def _data_sky_background_altaz(calib: NightCalibration):
     plate-scale-normalized; lower = brighter); frames lacking the inputs for μ
     fall back to the exposure-normalized sky rate (ADU/s) so different exposure
     times stay comparable. Below-horizon pointings (alt < 0, slew/edge artifacts)
-    are dropped."""
+    are dropped.
+
+    Args:
+        calib: The night calibration.
+
+    Returns:
+        ``{"alt", "az", "y", "has_mu", "elev_binned", "median", "n"}``, or None
+        when fewer than ten above-horizon frames have a usable brightness.
+    """
     import numpy as np
 
     rows = []  # (alt, az, mu_or_nan, rate_or_nan)
@@ -3153,7 +4126,7 @@ def _data_sky_background_altaz(calib: NightCalibration):
     # Median trend in elevation bins (the zenith-darkening curve).
     edges = np.arange(0, 91, 10)
     ex, ey, e_lo, e_hi = [], [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         v = y[(alt >= lo) & (alt < hi)]
         if len(v) >= 5:
             md = float(np.median(v))
@@ -3164,11 +4137,26 @@ def _data_sky_background_altaz(calib: NightCalibration):
     return {
         "alt": list(alt), "az": list(az), "y": list(y), "has_mu": has_mu,
         "elev_binned": {"x": ex, "y": ey, "e_lo": e_lo, "e_hi": e_hi},
-        "median": float(np.median(y)), "n": int(len(y)),
+        "median": float(np.median(y)), "n": len(y),
     }
 
 
-def _render_sky_background_altaz(d, meta, output_dir, plt, np) -> Path:
+def _render_sky_background_altaz(
+    d: dict[str, object], meta: dict[str, object], output_dir: Path,
+    plt: ModuleType, np: ModuleType,
+) -> Path:
+    """Render sky background vs pointing (all-sky map + elevation trend).
+
+    Args:
+        d: Plot data from :func:`_data_sky_background_altaz`.
+        meta: Shared plot metadata (night id, site, Moon illumination).
+        output_dir: Directory the PNG is written into.
+        plt: The imported ``matplotlib.pyplot`` module.
+        np: The imported ``numpy`` module.
+
+    Returns:
+        Path to the written PNG.
+    """
     has_mu = d["has_mu"]
     alt = np.array(d["alt"])
     az = np.array(d["az"])
@@ -3249,10 +4237,18 @@ _PLOT_BUILDERS.update({
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Standalone CLI: ``python -m senpai.engine.observability.calibration <night_dir>``.
+    """Run the standalone calibration CLI.
 
-    The same code is invokable from ``senpai-burr calibrate`` (Phase 3 wiring)."""
+    Invoked as
+    ``python -m senpai.engine.observability.calibration <night_dir>``; the same
+    code is invokable from ``senpai-burr calibrate`` (Phase 3 wiring).
 
+    Args:
+        argv: Command-line argument list; defaults to ``sys.argv`` when None.
+
+    Returns:
+        The process exit code (0 on success).
+    """
     import argparse
 
     parser = argparse.ArgumentParser(

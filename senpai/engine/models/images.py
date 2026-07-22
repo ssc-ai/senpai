@@ -1,24 +1,41 @@
+"""Image data models for FITS frames and their processing state.
+
+Provides Pydantic models wrapping raw and processed FITS image data along with
+the enumeration of supported processing steps and the metadata recorded as each
+step is applied.
+"""
+
 import base64
 import logging
 from enum import Enum
 from io import BytesIO
-from typing import Dict, List, Optional, Union
 
 import numpy as np
 from astropy.io import fits
 from pydantic import BaseModel
 
 from senpai.engine.models.metadata import ImageMetadata
+from senpai.engine.utils.coordinates import read_boresight_from_header
+from senpai.exceptions import InvalidInputError
 
 logger = logging.getLogger(__name__)
 
 
 class FitsImage(BaseModel, arbitrary_types_allowed=True):
+    """A minimal FITS image: pixel data plus its header.
+
+    Attributes:
+        data: The image pixel array.
+        header: The FITS header associated with the data.
+    """
+
     data: np.ndarray
     header: fits.Header
 
 
 class ProcessingStep(Enum):
+    """Enumeration of image-processing steps that can be applied to a frame."""
+
     DARK_SUBTRACT = "dark_subtract"
     FLAT_DIVIDE = "flat_divide"
     BACKGROUND_SUBTRACT = "background_subtract"
@@ -28,11 +45,39 @@ class ProcessingStep(Enum):
 
 
 class ProcessingMetadata(BaseModel):
+    """Record of a single processing step and the parameters used for it.
+
+    Attributes:
+        step_type: The processing step that was applied.
+        parameters: Parameters relevant to the step, keyed by name.
+    """
+
     step_type: ProcessingStep
-    parameters: Dict[str, Union[float, str, int]]  # Store relevant parameters for each step
+    parameters: dict[str, float | str | int]  # Store relevant parameters for each step
 
 
 class ProcessedFitsImage(BaseModel):
+    """A FITS image together with its processing history and derived metadata.
+
+    Holds the current (possibly processed) pixel data, the FITS header, an
+    ordered history of processing steps, and optional intermediate/original
+    data retained for reversibility and diagnostics.
+
+    Attributes:
+        data: The current image data (after any processing applied so far).
+        header: The FITS header, updated to reflect processing (e.g. dimensions).
+        processing_history: Ordered list of processing steps that were applied.
+        correction_frames: Optional per-step correction arrays (e.g. flats,
+            background models), keyed by processing step.
+        processed_unscaled_data: Optional copy of the data prior to scaling,
+            retained when FWHM optimization scaling is applied.
+        original_data: Optional copy of the original raw data.
+        data_type: The dtype of the input image.
+        metadata: Image metadata (identifiers, dimensions, boresight, exposure).
+        file_path: Path to the original image file, if known.
+        processed_file_path: Path to the processed image saved during processing.
+    """
+
     # The processed image data
     data: np.ndarray
 
@@ -40,17 +85,17 @@ class ProcessedFitsImage(BaseModel):
     header: fits.Header
 
     # List of processing steps applied, in order
-    processing_history: List[ProcessingMetadata] = []
+    processing_history: list[ProcessingMetadata] = []
 
     # Optional storage of intermediate data (like flat frames, background models, etc.)
     # Keys are ProcessingStep values, values are the corresponding correction arrays
-    correction_frames: Optional[Dict[ProcessingStep, np.ndarray]] = None
+    correction_frames: dict[ProcessingStep, np.ndarray] | None = None
 
     # processed data to store if FWHM_OPTIMIZATION is applied
-    processed_unscaled_data: Optional[np.ndarray] = None
+    processed_unscaled_data: np.ndarray | None = None
 
     # Original raw data (optional)
-    original_data: Optional[np.ndarray] = None
+    original_data: np.ndarray | None = None
 
     # data_type for input image
     data_type: np.dtype
@@ -65,6 +110,8 @@ class ProcessedFitsImage(BaseModel):
     processed_file_path: str | None = None
 
     class Config:
+        """Pydantic configuration for the model."""
+
         arbitrary_types_allowed = True  # Needed for numpy arrays
 
     def scale_frame(self, scale_factor: float, method: str = "block_median") -> None:
@@ -186,6 +233,18 @@ class ProcessedFitsImage(BaseModel):
     def from_fits(
         cls, fits_file: fits.ImageHDU | fits.PrimaryHDU, file_path: str | None = None
     ) -> "ProcessedFitsImage":
+        """Build a ProcessedFitsImage from an open FITS HDU.
+
+        Reads the pixel data and header, extracts the exposure time and
+        boresight pointing, and populates the image metadata.
+
+        Args:
+            fits_file: The FITS HDU (image or primary) to read.
+            file_path: Originating file path, recorded on the image.
+
+        Returns:
+            The constructed image.
+        """
         # Extract exposure time from header
         exposure_time = None
         for key in ["EXPTIME", "EXPOSURE", "TELAPSE"]:
@@ -195,14 +254,17 @@ class ProcessedFitsImage(BaseModel):
 
         if exposure_time is None:
             logger.warning(f"No exposure time found in header. Available keys: {list(fits_file.header.keys())}")
-            for key in fits_file.header.keys():
+            for key in fits_file.header:
                 if "TIME" in key.upper() or "EXP" in key.upper():
                     logger.info(f"  {key}: {fits_file.header[key]}")
 
+        boresight_ra, boresight_dec = read_boresight_from_header(fits_file.header)
         metadata = ImageMetadata(
             image_id=fits_file.header.get("IMAGEID", "tmp"),
             width=fits_file.header["NAXIS1"],
             height=fits_file.header["NAXIS2"],
+            boresight_ra=float(boresight_ra) if boresight_ra is not None else None,
+            boresight_dec=float(boresight_dec) if boresight_dec is not None else None,
             exposure_time=exposure_time,
         )
         return cls(
@@ -215,10 +277,39 @@ class ProcessedFitsImage(BaseModel):
 
     @classmethod
     def from_file_bytes(cls, file_bytes: bytes, file_path: str | None = None) -> "ProcessedFitsImage":
-        hdul = fits.open(BytesIO(file_bytes))
-        return cls.from_fits(hdul[0], file_path=file_path)
+        """Build a ProcessedFitsImage from raw FITS file bytes.
+
+        Args:
+            file_bytes (bytes): The raw bytes of a FITS file.
+            file_path (str | None): Originating file path, recorded on the image.
+
+        Returns:
+            ProcessedFitsImage: The constructed image built from the file's primary HDU.
+
+        Raises:
+            InvalidInputError: If the bytes are not a readable FITS image.
+        """
+        try:
+            hdul = fits.open(BytesIO(file_bytes))
+            primary_hdu = hdul[0]
+        except Exception as exc:
+            raise InvalidInputError(
+                f"Could not read a FITS image from the submitted bytes: {exc}"
+            ) from exc
+        return cls.from_fits(primary_hdu, file_path=file_path)
 
     @classmethod
     def from_base64_string(cls, base64_string: str) -> "ProcessedFitsImage":
+        """Build a ProcessedFitsImage from a base64-encoded FITS file.
+
+        Args:
+            base64_string: Base64 encoding of the raw FITS file bytes.
+
+        Returns:
+            The constructed image.
+
+        Raises:
+            InvalidInputError: If the decoded bytes are not a readable FITS image.
+        """
         file_bytes = base64.b64decode(base64_string)
         return cls.from_file_bytes(file_bytes)

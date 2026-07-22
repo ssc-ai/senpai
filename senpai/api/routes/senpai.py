@@ -33,6 +33,8 @@ router = APIRouter()
 
 
 class FilePayloadItem(BaseModel):
+    """One base64-encoded FITS file plus its position in the upload sequence."""
+
     file: str = Field(..., description="Base64-encoded FITS file bytes")
     sequence_id: int | None = Field(None, description="Sequence ID for ordering")
     sequence_count: int | None = Field(None, description="Total sequence count")
@@ -80,7 +82,15 @@ def _run_collect_pipeline(
 
 
 @router.get("/")
-async def index(request: Request):
+async def index(request: Request) -> dict[str, str]:
+    """Health check returning the API base URL and version.
+
+    Args:
+        request: The incoming FastAPI request.
+
+    Returns:
+        A mapping with the API base URL and the current SENPAI version.
+    """
     config = get_config()
     return {"api": str(request.base_url), "version": config.version}
 

@@ -22,11 +22,17 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import ndimage
 
 from senpai.engine.models.metadata import TrackMode
+
+if TYPE_CHECKING:
+    from astropy.io.fits import Header
+
+    from senpai.core.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +73,11 @@ class TrackModeDecision:
 
 
 def _blob_elongation(stamp: np.ndarray) -> tuple[float, float] | None:
-    """Axis ratio (major/minor) and position angle (rad) from a blob's intensity
-    second moments. Returns None for a degenerate blob."""
+    """Return a blob's axis ratio and position angle from its intensity moments.
+
+    Computes the major/minor axis ratio (elongation) and the position angle in
+    radians from the blob's second moments. Returns None for a degenerate blob.
+    """
     tot = float(stamp.sum())
     if tot <= 0:
         return None
@@ -97,7 +106,8 @@ def infer_track_mode_from_image(
     """Round sources -> sidereal, mutually aligned streaks -> rate, else UNKNOWN.
 
     Rate-independent on purpose: it measures source *shape* directly, so it does
-    not inherit any error in the header tracking rates."""
+    not inherit any error in the header tracking rates.
+    """
     a = np.asarray(data, dtype=np.float32)
     if a.ndim != 2:
         return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, 0, float("nan"), float("nan"))
@@ -164,7 +174,7 @@ def infer_track_mode_from_image(
     return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, len(elongs), med_elong, pa_align)
 
 
-def _header_trkmode(header, mode_keys) -> TrackMode | None:
+def _header_trkmode(header: Header, mode_keys: list[str]) -> TrackMode | None:
     """Explicit, unambiguous TRKMODE from the header, or None."""
     from senpai.engine.utils.fits_io import extract_header_value
 
@@ -183,10 +193,22 @@ def _header_trkmode(header, mode_keys) -> TrackMode | None:
     return None
 
 
-def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
-    """Classify a frame sidereal vs rate, cheapest evidence first (see module
-    docstring). ``data`` (the 2-D image) enables the pixel arbiter; omit it to
-    stay metadata-only."""
+def classify_track_mode(
+    header: Header, data: np.ndarray | None = None, config: AppConfig | None = None
+) -> TrackModeDecision:
+    """Classify a frame sidereal vs rate, cheapest evidence first.
+
+    See the module docstring for the tiered decision logic. ``data`` (the 2-D image)
+    enables the pixel arbiter; omit it to stay metadata-only.
+
+    Args:
+        header: FITS header supplying the TRKMODE key and RA/DEC tracking rates.
+        data: Optional 2-D image enabling the pixel-based tier. Defaults to None.
+        config: Optional application config; loaded via ``get_config()`` when None.
+
+    Returns:
+        A ``TrackModeDecision`` with the classified mode and the tier that decided it.
+    """
     from senpai.engine.utils.fits_io import extract_track_rates_from_header
 
     if config is None:
@@ -239,7 +261,15 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
 # CLI: classify a frame and show each tier's evidence
 #   python -m senpai.engine.detection.track_mode <fits...> [--from-data] [--raw]
 # --------------------------------------------------------------------------
-def _main(argv=None) -> int:
+def _main(argv: list[str] | None = None) -> int:
+    """Run the CLI: classify each FITS frame and print every tier's evidence.
+
+    Args:
+        argv: Optional argument vector; defaults to ``sys.argv`` when None.
+
+    Returns:
+        Process exit code (0 on success).
+    """
     import argparse
     import glob
     from pathlib import Path
@@ -289,7 +319,7 @@ def _main(argv=None) -> int:
         verdict = infer_track_mode_from_image(data)
 
         print(f"\n{Path(path).name}")
-        print(f"  TRKMODE header : {str(header.get('TRKMODE')):>10}  -> "
+        print(f"  TRKMODE header : {header.get('TRKMODE')!s:>10}  -> "
               f"{trk.value if trk else '(unusable)'}")
         if ra is not None and dec is not None:
             mag = math.hypot(ra, dec)

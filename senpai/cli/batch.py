@@ -1,4 +1,11 @@
-# CLI for batch processing of SENPAI algorithm across multiple date directories
+"""CLI for batch processing of the SENPAI pipeline across multiple date directories.
+
+Discovers imagesets under a base directory (either date subdirectories or a flat
+layout) by reading their FITS headers, then processes each discovered dataset with
+``process_senpai_collect``, running up to ``n_proc`` datasets in parallel with a
+per-dataset timeout and a rolling batch summary.
+"""
+
 import argparse
 import concurrent.futures
 import functools
@@ -118,7 +125,16 @@ def process_single_dataset(
 
 
 # Move this function outside of discover_datasets
-def extract_id_from_file(file_path, header_id_key):
+def extract_id_from_file(file_path: Path, header_id_key: str) -> str | None:
+    """Extract the imageset id from a FITS file's header, logging read failures.
+
+    Args:
+        file_path: Path to the FITS file to read.
+        header_id_key: Header keyword identifying the imageset id.
+
+    Returns:
+        The extracted id, or None if the key is absent or the header cannot be read.
+    """
     try:
         header_id = extract_id_from_header(file_path, header_id_key)
         if header_id is not False:
@@ -131,10 +147,18 @@ def extract_id_from_file(file_path, header_id_key):
 def discover_datasets(
     base_dir: Path, header_id_key: str, max_datasets: int | None = None, n_proc: int = 1
 ) -> list[dict[str, Any]]:
-    """
-    Discover all datasets across date directories or in a flat directory structure.
-    Returns a list of dataset information dictionaries.
+    """Discover all datasets across date directories or in a flat directory structure.
+
     Uses parallel processing to speed up header extraction.
+
+    Args:
+        base_dir: Root directory to scan for FITS files (date subdirs or flat).
+        header_id_key: Header keyword used to group frames into imagesets.
+        max_datasets: Optional cap on the number of datasets to return.
+        n_proc: Number of worker processes used for header extraction.
+
+    Returns:
+        A list of dataset information dictionaries, each with ``id`` and ``date_dir``.
     """
     datasets = []
 
@@ -213,8 +237,18 @@ def batch_process(
     skip_existing: bool = True,
     timeout: int | None = None,
 ) -> None:
-    """
-    Process multiple datasets in parallel.
+    """Process multiple datasets in parallel.
+
+    Args:
+        base_dir: Root directory to scan for datasets.
+        output_dir: Directory to write per-dataset outputs and the batch summary into.
+        header_id_key: Header keyword used to group frames into imagesets.
+        n_proc: Maximum number of datasets processed concurrently.
+        max_datasets: Optional cap on the number of datasets to process.
+        detect: Whether to run point-source detection during processing.
+        skip_existing: Skip datasets whose output already exists.
+        timeout: Optional per-dataset timeout in seconds; exceeding it terminates
+            that dataset's worker process.
     """
     start_time = time.time()
 
@@ -243,7 +277,26 @@ def batch_process(
                 dataset_dir = dataset["date_dir"]
 
                 # Define a worker function that puts results in the queue
-                def worker(dataset_dir, dataset_id, header_id_key, output_dir, detect, skip_existing, queue):
+                def worker(
+                    dataset_dir: Path,
+                    dataset_id: str,
+                    header_id_key: str,
+                    output_dir: Path,
+                    detect: bool,
+                    skip_existing: bool,
+                    queue: multiprocessing.Queue,
+                ) -> None:
+                    """Process one dataset and put its result dict on the queue.
+
+                    Args:
+                        dataset_dir: Directory containing the dataset's FITS frames.
+                        dataset_id: Imageset id to process.
+                        header_id_key: Header keyword used to group frames.
+                        output_dir: Directory to write the dataset's outputs into.
+                        detect: Whether to run point-source detection.
+                        skip_existing: Skip processing if output already exists.
+                        queue: Queue the result (or error) dict is placed on.
+                    """
                     try:
                         result = process_single_dataset(
                             dataset_dir, dataset_id, header_id_key, output_dir, detect, skip_existing

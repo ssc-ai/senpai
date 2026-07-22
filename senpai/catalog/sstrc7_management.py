@@ -1,3 +1,11 @@
+"""Download, verify, and inspect the SSTRC7 star catalog.
+
+Fetches the multi-part SSTRC7 catalog archive from its GitHub release (with resume and
+concurrent part downloads), verifies part checksums, combines and extracts the tarball,
+and validates the extracted directory against the expected file manifest. Runnable as a
+CLI (``download`` / ``examine`` / ``verify``) or imported by ``senpai.catalog.runner``.
+"""
+
 import argparse
 import hashlib
 import json
@@ -23,8 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 # Helper function for human-readable file sizes
-def human_readable_size(size_bytes):
-    """Convert size in bytes to human-readable format with appropriate units."""
+def human_readable_size(size_bytes: float) -> str:
+    """Convert size in bytes to human-readable format with appropriate units.
+
+    Args:
+        size_bytes: Size in bytes.
+
+    Returns:
+        Size formatted with two decimals and the largest fitting unit (B..TB),
+        e.g. ``"1.50 GB"``.
+    """
     units = ["B", "KB", "MB", "GB", "TB"]
     size = float(size_bytes)
     unit_index = 0
@@ -86,7 +102,7 @@ def examine_sstrc7_by_path_and_structure(catalog_path: str, expected_files: dict
     return False
 
 
-def get_github_release_assets(repo: str, tag: str):
+def get_github_release_assets(repo: str, tag: str) -> list[dict[str, str | int]]:
     """Get release asset URLs from GitHub API.
 
     Args:
@@ -95,13 +111,16 @@ def get_github_release_assets(repo: str, tag: str):
 
     Returns:
         List of dictionaries with asset information (name, url, size)
+
+    Raises:
+        Exception: If the GitHub release information cannot be fetched or parsed.
     """
     api_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
 
     try:
-        req = Request(api_url)
+        req = Request(api_url)  # noqa: S310  # trusted GitHub release URL
         req.add_header("Accept", "application/vnd.github.v3+json")
-        with urlopen(req) as response:
+        with urlopen(req) as response:  # noqa: S310  # trusted GitHub release URL
             release_data = json.loads(response.read().decode("utf-8"))
 
         assets = []
@@ -120,7 +139,7 @@ def get_github_release_assets(repo: str, tag: str):
         raise
 
 
-def download_with_resume(url: str, filename: str, expected_size: int = None) -> bool:
+def download_with_resume(url: str, filename: str, expected_size: int | None = None) -> bool:
     """Download file with resume capability.
 
     Args:
@@ -142,19 +161,19 @@ def download_with_resume(url: str, filename: str, expected_size: int = None) -> 
             logger.info(f"Resuming download of {filename} from byte {resume_pos}")
 
         # Get file size from server
-        req = Request(url, method="HEAD")
-        with urlopen(req) as response:
+        req = Request(url, method="HEAD")  # noqa: S310  # trusted GitHub release URL
+        with urlopen(req) as response:  # noqa: S310  # trusted GitHub release URL
             total_size = int(response.headers.get("Content-Length", 0))
 
         # Create request for download
         if resume_pos > 0:
-            req = Request(url)
+            req = Request(url)  # noqa: S310  # trusted GitHub release URL
             req.add_header("Range", f"bytes={resume_pos}-")
         else:
-            req = Request(url)
+            req = Request(url)  # noqa: S310  # trusted GitHub release URL
 
         # Download with progress bar
-        with urlopen(req) as response:
+        with urlopen(req) as response:  # noqa: S310  # trusted GitHub release URL
             # Handle 206 Partial Content for resume
             status_code = response.getcode()
             if status_code == 206:
@@ -166,21 +185,20 @@ def download_with_resume(url: str, filename: str, expected_size: int = None) -> 
                 logger.error(f"Unexpected HTTP status code: {status_code}")
                 return False
 
-            with open(filename, mode) as f:
-                with tqdm(
-                    total=total_size,
-                    initial=resume_pos,
-                    unit="B",
-                    unit_scale=True,
-                    desc=os.path.basename(filename),
-                    leave=False,
-                ) as pbar:
-                    while True:
-                        chunk = response.read(8192)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        pbar.update(len(chunk))
+            with open(filename, mode) as f, tqdm(
+                total=total_size,
+                initial=resume_pos,
+                unit="B",
+                unit_scale=True,
+                desc=os.path.basename(filename),
+                leave=False,
+            ) as pbar:
+                while True:
+                    chunk = response.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    pbar.update(len(chunk))
 
         # Verify final size if expected
         if expected_size:
@@ -271,7 +289,7 @@ def combine_and_extract_sstrc7(part_files: list[str], output_dir: str) -> None:
     logger.info(f"Extracting {tar_filename} to {output_dir}")
     # Extract tar.gz
     with tarfile.open(tar_filename, "r:gz") as tar:
-        tar.extractall(path=output_dir)
+        tar.extractall(path=output_dir)  # noqa: S202  # trusted SSTR7 GitHub release tarball
 
     # Clean up tar file
     os.remove(tar_filename)
@@ -305,7 +323,15 @@ def download_sstrc7_from_github(output_dir: str, max_workers: int = 3, force: bo
     logger.info(f"Found {len(part_assets)} part files to download")
 
     # Download part files
-    def download_part(asset):
+    def download_part(asset: dict[str, str | int]) -> str | None:
+        """Download a single catalog part, reusing an existing complete file.
+
+        Args:
+            asset: Release asset dict with ``name``, ``url``, and ``size`` keys.
+
+        Returns:
+            The local file path on success, or None if the download failed.
+        """
         filename = os.path.join(output_dir, asset["name"])
         if os.path.exists(filename) and not force:
             # Check if file is complete
@@ -318,18 +344,20 @@ def download_sstrc7_from_github(output_dir: str, max_workers: int = 3, force: bo
         return None
 
     part_files = []
-    with tqdm(total=len(part_assets), desc="Downloading parts", unit="file") as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = []
-            for asset in part_assets:
-                future = executor.submit(download_part, asset)
-                future.add_done_callback(lambda p: pbar.update())
-                futures.append(future)
+    with (
+        tqdm(total=len(part_assets), desc="Downloading parts", unit="file") as pbar,
+        ThreadPoolExecutor(max_workers=max_workers) as executor,
+    ):
+        futures = []
+        for asset in part_assets:
+            future = executor.submit(download_part, asset)
+            future.add_done_callback(lambda p: pbar.update())
+            futures.append(future)
 
-            for future in futures:
-                result = future.result()
-                if result:
-                    part_files.append(result)
+        for future in futures:
+            result = future.result()
+            if result:
+                part_files.append(result)
 
     if len(part_files) != len(part_assets):
         logger.error("Not all part files downloaded successfully")
@@ -357,8 +385,15 @@ def download_sstrc7_from_github(output_dir: str, max_workers: int = 3, force: bo
         logger.warning("Extracted catalog verification failed - some files may be missing")
 
 
-def examine_sstrc7():
-    """Examine SSTRC7 catalog using config."""
+def examine_sstrc7() -> bool:
+    """Examine SSTRC7 catalog using config.
+
+    Reads the catalog path from the active configuration and validates its structure.
+
+    Returns:
+        True if the configured catalog directory matches the expected structure,
+        False if the path is unconfigured or validation fails.
+    """
     config = get_or_initialize_config()
     catalog_path = config.star_catalog.path
 

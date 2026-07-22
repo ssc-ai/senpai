@@ -1,44 +1,54 @@
+"""Solve the pixel shift between two rate-tracked frames via cross correlation.
+
+Balances and cross correlates a pair of rate-tracked frames, iteratively refines the
+shift with Bayesian flux validation, and records the resulting shift, streak geometry,
+and pixel track rate. Also exposes the shared Bayesian shift-optimization helper used
+by the rate/sidereal solvers.
+"""
+
 import logging
+from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import convolve
+from skopt import gp_minimize
+from skopt.space import Real
 
-
-from scipy.ndimage import gaussian_filter
-
-# from senpai.engine.utils.preprocessing import background_subtract
-from senpai.core.config import get_config
-from senpai.engine.detection.kernels import rectangle_pyramoid
 from senpai.engine.detection.streak.extraction import (
     cross_corr,
-    extract_streak_dims_mapping,
     extract_streak_dims_robust,
     prepare_rate_frame,
-    refine_robust_streak,
 )
 from senpai.engine.detection.streak.masking import (
     percent_difference,
     remove_border_crossing_streaks,
-    remove_border_crossing_streaks_pairwise,
     remove_brightest_streak,
     remove_near_saturation_streaks,
-    remove_streak_at_point_robust,
 )
 from senpai.engine.detection.streak.validation import validate_proposed_shift
 from senpai.engine.models.metadata import StreakMetadata
-from senpai.engine.models.senpai import FrameShift, RateTrackFrame
-from senpai.engine.models.streak_measurement import (
-    StreakMeasurement,
-    StreakMeasurements,
-    angular_difference,
-)
-from senpai.engine.utils.propagate_wcs import get_global_shift_from_astrometric_stars
+from senpai.engine.models.senpai import FrameShift, RateTrackFrame, SiderealFrame
+from senpai.engine.models.starfield import StarInSpace
+from senpai.engine.plotting.images import plot_single_frame
+from senpai.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
 def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> None:
+    """Iteratively remove the brightest streak from whichever frame is brighter.
+
+    While the percent difference between the two frames' near-peak (99.99th percentile)
+    values exceeds the threshold, the brightest streak in the brighter frame is filled in,
+    rebalancing the two frames so a subsequent cross correlation is not dominated by a
+    single saturated streak. A bounded number of attempts is made.
+
+    Args:
+        rate1_img: The first rate-tracked frame's image data.
+        rate2_img: The second rate-tracked frame's image data.
+
+    Returns:
+        None.
+    """
     max_r1 = np.percentile(rate1_img, 99.99)
     max_r2 = np.percentile(rate2_img, 99.99)
     pdthresh = 20.0
@@ -48,18 +58,15 @@ def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> No
     attempts = 0
     while pd > pdthresh and attempts < max_attempts:
         attempts += 1
-        logger.info(
-            f"percent difference {pd:.1f}% is greater than threshold of {pdthresh:.1f}%"
-        )
-        print(max_r1, max_r2)
+        logger.debug(f"percent difference {pd:.1f}% is greater than threshold of {pdthresh:.1f}%")
 
         if max_r1 > max_r2:
-            logger.info("removing near-saturation streak in rate1")
+            logger.debug("removing near-saturation streak in rate1")
             fill_min = np.median(rate1_img) + 0.5 * np.std(rate1_img)
             rate1_img = remove_brightest_streak(rate1_img, fill_min)
 
         else:
-            logger.info("removing near-saturation streak in rate2")
+            logger.debug("removing near-saturation streak in rate2")
             fill_min = np.median(rate2_img) + 0.5 * np.std(rate2_img)
             rate2_img = remove_brightest_streak(rate2_img, fill_min)
 
@@ -68,173 +75,211 @@ def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> No
         pd = percent_difference(max_r1, max_r2)
 
     if pd <= pdthresh:
-        logger.info(
-            f"percent difference {pd:.1f}% is below threshold of {pdthresh:.1f}%"
-        )
+        logger.debug(f"percent difference {pd:.1f}% is below threshold of {pdthresh:.1f}%")
     else:
-        logger.warning(
-            f"percent difference {pd:.1f}% is above threshold of {pdthresh:.1f}%"
+        logger.warning(f"percent difference {pd:.1f}% is above threshold of {pdthresh:.1f}%")
+
+
+def windowed_correlation_peaks(
+    cross_correlated_image: np.ndarray, expected_shift: float | None, n_peaks: int = 1
+) -> list[np.ndarray]:
+    """Locate up to ``n_peaks`` DISTINCT correlation peaks within the expected-shift window.
+
+    Masks the central self-correlation spike and restricts the search to a window scaled to the
+    expected pixel shift. Peaks are returned brightest-first; after each peak its neighborhood is
+    suppressed so the next ``argmax`` finds a genuinely different feature. This lets the caller
+    validate several candidates: a bright SPURIOUS peak (e.g. a long star-streak artifact) can
+    outshine the true frame-to-frame shift, so taking only the brightest -- or re-finding the same
+    cluster after masking a single pixel -- can lock onto the wrong peak (the 963e1bc5 / obj-28190
+    failure). The mask/window are clamped positive so the search region is never empty (a
+    non-positive seed otherwise produced an empty slice and crashed ``np.argmax``).
+
+    Args:
+        cross_correlated_image: The frame-to-frame cross-correlation image.
+        expected_shift: Expected pixel-shift magnitude used to size the window, or None when no
+            prior estimate is available.
+        n_peaks: Maximum number of distinct peaks to return.
+
+    Returns:
+        A list of up to ``n_peaks`` (row, column) peak locations in the full image's coordinates,
+        brightest first.
+    """
+    center = np.array(cross_correlated_image.shape) / 2
+    if expected_shift and expected_shift > 0:
+        mask_center = max(1, int(0.2 * expected_shift))
+        scale = max(1, int(1.2 * expected_shift))
+    else:
+        mask_center = 3
+        scale = 150
+
+    subcc = cross_correlated_image.copy()
+    subcc[
+        int(center[0] - mask_center) : int(center[0] + mask_center),
+        int(center[1] - mask_center) : int(center[1] + mask_center),
+    ] = np.min(subcc)
+
+    y_min = max(0, int(center[0] - scale))
+    y_max = min(subcc.shape[0], int(center[0] + scale))
+    x_min = max(0, int(center[1] - scale))
+    x_max = min(subcc.shape[1], int(center[1] + scale))
+    subcc = subcc[y_min:y_max, x_min:x_max]
+
+    # Suppress a peak's whole neighborhood (a streak cluster) between picks, so candidates are
+    # distinct features rather than adjacent pixels of one peak.
+    suppress_radius = max(mask_center, 5)
+    floor = float(np.min(subcc))
+    work = subcc.copy()
+    rows, cols = np.indices(work.shape)
+    peaks: list[np.ndarray] = []
+    for _ in range(max(1, n_peaks)):
+        peak = np.unravel_index(np.argmax(work), work.shape)
+        peaks.append(np.array([peak[0] + y_min, peak[1] + x_min]))
+        work[(rows - peak[0]) ** 2 + (cols - peak[1]) ** 2 <= suppress_radius**2] = floor
+    return peaks
+
+
+def track_rate_from_header(
+    header: object, plate_scale_arcsec: float, dec_deg: float
+) -> float | None:
+    """Derive the object's pixel track rate from the mount track-rate headers, if available.
+
+    ``TELTKRA``/``TELTKDEC`` are the mount's commanded RA/Dec track rates (arcsec/s); the mount
+    physically slewed at this rate, so it is the object's apparent rate. Returns ``None`` when
+    either header is absent, unparseable, the plate scale is non-positive, or the derived rate is
+    non-positive, so the caller can fall back.
+
+    Args:
+        header: FITS header (mapping) of the rate-tracked frame.
+        plate_scale_arcsec: Plate scale in arcsec/pixel (from the solved WCS).
+        dec_deg: Field declination in degrees, used to scale the RA rate by ``cos(dec)``.
+
+    Returns:
+        The pixel track rate in pixels per second, or ``None`` if it cannot be derived.
+    """
+    ra_rate = header.get("TELTKRA")
+    dec_rate = header.get("TELTKDEC")
+    if ra_rate is None or dec_rate is None or plate_scale_arcsec <= 0:
+        return None
+    try:
+        great_circle_arcsec_s = float(
+            np.hypot(float(ra_rate) * np.cos(np.deg2rad(dec_deg)), float(dec_rate))
         )
+    except (TypeError, ValueError):
+        return None
+    rate = great_circle_arcsec_s / plate_scale_arcsec
+    return rate if rate > 0 else None
 
 
-def refine_correlation_shift_by_global_shift(
-    rate_frame_source: RateTrackFrame,
-    rate_frame_target: RateTrackFrame,
-    streak: StreakMetadata,
-    shift: np.ndarray,
-) -> np.ndarray:
-    src_streak = rate_frame_source.streak
-    if (src_streak is None or src_streak.pixel_length is None
-            or src_streak.fwhm is None):
-        # No streak model on the source frame (failed extraction) — the
-        # refinement kernel can't be built; keep the unrefined CC shift.
-        logger.warning(
-            "Skipping correlation-shift refinement: source frame %s has no "
-            "streak model", rate_frame_source.index,
-        )
-        return shift
-    starfield = rate_frame_source.starfield
-    if (starfield is None or not starfield.catalog_stars
-            or not starfield.astrometric_fit_stars):
-        # No catalog/astrometric stars on the source frame (failed catalog
-        # query or WCS) — the global-shift refinement has nothing to anchor
-        # to; keep the unrefined CC shift.
-        logger.warning(
-            "Skipping correlation-shift refinement: source frame %s has no "
-            "catalog/astrometric stars", rate_frame_source.index,
-        )
-        return shift
-    kernel = rectangle_pyramoid(
-        rate_frame_source.streak.pixel_length,
-        rate_frame_source.streak.sine_angle,
-        rate_frame_source.streak.cosine_angle,
-        int(rate_frame_source.streak.fwhm * 2),
-        upsample=100,
-        halo_fwhm=4,
-        halo_level=0,
-    )
+def _initial_track_rate(rate_frame: RateTrackFrame) -> float | None:
+    """Estimate the object's pixel rate to seed the first rate->rate search window.
 
-    # Use mode='same' to ensure output has same size as input
-    convolved_frame = convolve(rate_frame_target.frame.data, kernel, mode="same")
+    The first rate->rate pair has no measured rate yet. Rather than back the rate out of the
+    sidereal->rate registration offset (a star-field shift across a slew-mode change, which
+    under-estimates the object rate), measure it directly: prefer the mount track-rate header,
+    then fall back to the rate frame's measured streak length over the exposure.
 
-    shifted_catalog = [
-        star.model_copy(update={"x": star.x - shift[0], "y": star.y - shift[1]})
-        for star in rate_frame_source.starfield.catalog_stars
-    ]
-    shifted_astro = [
-        star.model_copy(update={"x": star.x - shift[0], "y": star.y - shift[1]})
-        for star in rate_frame_source.starfield.astrometric_fit_stars
-    ]
-    copied_rate_frame = rate_frame_source.model_copy(deep=False)
-    copied_rate_frame.starfield = rate_frame_source.starfield.model_copy(
-        update={"catalog_stars": shifted_catalog, "astrometric_fit_stars": shifted_astro}
-    )
+    Args:
+        rate_frame: The (already solved) rate frame anchoring this pair.
 
-    x_shift, y_shift = get_global_shift_from_astrometric_stars(
-        copied_rate_frame, convolved_frame
-    )
-    logger.info(
-        f"refined correlation shift {shift[0]:.1f}, {shift[1]:.1f} -> {shift[0] - x_shift:.1f}, {shift[1] - y_shift:.1f}"
-    )
-    return np.array([shift[0] - x_shift, shift[1] - y_shift])
-
-
-def whiten_image(im, sigma=3, eps=1e-6):
-    # scipy.fft is the same pocketfft as numpy's but multithreaded with
-    # workers — identical values, several times faster on full frames.
-    from scipy import fft as sfft
-
-    # subtract mean (optional but recommended)
-    im0 = im - np.mean(im)
-
-    # FFT
-    F = sfft.fft2(im0, workers=-1)
-
-    # Power spectrum
-    P = np.abs(F) ** 2
-    P_smooth = gaussian_filter(P, sigma=sigma)
-
-    # Whiten
-    F_white = F / np.sqrt(P_smooth + eps)
-
-    # Back to image space
-    return sfft.ifft2(F_white, workers=-1).real
-
-
-def _block_median_downsample(img: np.ndarray, factor: int) -> np.ndarray:
-    """Downsample by f×f block MEDIAN (not mean) — robust to hot pixels / cosmics
-    that would otherwise spike the whitened cross-correlation. Trailing
-    rows/cols that don't fill a block are dropped."""
-    if factor <= 1:
-        return img
-    h, w = img.shape
-    hc, wc = (h // factor) * factor, (w // factor) * factor
-    blocks = img[:hc, :wc].reshape(hc // factor, factor, wc // factor, factor)
-    return np.median(blocks, axis=(1, 3))
-
-
-def cc_downsample_factor(
-    fwhm: float | None, shape: tuple[int, int], target_fwhm: float = 3.0,
-    min_side: int = 512,
-) -> int:
-    """Downsample factor for the coarse cross-correlation, chosen by information
-    content: shed PSF oversampling down to ~target_fwhm px (FWHM 12 → factor 4),
-    with a size floor so small frames (e.g. 512²) are left at full resolution. The
-    shift only needs to be coarse — the catalog-star match refines to sub-pixel."""
-    if not fwhm or fwhm <= target_fwhm:
-        return 1
-    f = max(1, int(round(fwhm / target_fwhm)))
-    while f > 1 and min(shape[0] // f, shape[1] // f) < min_side:
-        f -= 1
-    return f
+    Returns:
+        The object's pixel track rate in pixels per second, or ``None`` if neither source is
+        available (then the search window falls back to its default size).
+    """
+    starfield = rate_frame.starfield
+    if starfield is not None and starfield.wcs is not None and starfield.wcs_metadata is not None:
+        astropy_wcs = starfield.wcs.to_astropy_wcs()
+        if astropy_wcs is not None:
+            rate = track_rate_from_header(
+                rate_frame.frame.header,
+                starfield.wcs_metadata.x_ifov_arcsec,
+                float(astropy_wcs.wcs.crval[1]),
+            )
+            if rate is not None:
+                return rate
+    if rate_frame.streak is not None and rate_frame.streak.pixel_length:
+        exposure = float(rate_frame.frame.header.get("EXPTIME", 1))
+        if exposure > 0:
+            return rate_frame.streak.pixel_length / exposure
+    return None
 
 
 def solve_rate_from_rate(
     rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFrame, frame_shift: FrameShift
 ) -> None:
-    # Return the modified object
+    """Measure the pixel shift between two rate-tracked frames by cross correlation.
 
-    # Only the SOURCE frame needs a starfield: this solver reads
-    # rate_frame_a.starfield.catalog_stars for cross-correlation masking and shift
-    # validation (and would AttributeError on None), then the caller propagates
-    # that WCS to the target. The TARGET's starfield is the *output* of this shift
-    # — it's built downstream in collect.py ("Shifting WCS by pixel shift"), so a
-    # target with starfield=None is the normal, expected pre-solve state. Requiring
-    # it here wrongly skipped every rate->rate shift whose target wasn't already
-    # anchored, killing propagation past the first rate frame.
-    #
-    # A fully-cloudy source gets no WCS / no starfield. Mark the shift processed-
-    # but-invalid and return: the caller's loop pulls the next *unprocessed* shift
-    # (SenpaiRun.get_next_shift), so returning without setting processed=True hands
-    # the same shift back forever — a livelock (observed in _full7).
+    Prepares and balances both frames, cross correlates them, and searches the
+    correlation surface (optionally seeded by the expected shift from the frames' track
+    rates) for the best peak, refining each candidate with Bayesian flux validation. The
+    best shift is written to the frame shift, and, if the second frame has no streak
+    metadata yet, its streak geometry and pixel track rate are measured and stored. All
+    updates are performed in place.
+
+    Args:
+        rate_frame_a: The reference rate-tracked frame.
+        rate_frame_b: The rate-tracked frame to align with the first.
+        frame_shift: The frame shift to populate with the measured shift in place.
+
+    Returns:
+        None.
+    """
+    # The reference (source) frame must already have a WCS solution. If an upstream shift was
+    # rejected, this frame was never solved, so there is nothing to register against. This is a
+    # recoverable, routed-around condition (a symptom of an upstream failure), so warn and mark
+    # the shift invalid rather than raising or dereferencing a missing starfield.
     if rate_frame_a.starfield is None:
         logger.warning(
-            "Skipping rate-to-rate shift %d->%d: source frame missing starfield "
-            "— frame likely had no WCS solution.",
-            frame_shift.source_index, frame_shift.target_index,
+            "Skipping rate->rate shift %d->%d: source frame %d has no WCS solution "
+            "(an upstream shift was rejected); routing around it.",
+            rate_frame_a.index,
+            rate_frame_b.index,
+            rate_frame_a.index,
         )
-        frame_shift.processed = True
         frame_shift.is_valid = False
-        frame_shift.error_message = "Missing starfield (no WCS solution)"
+        frame_shift.processed = True
         return
 
-    frame_exposure_gap_seconds = abs(
+    # Return the modified object
+    rate_a_exposure_time = float(rate_frame_a.frame.header.get("EXPTIME", 1))
+    rate_b_exposure_time = float(rate_frame_b.frame.header.get("EXPTIME", 1))
+    inter_frame_gap_seconds = abs(
         (rate_frame_a.timestamp - rate_frame_b.timestamp).total_seconds()
-    )
-    rate_a_exposure_time = rate_frame_a.frame.header.get("EXPTIME", 1)
-    rate_b_exposure_time = rate_frame_b.frame.header.get("EXPTIME", 1)
+    ) - 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
 
-    # Get the average pixel track rate if available from both frames
+    # Elapsed time between the two frames' exposure midpoints; the denominator for the object's pixel
+    # track rate. Two rate frames sharing a timestamp (duplicate/degenerate DATE-OBS) make this zero,
+    # which would divide the rate to infinity and crash streak sizing (int(inf)). Route around the
+    # pair -- as with a missing source WCS above -- rather than killing the whole collect.
+    elapsed_seconds = inter_frame_gap_seconds + 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
+    if elapsed_seconds <= 0:
+        logger.warning(
+            "Skipping rate->rate shift %d->%d: non-positive elapsed time (%.3f s) between frame "
+            "exposure midpoints (duplicate/degenerate frame timing); routing around it.",
+            rate_frame_a.index,
+            rate_frame_b.index,
+            elapsed_seconds,
+        )
+        frame_shift.is_valid = False
+        frame_shift.processed = True
+        return
+
+    # Get the average pixel track rate if available from both frames. Each rate->rate pair stores
+    # its measured rate on its target frame, so by the second pair onward these are populated.
     rates = []
     if rate_frame_a.pixel_track_rate_per_second is not None:
         rates.append(rate_frame_a.pixel_track_rate_per_second)
     if rate_frame_b.pixel_track_rate_per_second is not None:
         rates.append(rate_frame_b.pixel_track_rate_per_second)
 
-    if rates:
-        pixel_track_rate_per_second = np.mean(rates)
-    else:
-        pixel_track_rate_per_second = None
+    if not rates:
+        # First pair: no rate measured yet. Seed directly from the mount track rate (or streak
+        # length) rather than from the sidereal->rate offset, which under-estimates the object
+        # rate (it spans a sidereal->rate slew-mode change) and can leave the window too tight.
+        initial_rate = _initial_track_rate(rate_frame_a)
+        if initial_rate is not None:
+            rates.append(initial_rate)
+
+    pixel_track_rate_per_second = np.mean(rates) if rates else None
 
     fwhms = []
     if rate_frame_a.streak is not None:
@@ -242,602 +287,211 @@ def solve_rate_from_rate(
     if rate_frame_b.streak is not None:
         fwhms.append(rate_frame_b.streak.fwhm)
 
-    # Both frames can lack a streak (failed extraction); downstream consumers
-    # (cc_downsample_factor, the metadata headers) all accept fwhm=None.
-    streak_fwhm = float(np.mean(fwhms)) if fwhms else None
+    streak_fwhm = np.mean(fwhms) if fwhms else 4.0
 
     rate_a_data = prepare_rate_frame(rate_frame_a)
     rate_b_data = prepare_rate_frame(rate_frame_b)
 
     # whopping bright streaks can mess with correlation
-    rate_a_data, n_rate_a_removed = remove_near_saturation_streaks(
-        rate_a_data, rate_frame_a.frame.data_type
-    )
-    rate_b_data, n_rate_b_removed = remove_near_saturation_streaks(
-        rate_b_data, rate_frame_b.frame.data_type
-    )
+    rate_a_data, _ = remove_near_saturation_streaks(rate_a_data, rate_frame_a.frame.data_type)
+    rate_b_data, _ = remove_near_saturation_streaks(rate_b_data, rate_frame_b.frame.data_type)
 
-    # Border-crossing streak removal. Symmetric (pairwise) when we can estimate
-    # the inter-frame drift: deleting a streak from one frame while its
-    # counterpart survives in the other breaks the strongest true correlation
-    # pair, and in sparse fields the CC argmax then lands on a mis-pair of two
-    # different streaks (reversed/aliased shift). The drift estimate is the
-    # same prior the CC masking and search window below already rely on.
-    drift_axis = None
-    for fr in (rate_frame_a, rate_frame_b):
-        if fr.streak is not None and np.all(
-            np.isfinite([fr.streak.cosine_angle, fr.streak.sine_angle])
-        ):
-            drift_axis = (fr.streak.cosine_angle, fr.streak.sine_angle)
-            break
-    if (
-        get_config().streak.symmetric_border_removal
-        and pixel_track_rate_per_second is not None
-        and drift_axis is not None
-    ):
-        drift_mag = pixel_track_rate_per_second * (
-            frame_exposure_gap_seconds
-            + 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
-        )
-        pad_px = int(min(30, max(8, 2 * (streak_fwhm or 4.0), 0.15 * drift_mag)))
-        rate_a_data, rate_b_data, filled_a, filled_b = (
-            remove_border_crossing_streaks_pairwise(
-                rate_a_data,
-                rate_b_data,
-                drift_mag * drift_axis[0],
-                drift_mag * drift_axis[1],
-                pad_px,
-            )
-        )
-        if filled_a or filled_b:
-            logger.info(
-                "Symmetric border-streak removal: filled %d px in frame %d, "
-                "%d px in frame %d (drift=%.0fpx, pad=%dpx)",
-                filled_a, rate_frame_a.index, filled_b, rate_frame_b.index,
-                drift_mag, pad_px,
-            )
-    else:
-        rate_a_data = remove_border_crossing_streaks(rate_a_data)
-        rate_b_data = remove_border_crossing_streaks(rate_b_data)
+    rate_a_data = remove_border_crossing_streaks(rate_a_data)
+    rate_b_data = remove_border_crossing_streaks(rate_b_data)
 
-    # strip_unbalanced_streaks(rate_a_data, rate_b_data)
+    strip_unbalanced_streaks(rate_a_data, rate_b_data)
 
     rate_a_data = rate_a_data / np.std(rate_a_data)
     rate_a_data -= np.mean(rate_a_data)
     rate_b_data = rate_b_data / np.std(rate_b_data)
     rate_b_data -= np.mean(rate_b_data)
 
-    streak_measurements = StreakMeasurements()
+    # fast fourier-based cross correlation
+    cross_correlated_image = cross_corr(rate_a_data, rate_b_data)
 
-    """
-    streak_measurements.header = extract_streak_from_metadata(
-        rate_frame_b.frame_metadata,
-        plate_scale_arcsec=rate_frame_a.starfield.wcs_metadata.x_ifov_arcsec,
-        wcs_model=rate_frame_a.starfield.wcs,
-    )
-    if streak_measurements.header is not None:
-        streak_measurements.header.fwhm = streak_fwhm
-    """
-    # Cheap mapping extraction on frame B solely to seed the cross-correlation mask
-    # radius below (the robust extraction + rate come later). Dropped here: the
-    # frame-A mapping call and both "cleaned_*" outputs were entirely unused, and
-    # previous_frame only fed the now-removed median blend.
-    streak_measurements.streak_mapping, _ = extract_streak_dims_mapping(
-        rate_b_data, n_streaks=5
-    )
-
-    # Fast fourier-based (whitened/phase) cross correlation. Downsample first
-    # (block-MEDIAN — robust to hot pixels that spike the whitened CC) so the FFTs
-    # run on far fewer pixels; the shift it needs is coarse and the catalog-star
-    # match downstream refines to sub-pixel. The CC is upsampled back to full-res
-    # extent so all the masking/peak/refine logic below is unchanged.
-    cc_ds = cc_downsample_factor(streak_fwhm, rate_a_data.shape)
-    if cc_ds > 1:
-        from scipy.ndimage import zoom
-
-        a_white = whiten_image(_block_median_downsample(rate_a_data, cc_ds))
-        b_white = whiten_image(_block_median_downsample(rate_b_data, cc_ds))
-        cc_small = gaussian_filter(cross_corr(a_white, b_white), sigma=3)
-        cross_correlated_image = zoom(cc_small, cc_ds, order=1)
-        logger.info(
-            "Cross-correlation at 1/%d resolution (%s -> %s) for speed",
-            cc_ds, rate_a_data.shape, cc_small.shape,
-        )
-    else:
-        cross_correlated_image = gaussian_filter(
-            cross_corr(whiten_image(rate_a_data), whiten_image(rate_b_data)), sigma=3
-        )
-
-    # Calculate expected shift from track rate if available
     expected_shift = None
     if pixel_track_rate_per_second is not None:
         # expected pixel shift...
-        expected_shift = pixel_track_rate_per_second * (
-            frame_exposure_gap_seconds
-            + 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
+        expected_shift = pixel_track_rate_per_second * elapsed_seconds
+
+    # Examine several DISTINCT candidate peaks, not just the brightest. The brightest in-window
+    # peak can be a spurious star-streak artifact that fails the flux-correlation gate while the
+    # true (fainter) peak validates; validate candidates in brightness order and take the first
+    # that passes. If none passes, fall back to the brightest rather than a distinct peak with a
+    # marginally higher (still-sub-gate) correlation -- across the MDP set, alternative selectors
+    # (best-correlation, closest-to-seed) each recovered one collect but regressed more, because
+    # which signal points at the true peak depends on per-collect seed quality. Brightest-with-
+    # fallback is the empirical best net.
+    max_trials = 3
+    search_radius_pixels = 5.0
+    original_center = np.array(cross_correlated_image.shape) / 2
+    candidate_peaks = windowed_correlation_peaks(
+        cross_correlated_image, expected_shift, n_peaks=max_trials
+    )
+
+    best_shift = None
+    best_correlation = None
+    fallback_shift = None
+    fallback_correlation = None
+    for trial_index, cc_max in enumerate(candidate_peaks):
+        # Shift vector from center to peak, in (x, y) ordering.
+        shift_rate_to_rate_xy = (original_center - cc_max)[::-1]
+
+        # Validate this proposal with Bayesian flux correlation.
+        shift_rate_to_rate_xy[0], shift_rate_to_rate_xy[1], correlation = (
+            bayesian_optimize_proposed_shift(
+                target=rate_frame_b,
+                source=rate_frame_a,
+                shift_x_low=shift_rate_to_rate_xy[0] - search_radius_pixels,
+                shift_x_high=shift_rate_to_rate_xy[0] + search_radius_pixels,
+                shift_y_low=shift_rate_to_rate_xy[1] - search_radius_pixels,
+                shift_y_high=shift_rate_to_rate_xy[1] + search_radius_pixels,
+                catalog_stars=rate_frame_a.starfield.catalog_stars,
+                n_calls=10,
+            )
         )
 
-    # After getting initial measurements, mask the cross-correlation frame based on expected shift
-    if streak_measurements.streak_mapping is not None:
-        # Calculate maximum expected shift from streak measurements
-        # For rate-to-rate, we expect similar streak lengths in both frames
-        streak_rate = streak_measurements.streak_mapping.length / rate_a_exposure_time
+        # The brightest in-window peak (first candidate) is the fallback when nothing clears the gate.
+        if trial_index == 0:
+            fallback_shift = shift_rate_to_rate_xy
+            fallback_correlation = correlation
 
-        # Total time for shift is just the gap between frames
-        # (both frames are rate tracked, so object appears stationary during exposures)
-        total_shift_time = frame_exposure_gap_seconds
+        if correlation > 0.9:
+            best_shift = shift_rate_to_rate_xy
+            best_correlation = correlation
+            break
 
-        max_expected_shift = streak_rate * total_shift_time
+    if best_shift is None:
+        best_shift = fallback_shift
+        best_correlation = fallback_correlation
 
-        # Use the larger of our two estimates for masking. A failed streak
-        # extraction can leave length/exposure NaN → NaN radius → int() crash;
-        # the mask is only a CC-peak-suppression optimization, so fall back to
-        # the expected_shift estimate or skip masking rather than dying.
-        if not np.isfinite(max_expected_shift):
-            logger.warning(
-                "Streak-based shift estimate is not finite "
-                "(length=%s, exposure=%s); masking from expected_shift only.",
-                streak_measurements.streak_mapping.length, rate_a_exposure_time,
-            )
-            max_expected_shift = None
-        if expected_shift is not None and max_expected_shift is not None:
-            mask_radius = int(2.0 * max(max_expected_shift, expected_shift))
-        elif expected_shift is not None:
-            mask_radius = int(2.0 * expected_shift)
-        elif max_expected_shift is not None:
-            mask_radius = int(2.0 * max_expected_shift)
-        else:
-            mask_radius = None
-
-        if mask_radius is not None:
-            logger.info(
-                f"Masking cross-correlation outside radius {mask_radius:.1f}px "
-                f"(from streak length={streak_measurements.streak_mapping.length:.1f}px, "
-                f"rate={streak_rate:.1f}px/s, time={total_shift_time:.1f}s)"
-            )
-
-            # Create circular mask centered on image
-            center_y, center_x = (
-                cross_correlated_image.shape[0] // 2,
-                cross_correlated_image.shape[1] // 2,
-            )
-            y, x = np.ogrid[
-                -center_y : cross_correlated_image.shape[0] - center_y,
-                -center_x : cross_correlated_image.shape[1] - center_x,
-            ]
-            mask = x * x + y * y <= mask_radius * mask_radius
-
-            # Set everything outside mask to minimum value
-            cross_correlated_image[~mask] = np.min(cross_correlated_image)
-
-        if get_config().plotting.debug:
-            from senpai.engine.plotting.images import plot_single_frame
-
-            plot_single_frame(
-                cross_correlated_image,
-                scale=False,
-                output_file=get_config().runtime.output_dir
-                / f"masked_cc_{rate_frame_a.index}_{rate_frame_b.index}.png",
-            )
-
-    # mask center of subcc
-    mask_center = 0.2 * expected_shift if expected_shift else 3
-
-    scale = 150
-    if expected_shift:
-        # Floor the search window: a near-stationary target gives a sub-pixel
-        # expected shift, and int() would collapse the window to zero pixels
-        # (empty slice -> argmax of an empty sequence). A few PSF widths is
-        # always enough room to find the correlation peak.
-        scale = max(int(expected_shift * 1.2), int(3 * streak_fwhm), 5)
-
-    valid = False
-    max_trials = 10
-    trials = 0
-    best_correlation_score = -1
-    best_shift = None  # Track the best shift we've found
-    shift_rate_to_rate_xy = None  # Ensure defined for downstream usage
-
-    """
-    # Early try: validate shift from prior pixel track rate and frame gap only
-    if (
-        (not valid)
-        and (pixel_track_rate_per_second is not None)
-        and (rate_frame_a.streak is not None)
-    ):
-        prior_gap_only_shift_mag = (
-            pixel_track_rate_per_second * frame_exposure_gap_seconds
-        )
-        theta_rad = np.deg2rad(rate_frame_a.streak.degree_angle())
-        expected_shift_x = -1 * prior_gap_only_shift_mag * np.cos(theta_rad)
-        expected_shift_y = -1 * prior_gap_only_shift_mag * np.sin(theta_rad)
-
+    # Log the quality of this fit
+    if best_correlation > 0.9:
+        # Use the best shift we managed to find
         logger.info(
-            f"Trying prior shift first: ({expected_shift_x:.2f}, {expected_shift_y:.2f}) from rate={pixel_track_rate_per_second:.3f} px/s and gap={frame_exposure_gap_seconds:.3f}s"
+            f"Fit frame shift from frame {rate_frame_a.index} to frame {rate_frame_b.index} with {best_correlation} correlation"
         )
-
-        # validate_proposed_shift(rate_frame_b, rate_frame_a, -expected_shift_x, -expected_shift_y, rate_frame_a.starfield.catalog_stars, trial=0)
-        (
-            prior_valid,
-            prior_corr,
-            prior_validation_measurement,
-            prior_correction,
-        ) = validate_proposed_shift(
-            rate_frame_b,
-            rate_frame_a,
-            -expected_shift_x,
-            -expected_shift_y,
-            rate_frame_a.starfield.catalog_stars,
-            fwhm_exclusion=3 * (rate_frame_a.seeing.pixel_fwhm if rate_frame_a.seeing else 4.0),
-            trial=0,
+        shift_rate_to_rate_xy = best_shift
+    else:
+        # Use the best shift we managed to find
+        logger.warning(
+            f"Poor fit ({best_correlation} correlation) for frame shift from frame {rate_frame_a.index} to frame {rate_frame_b.index}"
         )
-
-        if prior_valid:
-            valid = True
-            best_correlation_score = prior_corr
-            best_shift = np.array([-expected_shift_x, -expected_shift_y]) - np.array(
-                prior_correction
-            )
-            shift_rate_to_rate_xy = np.array([-expected_shift_x, -expected_shift_y])
-            logger.info(
-                f"Prior shift validated successfully (corr={prior_corr:.3f}). Using it and skipping search trials."
-            )
-        else:
-            logger.info(
-                f"Prior shift validation failed (corr={prior_corr:.3f}). Will try correlation search."
-            )
-    """
-    while not valid and trials < max_trials:
-        trials += 1
-
-        # mask center of subcc
-        subcc = cross_correlated_image.copy()
-        center = np.array(cross_correlated_image.shape) / 2
-        subcc[
-            int(center[0] - mask_center) : int(center[0] + mask_center),
-            int(center[1] - mask_center) : int(center[1] + mask_center),
-        ] = np.min(subcc)
-
-        # window down subcc
-        # Ensure we stay within bounds and calculate proper limits
-        y_min = max(0, int(center[0] - scale))
-        y_max = min(subcc.shape[0], int(center[0] + scale))
-        x_min = max(0, int(center[1] - scale))
-        x_max = min(subcc.shape[1], int(center[1] + scale))
-
-        subcc = subcc[y_min:y_max, x_min:x_max]
-
-        cc_max = np.unravel_index(np.argmax(subcc), subcc.shape)
-
-        # move back into original frame scale - adjust for actual window position
-        # Calculate the actual offset from original center based on where we windowed
-        cc_max = np.array(
-            [
-                cc_max[0] + y_min,  # Add y_min to y-coordinate
-                cc_max[1] + x_min,  # Add x_min to x-coordinate
-            ]
-        )
-        original_center = np.array(cross_correlated_image.shape) / 2
-
-        # Calculate shift vector (from center to max correlation point)
-        shift_rate_to_rate_xy = original_center - cc_max
-        # Convert to (x,y) ordering
-        shift_rate_to_rate_xy = shift_rate_to_rate_xy[::-1]
-
-        shift_rate_to_rate_xy = refine_correlation_shift_by_global_shift(
-            rate_frame_a, rate_frame_b, rate_frame_a.streak, shift_rate_to_rate_xy
-        )
-
-        valid, correlation_score, _, shift_correction = (
-            validate_proposed_shift(
-                rate_frame_b,
-                rate_frame_a,
-                shift_rate_to_rate_xy[0],
-                shift_rate_to_rate_xy[1],
-                rate_frame_a.starfield.catalog_stars,
-                fwhm_exclusion=3 * (rate_frame_a.seeing.pixel_fwhm if rate_frame_a.seeing else 4.0),
-                trial=trials,
-            )
-        )
-
-        # Track the best correlation score and corresponding shift
-        if correlation_score > best_correlation_score:
-            best_correlation_score = correlation_score
-            best_shift = shift_rate_to_rate_xy.copy() - shift_correction
-
-        # Log the shift correction for analysis
-        if shift_correction != (0.0, 0.0):
-            logger.info(
-                f"Trial {trials}: Shift correction = ({shift_correction[0]:.2f}, {shift_correction[1]:.2f})"
-            )
-
-        if get_config().plotting.debug:
-            from senpai.engine.plotting.images import plot_single_frame
-
-            fig, ax = plot_single_frame(
-                cross_correlated_image,
-                scale=False,
-            )
-
-            # Markers: red '+' at center, blue 'x' at cc_max
-            center_y, center_x = (
-                cross_correlated_image.shape[0] // 2,
-                cross_correlated_image.shape[1] // 2,
-            )
-            ax.plot(
-                center_x, center_y, "+", color="red", markersize=10, markeredgewidth=2
-            )
-            ax.plot(
-                int(cc_max[1]),
-                int(cc_max[0]),
-                "x",
-                color="blue",
-                markersize=10,
-                markeredgewidth=2,
-            )
-
-            plt.savefig(
-                get_config().runtime.output_dir
-                / f"rate_to_rate_cc_{rate_frame_a.index}_{rate_frame_b.index}_{trials}.png"
-            )
-            plt.close("all")
-
-        if not valid:
-            # Get the shift from the rate-to-rate alignment
-
-            # Calculate expected streak length in a single frame (not shift between frames!)
-            # Priority order: 1) Use previous frame streak, 2) Use track rate, 3) Calculate from shift
-            if rate_frame_a.streak is not None:
-                # Best: Use the actual measured streak length from frame A
-                streak_length_expected = rate_frame_a.streak.pixel_length
-                logger.info(
-                    f"Using streak length from frame A: {streak_length_expected:.1f}px"
-                )
-            elif pixel_track_rate_per_second is not None:
-                # Good: Use known track rate * exposure time
-                streak_length_expected = (
-                    pixel_track_rate_per_second * rate_b_exposure_time
-                )
-                logger.info(
-                    f"Using streak length from track rate: {streak_length_expected:.1f}px "
-                    f"(rate={pixel_track_rate_per_second:.1f}px/s * exp={rate_b_exposure_time:.1f}s)"
-                )
-            else:
-                # Fallback: Calculate rate from shift, then multiply by exposure
-                pixel_shift = np.linalg.norm(shift_rate_to_rate_xy)
-                if pixel_shift > 0 and frame_exposure_gap_seconds > 0:
-                    rate_estimate = pixel_shift / frame_exposure_gap_seconds
-                    streak_length_expected = rate_estimate * rate_b_exposure_time
-                    logger.info(
-                        f"Using streak length from shift: {streak_length_expected:.1f}px "
-                        f"(shift={pixel_shift:.1f}px / gap={frame_exposure_gap_seconds:.1f}s * exp={rate_b_exposure_time:.1f}s)"
-                    )
-                else:
-                    streak_length_expected = 20  # Conservative fallback
-                    logger.warning(
-                        f"Using fallback streak length: {streak_length_expected}px"
-                    )
-
-            # Box size should be just large enough for the streak plus small margin
-            # Keep it tight to avoid picking up background structure
-            pixel_fwhm = rate_frame_a.seeing.pixel_fwhm if rate_frame_a.seeing else 4.0
-            box_size = int(max(streak_length_expected * 0.75, 10 * pixel_fwhm))
-
-            logger.info(
-                f"Trial {trials}: Removing streak at cc_max=({cc_max[0]}, {cc_max[1]}), "
-                f"box_size={box_size} (streak_length={streak_length_expected:.1f}px, "
-                f"FWHM={pixel_fwhm:.1f}px)"
-            )
-
-            # Use robust streak removal that finds contiguous regions
-            # This is more reliable than threshold-based approaches when
-            # signal/variance is very high
-            cross_correlated_image, removal_info = remove_streak_at_point_robust(
-                cross_correlated_image,
-                start_point=(int(cc_max[0]), int(cc_max[1])),
-                box_size=box_size,
-                pad_size=1,  # Light dilation to catch edges without over-masking
-                logger=logger,
-            )
-
-            logger.info(
-                f"Removed {removal_info['num_pixels']} pixels using robust method "
-                f"(before dilation: {removal_info.get('num_pixels_before_dilation', 'N/A')})"
-            )
-
-    # If we never found a valid shift, mark the frame_shift as invalid
-    if not valid:
-        if best_correlation_score > 0.7:
-            logger.warning(
-                f"Failed to find valid shift after {trials} trials. Best correlation score: {best_correlation_score:.4f}, continuing"
-            )
-        else:
-            logger.warning(
-                f"Failed to find valid shift after {trials} trials. Best correlation score: {best_correlation_score:.4f}"
-            )
-            frame_shift.processed = True
-            frame_shift.is_valid = False
-            frame_shift.error_message = "Failed to validate shift"
-            return
+        shift_rate_to_rate_xy = best_shift
 
     # Calculate the magnitude of the shift - apply the -1 adjustment here for consistency
     # This ensures the magnitude calculation matches the adjusted shift values
-    adjusted_shift = np.array([best_shift[0] - 1, best_shift[1] - 1])
+    adjusted_shift = np.array([shift_rate_to_rate_xy[0] - 1, shift_rate_to_rate_xy[1] - 1])
     pixel_shift = np.linalg.norm(adjusted_shift)
 
     # Calculate rate based on the time between frames
-    estimated_pixel_track_rate_per_second = pixel_shift / frame_exposure_gap_seconds
+    estimated_pixel_track_rate_per_second = pixel_shift / elapsed_seconds
 
     logger.info(
         f"Pixel shift rate to rate: {pixel_shift:.1f} pixels, {estimated_pixel_track_rate_per_second:.1f} pixels/s"
     )
 
-    frame_shift.x_shift = best_shift[0] - 1
-    frame_shift.y_shift = best_shift[1] - 1
-
+    frame_shift.x_shift = shift_rate_to_rate_xy[0] - 1
+    frame_shift.y_shift = shift_rate_to_rate_xy[1] - 1
     frame_shift.processed = True
     frame_shift.is_valid = True
-    frame_shift.error_message = None
+    frame_shift.correlation = best_correlation
 
     streak_length_expected_from_shift = (
         estimated_pixel_track_rate_per_second * rate_a_exposure_time
     )
+
     streak_orientation_expected_from_shift = np.rad2deg(
         np.arctan2(shift_rate_to_rate_xy[1], shift_rate_to_rate_xy[0])
     )
-    streak_measurements.frame_to_frame = StreakMeasurement(
-        rotation=streak_orientation_expected_from_shift,
-        length=streak_length_expected_from_shift,
-        fwhm=streak_fwhm,
-    )
 
-    frame_extraction_measurement, psf, fwhm = extract_streak_dims_robust(
-        rate_b_data,
-        n_streaks=5,
-        rotation=streak_orientation_expected_from_shift,
-        length=streak_length_expected_from_shift,
-        fwhm=streak_fwhm,
-    )
-
-    streak_measurements.frame_extraction, fwhm = refine_robust_streak(
-        psf, frame_extraction_measurement, frame_index=rate_frame_b.index
-    )
-
-    if get_config().plotting.debug and psf is not None:
-        from senpai.engine.plotting.images import plot_single_frame
-
-        plot_single_frame(
-            psf,
-            scale=False,
-            output_file=get_config().runtime.output_dir
-            / f"{rate_frame_b.index}_streak_psf.png",
+    if not rate_frame_b.streak:
+        # refine length on image
+        rotation_estimate, length_estimate, psf, fwhm = extract_streak_dims_robust(
+            rate_b_data,
+            n_streaks=5,
+            rotation=streak_orientation_expected_from_shift,
+            length=streak_length_expected_from_shift,
+            fwhm=streak_fwhm,
         )
 
-    # Sanity-check the (already star-validated) shift against the directly-measured
-    # streak. We trust the streak (frame_extraction); both measure the same motion,
-    # so a disagreement points to a registration error in the shift. When they
-    # disagree, try the shift the trusted streak implies and adopt it ONLY if it
-    # validates against the stars at least as well. We never discard the extraction
-    # and never reject the frame on disagreement alone (the shift already passed star
-    # validation in the trial loop, and the streak carries the geometry/rate anyway).
-    fe = streak_measurements.frame_extraction
-    ftf = streak_measurements.frame_to_frame
-    if (
-        fe is not None
-        and ftf is not None
-        and (
-            abs(ftf.length - fe.length) > 0.4 * fe.length
-            or angular_difference(ftf.rotation, fe.rotation) > 15.0
-        )
-    ):
-        logger.warning(
-            f"Shift-derived motion disagrees with the extracted streak "
-            f"(shift: len={ftf.length:.1f}px rot={ftf.rotation:.1f}°; "
-            f"streak: len={fe.length:.1f}px rot={fe.rotation:.1f}°) — trying a "
-            f"streak-derived shift"
-        )
-        # Shift implied by the trusted streak: rate (len / exposure) over the gap,
-        # along the streak orientation.
-        expected_rate_per_second = fe.length / rate_b_exposure_time
-        expected_shift_magnitude = expected_rate_per_second * frame_exposure_gap_seconds
-        expected_rotation_rad = np.deg2rad(fe.rotation)
-        expected_shift_x = expected_shift_magnitude * np.cos(expected_rotation_rad)
-        expected_shift_y = expected_shift_magnitude * np.sin(expected_rotation_rad)
-
-        expected_valid, expected_correlation, _, expected_shift_correction = (
-            validate_proposed_shift(
-                rate_frame_b,
-                rate_frame_a,
-                expected_shift_x,
-                expected_shift_y,
-                rate_frame_a.starfield.catalog_stars,
-                fwhm_exclusion=3 * (rate_frame_a.seeing.pixel_fwhm if rate_frame_a.seeing else 4.0),
-                trial=999,
-            )
-        )
-        # Bias toward the streak-derived shift (>= 0.8x current correlation) — we
-        # trust the streak — but require it to actually validate against the stars.
-        if expected_valid and expected_correlation > 0.8 * best_correlation_score:
-            logger.info(
-                f"Adopting streak-derived shift (corr {expected_correlation:.3f} vs "
-                f"{best_correlation_score:.3f})"
-            )
-            best_shift = np.array([expected_shift_x, expected_shift_y]) - np.array(
-                expected_shift_correction
-            )
-            adjusted_shift = np.array([best_shift[0] - 1, best_shift[1] - 1])
-            pixel_shift = np.linalg.norm(adjusted_shift)
-            estimated_pixel_track_rate_per_second = (
-                pixel_shift / frame_exposure_gap_seconds
-            )
-            frame_shift.x_shift = best_shift[0] - 1
-            frame_shift.y_shift = best_shift[1] - 1
-        else:
-            logger.info(
-                "Streak-derived shift did not validate better; keeping the original "
-                "(star-validated) shift. Streak geometry/rate still come from the "
-                "extraction."
+        if settings.plotting.debug:
+            plot_single_frame(
+                psf,
+                scale=False,
+                output_file=Path(settings.plotting.output_dir)
+                / f"{rate_frame_b.index}_streak_psf.png",
             )
 
-    # Trust the directly-measured streak (frame_extraction); fall back to the
-    # shift-derived frame_to_frame only if the extraction failed or was discarded
-    # by the consistency check above.
-    streak = streak_measurements.frame_extraction
-    if streak is None:
-        streak = streak_measurements.frame_to_frame
-        if streak is not None:
+        if percent_difference(length_estimate, streak_length_expected_from_shift) > 10:
             logger.warning(
-                "frame_extraction unavailable, using shift-derived frame_to_frame"
+                f"The estimated streak length ({length_estimate:.1f} pixels) is more than 10% different than the expected streak length ({streak_length_expected_from_shift:.1f} pixels)"
             )
-    if streak is None:
-        logger.error("No streak measurement available, cannot set streak metadata")
-        return
+        rate_frame_b.streak = StreakMetadata(
+            pixel_length=length_estimate,
+            sine_angle=np.sin(np.deg2rad(rotation_estimate)),
+            cosine_angle=np.cos(np.deg2rad(rotation_estimate)),
+            fwhm=fwhm,
+        )
+        rate_frame_b.pixel_track_rate_per_second = (
+            np.linalg.norm(shift_rate_to_rate_xy) / elapsed_seconds
+        )
 
-    # Reported rate from the streak length when we have a direct extraction
-    # (model-free: a trail of length L over exposure t IS a rate L/t). Otherwise
-    # fall back to the clean rate-rate shift rate (shift / gap, both trail
-    # midpoints — no x2 hybrid). Cross-check the two and log the ratio.
-    if streak_measurements.frame_extraction is not None and rate_b_exposure_time:
-        rate_from_streak = (
-            streak_measurements.frame_extraction.length / rate_b_exposure_time
-        )
-        ratio = (
-            estimated_pixel_track_rate_per_second / rate_from_streak
-            if rate_from_streak
-            else float("nan")
-        )
-        logger.info(
-            f"Rate (frame {rate_frame_b.index}): {rate_from_streak:.2f}px/s from streak "
-            f"(len={streak_measurements.frame_extraction.length:.1f}px / "
-            f"exp={rate_b_exposure_time:.1f}s); shift cross-check ratio={ratio:.2f}"
-        )
-        if rate_from_streak > 0 and abs(ratio - 1.0) > 0.25:
-            logger.warning(
-                f"Rate cross-check off on frame {rate_frame_b.index}: shift-rate is "
-                f"{ratio:.2f}x the streak-rate — bad extraction/shift or timing baseline"
+
+def bayesian_optimize_proposed_shift(
+    target: RateTrackFrame | SiderealFrame,
+    source: RateTrackFrame | SiderealFrame,
+    shift_x_low: float,
+    shift_x_high: float,
+    shift_y_low: float,
+    shift_y_high: float,
+    catalog_stars: list[StarInSpace],
+    n_calls: int = 10,
+) -> tuple[float, float, float]:
+    """Search for the shift that maximizes flux correlation via Bayesian optimization.
+
+    Runs Gaussian-process minimization over the (x, y) shift search box, maximizing the
+    flux correlation returned by ``validate_proposed_shift`` (by minimizing its negation).
+
+    Args:
+        target: The frame being shifted to align with the source.
+        source: The reference frame.
+        shift_x_low: Lower bound of the x-shift search range (pixels).
+        shift_x_high: Upper bound of the x-shift search range (pixels).
+        shift_y_low: Lower bound of the y-shift search range (pixels).
+        shift_y_high: Upper bound of the y-shift search range (pixels).
+        catalog_stars: Catalog stars from the source frame used for flux validation.
+        n_calls: Total number of objective evaluations allowed.
+
+    Returns:
+        A tuple of ``(best_shift_x, best_shift_y, best_correlation)`` for the highest-
+        correlation shift found.
+    """
+    # Define the search space for the parameters.
+    space = [
+        Real(shift_x_low, shift_x_high, name="shift_x"),
+        Real(shift_y_low, shift_y_high, name="shift_y"),
+    ]
+
+    # Run the Bayesian optimization.
+    # `n_calls` specifies the total number of function calls allowed.
+    result = gp_minimize(
+        lambda params: (
+            -1.0
+            * validate_proposed_shift(
+                target=target,
+                source=source,
+                shift_x=params[0],
+                shift_y=params[1],
+                catalog_stars=catalog_stars,
             )
-        reported_rate = rate_from_streak
-    else:
-        reported_rate = estimated_pixel_track_rate_per_second
-
-    # A trail can never appear shorter than the PSF: a near-sidereal-rate target
-    # with sub-pixel motion is point-like, and downstream kernel builders assume
-    # a length of at least a pixel. Floor the kernel geometry at the measured
-    # FWHM; the reported rate stays motion-derived and is unaffected.
-    kernel_length = streak.length
-    if kernel_length < streak.fwhm:
-        logger.warning(
-            f"Streak length {kernel_length:.2f}px is below the PSF FWHM "
-            f"({streak.fwhm:.2f}px); flooring kernel length at the PSF "
-            f"(point-like target)"
-        )
-        kernel_length = streak.fwhm
-
-    rate_frame_b.streak = StreakMetadata(
-        pixel_length=kernel_length,
-        sine_angle=np.sin(np.deg2rad(streak.rotation)),
-        cosine_angle=np.cos(np.deg2rad(streak.rotation)),
-        fwhm=streak.fwhm,
+        ),
+        space,
+        n_calls=n_calls,  # Budget for the number of function calls
+        random_state=0,  # Make the results reproducable
     )
-    rate_frame_b.seeing = rate_frame_a.seeing
-    rate_frame_b.pixel_track_rate_per_second = reported_rate
+
+    best_shift_x = result.x[0]
+    best_shift_y = result.x[1]
+    best_correlation = -1.0 * result.fun
+    return best_shift_x, best_shift_y, best_correlation

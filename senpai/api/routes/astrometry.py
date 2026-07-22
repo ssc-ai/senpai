@@ -1,3 +1,5 @@
+"""FastAPI routes for the astrometry solving endpoints."""
+
 import logging
 import time
 
@@ -7,7 +9,7 @@ from fastapi.responses import JSONResponse
 from senpai.api.models.examples import StarListImageExample
 from senpai.astrometry import solve_field
 from senpai.core.config import get_config
-from senpai.engine.detection.point.sidereal import extract_point_sources
+from senpai.engine.detection.point.sidereal_extra import extract_point_sources
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.starfield import StarField, StarListImage
 from senpai.engine.plotting.images import plot_single_frame
@@ -19,7 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/")
-async def index(request: Request):
+async def index(request: Request) -> JSONResponse:
+    """Return API info and the current configuration.
+
+    Args:
+        request: The incoming FastAPI request.
+
+    Returns:
+        A JSON response with the API base URL and the serialized config.
+    """
     logger.info("GET / - Fetching API info")
     config = get_config()
     return JSONResponse(
@@ -33,9 +43,9 @@ async def index(request: Request):
 @router.post("/solve/sources")
 async def solve_sources(
     request: Request,
-    sources: StarListImage = Body(description="sources list", examples=StarListImageExample().get_openapi_examples()),
+    sources: StarListImage = Body(description="sources list", examples=StarListImageExample().get_openapi_examples()),  # noqa: B008  # FastAPI dependency-injection default, required by framework
 ) -> StarField:
-    """Astrometry solve endpoint
+    """Solve astrometry for a supplied source list.
 
     Args:
         request (Request): FastAPI request object
@@ -68,9 +78,9 @@ async def solve_sources(
 @router.post("/solve/fits")
 async def solve_fits(
     request: Request,
-    fits_file: UploadFile = File(..., description="FITS image file"),
+    fits_file: UploadFile = File(..., description="FITS image file"),  # noqa: B008  # FastAPI dependency-injection default, required by framework
 ) -> StarField:
-    """Astrometry solve endpoint for FITS files
+    """Solve astrometry for an uploaded FITS file.
 
     Args:
         request (Request): FastAPI request object

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Example script for exporting SENPAI runs from a folder structure to COCO format.
+"""Example script for exporting SENPAI runs from a folder structure to COCO format.
 
 This script demonstrates how to use the SENPAI export functionality to convert
 SENPAI run data into individual COCO format files for each image.
@@ -16,8 +15,8 @@ from pathlib import Path
 from senpai.export.cli import export_folder
 
 
-def main():
-    """Main function for the example script."""
+def main() -> None:
+    """Parse command-line arguments and export SENPAI runs from a folder to COCO."""
     parser = argparse.ArgumentParser(
         description="Example script for exporting SENPAI runs to COCO format",
         formatter_class=argparse.RawDescriptionHelpFormatter,

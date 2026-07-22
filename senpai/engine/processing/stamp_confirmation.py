@@ -20,13 +20,21 @@ possible).  With 3+ frames, the SNR boost is even stronger.
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import map_coordinates
 from scipy.signal import correlate
 
-from senpai.core.config import get_config
-from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
+from senpai.engine.models.senpai import (
+    CorrelatedStreak,
+    RateTrackFrame,
+    SenpaiRun,
+    SiderealFrame,
+)
+
+if TYPE_CHECKING:
+    from senpai.engine.detection.streak.sidereal_streak import StreakCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +197,6 @@ def confirm_streaks_via_stamps(
 
     With a single frame total, candidates are returned as unconfirmed.
     """
-    config = get_config()
     min_snr_boost = 1.2  # Require at least 20% SNR improvement from stacking
 
     # Frames with independent streak detections — used as reference frames
@@ -345,8 +352,8 @@ def confirm_streaks_via_stamps(
 def _confirm_single_candidate(
     ref_image: np.ndarray,
     ref_stars: list[tuple[float, float]],
-    ref_frame,
-    candidate,
+    ref_frame: SiderealFrame | RateTrackFrame,
+    candidate: "StreakCandidate",
     other_frames_data: list[dict],
     fwhm: float,
     star_mask_radius: float,
@@ -364,8 +371,24 @@ def _confirm_single_candidate(
        This preserves the full matched-filter SNR and catches faint streaks
        that the profile CC misses.
 
-    Returns a CorrelatedStreak (confirmed or unconfirmed), or None if the
-    candidate should be rejected.
+    Args:
+        ref_image: Background-subtracted reference-frame image.
+        ref_stars: Catalog star pixel positions in the reference frame, for
+            masking.
+        ref_frame: The reference frame the candidate was detected in.
+        candidate: The streak candidate to confirm.
+        other_frames_data: Per-frame data (image, stars, shift, dt) for the
+            comparison frames.
+        fwhm: Representative point-source FWHM in pixels.
+        star_mask_radius: Radius in pixels used to mask catalog stars.
+        min_snr_boost: Minimum SNR boost required for confirmation.
+        de_data: Optional per-frame directional-excess maps and noise, keyed by
+            frame index.
+        senpai_run: The run being processed, for WCS/timestamps.
+
+    Returns:
+        A :class:`CorrelatedStreak` (confirmed or unconfirmed), or ``None`` if
+        the candidate should be rejected.
     """
     angle_deg = candidate.angle_deg
     angle_rad = np.radians(angle_deg)
@@ -565,21 +588,12 @@ def _confirm_single_candidate(
         else:
             direction = "reverse"
             direction_deg = float((angle_deg + 180) % 360)
-        matched_frames = fwd_frames if direction == "forward" else rev_frames
-        matched_profiles = fwd_profiles if direction == "forward" else rev_profiles
-        matched_offsets = fwd_offsets if direction == "forward" else rev_offsets
     elif fwd_cc >= rev_cc:
         direction = "forward"
         direction_deg = float(angle_deg % 360)
-        matched_frames = fwd_frames
-        matched_profiles = fwd_profiles
-        matched_offsets = fwd_offsets
     else:
         direction = "reverse"
         direction_deg = float((angle_deg + 180) % 360)
-        matched_frames = rev_frames
-        matched_profiles = rev_profiles
-        matched_offsets = rev_offsets
 
     # --- Refine streak measurements ---
     exposure_time = None
@@ -683,8 +697,8 @@ def _confirm_single_candidate(
                 sky = wcs_obj.pixel_to_world(px, py)
                 ra_list.append(float(sky.ra.deg))
                 dec_list.append(float(sky.dec.deg))
-            except Exception:
-                pass
+            except Exception as err:
+                logger.debug("WCS pixel_to_world failed for frame %s: %s", fi, err)
 
     # Compute RA/Dec rates from multi-frame sky positions
     rate_ra = None
@@ -708,8 +722,8 @@ def _confirm_single_candidate(
                     ref_px, ref_py = all_frame_positions[frame_indices[0]]
                     sky0 = wcs_obj.pixel_to_world(ref_px, ref_py)
                     # Offset by the velocity * 1 second in RA/Dec
-                    from astropy.coordinates import SkyCoord
                     import astropy.units as u
+                    from astropy.coordinates import SkyCoord
                     sky1 = SkyCoord(
                         ra=sky0.ra + (rate_ra / 3600 / np.cos(np.radians(dec_list[0]))) * u.deg,
                         dec=sky0.dec + (rate_dec / 3600) * u.deg,
@@ -758,13 +772,13 @@ def _confirm_single_candidate(
                     multiband = MultiBandCalibration.model_validate(multiband_raw)
                 else:
                     multiband = multiband_raw
-            except Exception:
-                pass
+            except Exception as err:
+                logger.debug("Multiband calibration deserialization failed: %s", err)
         if zp is not None:
+            from senpai.core.config import get_config
             from senpai.engine.detection.streak.sidereal_streak import (
                 measure_streak_candidate_photometry,
             )
-            from senpai.core.config import get_config
 
             config = get_config()
             obs_filter = ref_frame.frame_metadata.observation_filter if ref_frame.frame_metadata else None
@@ -921,8 +935,8 @@ def _find_profile_offset(
 
 
 def _de_multiframe_snr(
-    candidate,
-    ref_frame,
+    candidate: "StreakCandidate",
+    ref_frame: SiderealFrame | RateTrackFrame,
     other_frames_data: list[dict],
     de_data: dict[int, tuple[np.ndarray, float]],
     senpai_run: SenpaiRun,
@@ -938,6 +952,16 @@ def _de_multiframe_snr(
     The DE map already integrates signal perpendicular to the streak via the
     matched filter kernel, so a single sample at the predicted centroid
     captures the full matched-filter response.
+
+    Args:
+        candidate: The streak candidate whose predicted track is sampled.
+        ref_frame: The reference frame the candidate was detected in.
+        other_frames_data: Per-frame data (image, stars, shift, dt) for the
+            comparison frames.
+        de_data: Per-frame directional-excess maps and noise, keyed by frame
+            index.
+        senpai_run: The run being processed, for WCS/timestamps.
+        fwhm: Representative point-source FWHM in pixels.
 
     Returns:
         ``(fwd_other_snr, rev_other_snr)`` — combined SNR of DE values
@@ -1151,8 +1175,19 @@ def _find_de_peak_near(
     return peak_x, peak_y
 
 
-def _make_unconfirmed(frame, candidate) -> CorrelatedStreak:
-    """Wrap a single-frame candidate as an unconfirmed CorrelatedStreak."""
+def _make_unconfirmed(
+    frame: SiderealFrame | RateTrackFrame, candidate: "StreakCandidate"
+) -> CorrelatedStreak:
+    """Wrap a single-frame candidate as an unconfirmed CorrelatedStreak.
+
+    Args:
+        frame: The frame the candidate was detected in.
+        candidate: The streak candidate to wrap.
+
+    Returns:
+        An unconfirmed :class:`CorrelatedStreak` carrying the candidate's
+        position, angle, rate, and photometry.
+    """
     ra = [float(candidate.ra)] if candidate.ra is not None else []
     dec = [float(candidate.dec)] if candidate.dec is not None else []
     ts = [frame.timestamp.isoformat()] if frame.timestamp else []
@@ -1177,8 +1212,18 @@ def _make_unconfirmed(frame, candidate) -> CorrelatedStreak:
     )
 
 
-def _wrap_single_frame(frames_with_streaks) -> list[CorrelatedStreak]:
-    """Wrap all single-frame candidates as unconfirmed."""
+def _wrap_single_frame(
+    frames_with_streaks: list[SiderealFrame | RateTrackFrame],
+) -> list[CorrelatedStreak]:
+    """Wrap all single-frame candidates as unconfirmed.
+
+    Args:
+        frames_with_streaks: Frames carrying streak candidates.
+
+    Returns:
+        One unconfirmed :class:`CorrelatedStreak` per streak candidate across
+        the given frames.
+    """
     result = []
     for frame in frames_with_streaks:
         for sc in frame.streak_candidates:
@@ -1209,10 +1254,10 @@ def _deduplicate_confirmed(
         for existing in kept:
             # Check if they share a frame with nearby positions
             for fi, px, py in zip(
-                cs.frame_indices, cs.positions_x, cs.positions_y
+                cs.frame_indices, cs.positions_x, cs.positions_y, strict=False
             ):
                 for efi, epx, epy in zip(
-                    existing.frame_indices, existing.positions_x, existing.positions_y
+                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=False
                 ):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2
@@ -1278,10 +1323,7 @@ def _propagate_to_frame_candidates(
         length = rate * exposure_time
 
     # Compute direction vector
-    if direction is not None:
-        dir_rad = np.radians(direction)
-    else:
-        dir_rad = np.radians(angle)
+    dir_rad = np.radians(direction) if direction is not None else np.radians(angle)
     cos_d = np.cos(dir_rad)
     sin_d = np.sin(dir_rad)
 
@@ -1311,8 +1353,8 @@ def _propagate_to_frame_candidates(
                 sky = wcs.pixel_to_world(streak_x, streak_y)
                 ra_val = float(sky.ra.deg)
                 dec_val = float(sky.dec.deg)
-            except Exception:
-                pass
+            except Exception as err:
+                logger.debug("WCS pixel_to_world failed for frame %s: %s", frame.index, err)
 
         rate_arcsec = None
         if frame.starfield and frame.starfield.wcs_metadata:
@@ -1335,11 +1377,13 @@ def _propagate_to_frame_candidates(
             zp = phot_summary.get("zero_point")
             zp_err = phot_summary.get("zero_point_err")
             if zp is not None:
+                from senpai.core.config import get_config
                 from senpai.engine.detection.streak.sidereal_streak import (
                     StreakCandidate as SC,
+                )
+                from senpai.engine.detection.streak.sidereal_streak import (
                     measure_streak_candidate_photometry,
                 )
-                from senpai.core.config import get_config
 
                 config = get_config()
                 obs_filter = frame.frame_metadata.observation_filter if frame.frame_metadata else None
@@ -1352,8 +1396,8 @@ def _propagate_to_frame_candidates(
                     try:
                         from senpai.engine.photometry.color_terms import MultiBandCalibration
                         multiband = MultiBandCalibration.model_validate(multiband_raw) if isinstance(multiband_raw, dict) else multiband_raw
-                    except Exception:
-                        pass
+                    except Exception as err:
+                        logger.debug("Multiband calibration validation failed: %s", err)
 
                 tmp = SC(
                     x=float(streak_x), y=float(streak_y),
@@ -1374,8 +1418,8 @@ def _propagate_to_frame_candidates(
                     inst_mag = tmp.instrumental_magnitude
                     cal_mags = tmp.calibrated_magnitudes
                     mag_errs = tmp.magnitude_errs
-                except Exception:
-                    pass
+                except Exception as err:
+                    logger.debug("Streak photometry measurement failed: %s", err)
 
         detection = SatelliteInImage(
             x=float(streak_x),

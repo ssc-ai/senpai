@@ -1,3 +1,10 @@
+"""Filesystem path constants for resources, cache, config, and logs.
+
+All paths are derived from the repository root and are resolved at import time;
+none of them are created here (see :func:`senpai.core.logging.setup_logging` for
+lazy creation of writable locations).
+"""
+
 from pathlib import Path
 
 # Base paths (read-only)
@@ -25,4 +32,7 @@ APP_DIR = BASE_DIR / "senpai" / "api"
 APP_CONFIG_PATH = CONFIG_DIR / "application.yaml"
 LOG_PATH = APP_DIR / "logs" / "app.log"
 
-LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+# NOTE: the log directory is created lazily by senpai.core.logging.setup_logging()
+# (which tolerates a read-only location), NOT at import time — importing the
+# package must not touch the filesystem, so an installed wheel on a read-only
+# root or an unwritable site-packages does not fail at `import senpai`.

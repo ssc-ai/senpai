@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Task strings in filenames → command verbs in run_state.executed_commands.
@@ -51,6 +51,17 @@ _UUID_RE = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class ParsedFilename:
+    """Structured fields parsed from a burr FITS filename.
+
+    Attributes:
+        path: The source file path.
+        timestamp: Capture time (tz-aware UTC), or None for UUID-style names.
+        task: Task token (e.g. ``"calsats"``), or None for UUID-style names.
+        target: NORAD id or target name, or None for UUID-style names.
+        frame_index: 0-based frame index, or None for UUID-style names.
+        is_uuid: True when the filename is an opaque UUID-style name.
+    """
+
     path: Path
     timestamp: datetime | None  # tz-aware UTC, or None for UUID-style names
     task: str | None  # e.g. "calsats"; None for UUID-style
@@ -60,6 +71,7 @@ class ParsedFilename:
 
     @property
     def command_verb(self) -> str | None:
+        """The run_state command verb for this file's task, or None if unknown."""
         return TASK_TO_COMMAND.get(self.task) if self.task else None
 
 
@@ -71,12 +83,11 @@ def parse_burr_filename(path: str | Path) -> ParsedFilename:
     record where every parsed field is None and is_uuid is False, so the caller
     can decide whether to skip or fall back to header inspection.
     """
-
     p = Path(path)
     stem = p.stem
 
     if m := _SEMANTIC_RE.match(stem):
-        ts = datetime.strptime(m["ts"], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+        ts = datetime.strptime(m["ts"], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
         return ParsedFilename(
             path=p,
             timestamp=ts,
