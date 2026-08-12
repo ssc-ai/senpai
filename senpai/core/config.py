@@ -192,6 +192,32 @@ class DetectionConfig(BaseModel):
     detect_streaks: bool = Field(default=True, description="Run streak detection when detect=True")
     snr_threshold: float = Field(default=3.0, description="SNR threshold")
     verbose: bool = Field(default=False, description="Verbose mode")
+    rate_point_detector: Literal["sep", "daostarfinder"] = Field(
+        default="daostarfinder",
+        description=(
+            "Point-source detector for rate-track frames. 'daostarfinder' (default) = the "
+            "upstream photutils DAOStarFinder path. 'sep' = SEP background + adaptive threshold "
+            "+ flux-concentration PSF filter (opt-in; MDP-validated on rate-track imagery). Both "
+            "are retained so the method can be re-evaluated per sensor/dataset."
+        ),
+    )
+    centroid_guard_mode: Literal["fwhm", "fixed", "none"] = Field(
+        default="fwhm",
+        description=(
+            "SEP detector only: guard for the reported point-source position. The sub-pixel "
+            "centroid is reported unless it disagrees with the brightest pixel by more than a "
+            "threshold, in which case the brightest pixel is reported (saturation/trail/blend "
+            "protection). 'fwhm': threshold = centroid_guard_value * FWHM; 'fixed': "
+            "centroid_guard_value pixels; 'none': always report the sub-pixel centroid."
+        ),
+    )
+    centroid_guard_value: float = Field(
+        default=0.4,
+        description=(
+            "SEP detector only: threshold for centroid_guard_mode (a multiple of the PSF FWHM "
+            "for 'fwhm', or an absolute pixel distance for 'fixed'). Ignored when mode is 'none'."
+        ),
+    )
     streak_correlation_radius_fwhm: float = Field(
         default=5.0, description="Match radius for cross-frame streak correlation, in FWHM units"
     )
