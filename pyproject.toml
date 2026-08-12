@@ -30,6 +30,7 @@ dependencies = [
     # and changed flux/mag conventions; calibration was validated on 2.x.
     "photutils>=2.0.2,<3.0",
     "pydantic>=2.11.1",
+    "pydantic-settings>=2.0",
     "pypng>=0.20220715.0",
     "python-multipart>=0.0.20",
     "pyyaml>=6.0.2",

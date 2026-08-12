@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -594,8 +595,15 @@ class CalibrationsConfig(BaseModel):
     oversample_threshold: float = Field(default=4.0, description="Only scale images if FWHM > this threshold")
 
 
-class AppConfig(BaseModel):
-    """Application configuration"""
+class AppConfig(BaseSettings):
+    """Application configuration.
+
+    A pydantic-settings model: values load from the YAML file passed to
+    ``initialize_config`` (unchanged ``app:``-shaped files still work) and are
+    overridable by environment variables (``SENPAI_<SECTION>__<FIELD>``, nested
+    delimiter ``__``), which take precedence over the file. This matches the
+    settings style used elsewhere in the project without changing config-file shape.
+    """
 
     version: str = Field(description="Application version")
     debug: bool = Field(default=False, description="Debug mode")
@@ -625,7 +633,24 @@ class AppConfig(BaseModel):
         description="Calibration frames configuration",
     )
 
-    model_config = ConfigDict(frozen=True)
+    model_config = SettingsConfigDict(
+        env_prefix="SENPAI_",
+        env_nested_delimiter="__",
+        extra="ignore",
+        frozen=True,
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Environment variables override the YAML file passed via ``initialize_config``."""
+        return (env_settings, init_settings)
 
 
 def get_config() -> AppConfig:
