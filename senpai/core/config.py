@@ -582,6 +582,13 @@ class CalibrationsConfig(BaseModel):
         default=True,
         description="Automatically subtract background during preprocessing",
     )
+    background_mask_sources: bool = Field(
+        default=False,
+        description="When subtracting the 2D background, mask detected sources (>2 sigma, dilated) so "
+        "their flux does not inflate the background mesh and get subtracted away. Addresses the "
+        "faint-source over-subtraction that auto_subtract_background otherwise causes on dim "
+        "targets. Default False preserves current behaviour; enable once MDP-validated.",
+    )
 
     # Background subtraction parameters
     background_box_size: int = Field(default=20, description="Box size for background estimation")

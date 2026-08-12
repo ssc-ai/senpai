@@ -28,7 +28,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   written out in full, including fields left at their default, so a change to an upstream
   default shows up in review rather than silently altering a run. Covered by
   `test_all_shipped_configs_load`.
-
 ## [2.8.0] - 2026-08-14
 
 ### Added

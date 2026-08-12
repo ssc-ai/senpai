@@ -155,10 +155,13 @@ def remove_background(
     sigma: float = 3.0,
     maxiters: int = 10,
     store_intermediates: bool = False,
+    mask_sources: bool = False,
 ) -> ProcessedFitsImage:
     from senpai.engine.models.images import ProcessingMetadata
 
-    background = measure_background(image.data, box_size, filter_size, exclude_percentile, sigma, maxiters)
+    background = measure_background(
+        image.data, box_size, filter_size, exclude_percentile, sigma, maxiters, mask_sources
+    )
 
     if store_intermediates:
         if image.correction_frames is None:
@@ -196,6 +199,7 @@ def measure_background(
     exclude_percentile: float = 50.0,
     sigma: float = 3.0,
     maxiters: int = 10,
+    mask_sources: bool = False,
 ) -> np.ndarray:
     """
     Subtract the 2D background from an image using photutils Background2D.
@@ -220,6 +224,18 @@ def measure_background(
     np.ndarray
         Background-subtracted image
     """
+    # Optionally mask sources so their flux does not inflate the background mesh
+    # and get subtracted away (the faint-source over-subtraction the default
+    # auto_subtract_background suffers from). The mask excludes >2 sigma pixels,
+    # dilated, so the mesh is estimated from source-free background only.
+    source_mask = None
+    if mask_sources:
+        from astropy.stats import sigma_clipped_stats
+        from scipy.ndimage import binary_dilation
+
+        _, bg_median, bg_std = sigma_clipped_stats(image, sigma=sigma, maxiters=maxiters)
+        source_mask = binary_dilation(image > bg_median + 2.0 * bg_std, iterations=2)
+
     try:
         # Create a SigmaClip object with the specified parameters
         sigma_clip = SigmaClip(sigma=sigma, maxiters=maxiters)
@@ -231,6 +247,7 @@ def measure_background(
             filter_size=filter_size,
             exclude_percentile=exclude_percentile,
             sigma_clip=sigma_clip,
+            mask=source_mask,
         )
         return background.background
     except ValueError:
@@ -244,6 +261,7 @@ def measure_background(
                 exclude_percentile=90.0,  # More permissive exclusion
                 sigma_clip=sigma_clip,
                 fill_value=np.median(image),  # Use median as fallback
+                mask=source_mask,
             )
             return background.background
         except Exception:
@@ -435,6 +453,7 @@ def auto_apply_calibrations(
                 sigma=cal_config.background_sigma,
                 maxiters=cal_config.background_maxiters,
                 store_intermediates=store_intermediates,
+                mask_sources=cal_config.background_mask_sources,
             )
 
     # Apply flats if configured
@@ -908,6 +927,7 @@ def preprocess_image(
                 sigma=cal_config.background_sigma,
                 maxiters=cal_config.background_maxiters,
                 store_intermediates=store_intermediates,
+                mask_sources=cal_config.background_mask_sources,
             )
             log_stats("after bg subtract", image.data)
     else:
