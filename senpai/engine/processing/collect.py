@@ -424,7 +424,14 @@ def _process_senpai_collect(
                 / f"{next_shift.target_index}_raw.png",
             )
 
-        solve_shift(senpai_run, next_shift)
+        if config.streak.registration_engine == "bayesian":
+            from senpai.engine.detection.streak.bayesian.frame_shift import (
+                solve_shift as bayesian_solve_shift,
+            )
+
+            bayesian_solve_shift(senpai_run, next_shift)
+        else:
+            solve_shift(senpai_run, next_shift)
 
         # Backstop against a livelock: the loop pulls the next *unprocessed*
         # shift, so a solver that returns without setting processed=True hands
@@ -455,13 +462,29 @@ def _process_senpai_collect(
         logger.info("Shifting WCS by pixel shift")
 
         if next_shift.is_valid and next_shift.processed:
-            shift_wcs_by_pixel_shift(senpai_run, next_shift)
+            bayesian_engine = config.streak.registration_engine == "bayesian"
+
+            if bayesian_engine:
+                from senpai.engine.detection.streak.bayesian.wcs_ops import (
+                    shift_wcs_by_pixel_shift as bayesian_shift_wcs_by_pixel_shift,
+                )
+
+                bayesian_shift_wcs_by_pixel_shift(senpai_run, next_shift)
+            else:
+                shift_wcs_by_pixel_shift(senpai_run, next_shift)
 
             target = senpai_run.get_frame_by_index(next_shift.target_index)
 
             if isinstance(target, SiderealFrame):
                 logger.info("Refining WCS for sidereal frame %d", target.index)
-                refine_sidereal_frame(target)
+                if bayesian_engine:
+                    from senpai.engine.detection.streak.bayesian.wcs_refinement import (
+                        refine_sidereal_frame as bayesian_refine_sidereal_frame,
+                    )
+
+                    bayesian_refine_sidereal_frame(target)
+                else:
+                    refine_sidereal_frame(target)
 
             elif isinstance(target, RateTrackFrame):
                 # A degenerate streak extraction (length==fwhm blob fit, or an
@@ -469,10 +492,16 @@ def _process_senpai_collect(
                 # refinement below and overlong star line labels downstream —
                 # reconcile with the chain-derived geometry first.
                 if config.streak.reconcile_with_chain:
-                    from senpai.engine.utils.streak_chain import (
-                        chain_drift_rates,
-                        reconcile_streak_with_chain,
-                    )
+                    if bayesian_engine:
+                        from senpai.engine.detection.streak.bayesian.streak_chain import (
+                            chain_drift_rates,
+                            reconcile_streak_with_chain,
+                        )
+                    else:
+                        from senpai.engine.utils.streak_chain import (
+                            chain_drift_rates,
+                            reconcile_streak_with_chain,
+                        )
 
                     reconcile_streak_with_chain(
                         target,
@@ -482,42 +511,57 @@ def _process_senpai_collect(
                     )
 
                 logger.info("Refining WCS by kernel convolution")
-                shift_correction_x, shift_correction_y = (
-                    refine_wcs_by_kernel_convolution(target)
-                )
+                if bayesian_engine:
+                    from senpai.engine.detection.streak.bayesian.wcs_refinement import (
+                        refine_wcs_by_kernel_convolution as bayesian_refine_wcs,
+                    )
 
-                # Apply the correction to the existing shift
-                original_x = next_shift.x_shift
-                original_y = next_shift.y_shift
-                next_shift.x_shift -= shift_correction_x
-                next_shift.y_shift -= shift_correction_y
-                logger.info(
-                    f"Applied WCS refinement correction to shift {next_shift.source_index}->{next_shift.target_index}: "
-                    f"({original_x:.2f}, {original_y:.2f}) + ({shift_correction_x:.2f}, {shift_correction_y:.2f}) "
-                    f"= ({next_shift.x_shift:.2f}, {next_shift.y_shift:.2f})"
-                )
+                    # Bayesian engine applies the catalog-star refinement to the WCS
+                    # internally and returns whether it succeeded; there is no separate
+                    # pixel-shift correction to fold back into next_shift, and the rate
+                    # seed comes from the mount headers rather than the refined shift.
+                    wcs_refined = bayesian_refine_wcs(target)
+                    if config.detection.detect and (
+                        not config.detection.require_wcs_refinement or wcs_refined
+                    ):
+                        target.detections = extract_point_sources(target)
+                else:
+                    shift_correction_x, shift_correction_y = (
+                        refine_wcs_by_kernel_convolution(target)
+                    )
 
-                # Recalculate pixel_track_rate_per_second based on refined shift
-                # This is critical for the next frame pair's validation attempt
-                source = senpai_run.get_frame_by_index(next_shift.source_index)
-                if isinstance(source, RateTrackFrame):
-                    frame_gap_seconds = abs(
-                        (target.timestamp - source.timestamp).total_seconds()
-                    )
-                    refined_shift_magnitude = np.sqrt(
-                        next_shift.x_shift**2 + next_shift.y_shift**2
-                    )
-                    old_rate = target.pixel_track_rate_per_second
-                    target.pixel_track_rate_per_second = (
-                        refined_shift_magnitude / frame_gap_seconds
-                    )
+                    # Apply the correction to the existing shift
+                    original_x = next_shift.x_shift
+                    original_y = next_shift.y_shift
+                    next_shift.x_shift -= shift_correction_x
+                    next_shift.y_shift -= shift_correction_y
                     logger.info(
-                        f"Updated pixel_track_rate_per_second for frame {target.index}: "
-                        f"{old_rate:.3f} -> {target.pixel_track_rate_per_second:.3f} px/s "
-                        f"(shift_mag={refined_shift_magnitude:.2f}px, gap={frame_gap_seconds:.2f}s)"
+                        f"Applied WCS refinement correction to shift {next_shift.source_index}->{next_shift.target_index}: "
+                        f"({original_x:.2f}, {original_y:.2f}) + ({shift_correction_x:.2f}, {shift_correction_y:.2f}) "
+                        f"= ({next_shift.x_shift:.2f}, {next_shift.y_shift:.2f})"
                     )
-                if config.detection.detect:
-                    target.detections = extract_point_sources(target)
+
+                    # Recalculate pixel_track_rate_per_second based on refined shift
+                    # This is critical for the next frame pair's validation attempt
+                    source = senpai_run.get_frame_by_index(next_shift.source_index)
+                    if isinstance(source, RateTrackFrame):
+                        frame_gap_seconds = abs(
+                            (target.timestamp - source.timestamp).total_seconds()
+                        )
+                        refined_shift_magnitude = np.sqrt(
+                            next_shift.x_shift**2 + next_shift.y_shift**2
+                        )
+                        old_rate = target.pixel_track_rate_per_second
+                        target.pixel_track_rate_per_second = (
+                            refined_shift_magnitude / frame_gap_seconds
+                        )
+                        logger.info(
+                            f"Updated pixel_track_rate_per_second for frame {target.index}: "
+                            f"{old_rate:.3f} -> {target.pixel_track_rate_per_second:.3f} px/s "
+                            f"(shift_mag={refined_shift_magnitude:.2f}px, gap={frame_gap_seconds:.2f}s)"
+                        )
+                    if config.detection.detect:
+                        target.detections = extract_point_sources(target)
 
             if config.plotting.review and config.plotting.debug:
                 # otherwise this'll be plotted at the end (review True, debug False)

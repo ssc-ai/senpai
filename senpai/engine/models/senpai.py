@@ -124,6 +124,7 @@ class FrameShift(BaseModel):
     is_valid: bool = True
     processed: bool = False
     error_message: str | None = None
+    correlation: float | None = None  # cross-correlation quality of the shift solve, if measured
 
 
 class FrameSummary(BaseModel):
