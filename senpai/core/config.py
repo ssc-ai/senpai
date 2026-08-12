@@ -535,6 +535,28 @@ class PhotometryConfig(BaseModel):
         description="Drop catalog stars blended with brighter neighbors from the completeness curve",
     )
 
+    # WCS-refinement photometry method dispatch: defaults keep the upstream methods;
+    # the opt-in values (see mdp.yaml) reproduce the MDP-validated rate-track behaviour.
+    # These affect the star-SNR / limiting-magnitude estimate the WCS refit consumes.
+    refinement_star_snr_noise: Literal["poisson", "empirical"] = Field(
+        default="empirical",
+        description=(
+            "Refinement star-SNR noise model: 'empirical' (default) uses the per-pixel "
+            "background std; 'poisson' uses sqrt(bg_level*area)."
+        ),
+    )
+    refinement_limiting_magnitude_method: Literal["linear_fit", "completeness_hybrid"] = Field(
+        default="completeness_hybrid",
+        description=(
+            "Refinement limiting-magnitude estimator: 'completeness_hybrid' (default) prefers the "
+            "completeness roll-over; 'linear_fit' uses the SNR-fit crossing."
+        ),
+    )
+    refinement_aperture_subpixels: int = Field(
+        default=5,
+        description="Refinement star-SNR aperture subpixel sampling (5 default; higher = sharper).",
+    )
+
     # Zero-point star selection. The ZP must come from well-measured stars only:
     # a faint catalog tail (where forced photometry latches onto neighbour flux /
     # trails and reports a spurious SNR floor) biases the median ZP up by ~1 mag.

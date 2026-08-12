@@ -25,7 +25,7 @@ from photutils.aperture import (
 )
 from scipy.spatial import cKDTree
 
-from senpai.core.config import PhotometryConfig, get_config
+from senpai.core.config import PhotometryConfig, get_config, settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.starfield import SatelliteListImage, StarField, StarInSpace
@@ -341,7 +341,7 @@ def _guard_aperture_mask_footprint(n_apertures: int, mask_side_px: float, detail
         )
 
 
-def _shared_shape_aperture_sums(data, positions, build_apertures):
+def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
     """Aperture sums for many apertures that share one shape.
 
     Every caller measures thousands of apertures with identical shape
@@ -379,7 +379,7 @@ def _shared_shape_aperture_sums(data, positions, build_apertures):
             cached = cache.get(key)
             if cached is None:
                 ap = build_apertures(np.array([[anchor + fx, anchor + fy]]))[aper_idx]
-                mask = ap.to_mask(method="subpixel", subpixels=5)
+                mask = ap.to_mask(method="subpixel", subpixels=subpixels)
                 if isinstance(mask, list):
                     mask = mask[0]
                 cached = (
@@ -2534,11 +2534,13 @@ def calculate_star_snrs_with_aperture_photometry(
         counts_array = frame.frame.data.copy()
         counts_array -= np.min(counts_array)
         object.__setattr__(frame.frame, "_photometry_counts", counts_array)
-    # Empirical per-pixel noise: the min-shift above makes the background
-    # *level* an arbitrary offset, so Poisson-from-level is meaningless here
-    # (and the frame is background-subtracted upstream anyway) — see
-    # empirical_background_std_adu.
-    bg_std_counts = empirical_background_std_adu(counts_array)
+    # WCS-refinement photometry dispatch (PhotometryConfig): noise model + aperture
+    # subpixels default to the upstream values; the opt-in poisson/higher-subpixels
+    # path reproduces the MDP-validated refinement-star selection.
+    _phot_cfg = settings.photometry
+    noise_model = _phot_cfg.refinement_star_snr_noise
+    subpixels = _phot_cfg.refinement_aperture_subpixels
+    bg_std_counts = empirical_background_std_adu(counts_array) if noise_model == "empirical" else 0.0
     margin = 10
     valid_stars: list[StarInSpace] = []
     positions: list[tuple[float, float]] = []
@@ -2568,6 +2570,7 @@ def calculate_star_snrs_with_aperture_photometry(
                 CircularAperture(p, r=radius),
                 CircularAnnulus(p, r_in=radius * 1.5, r_out=radius * 2.5),
             ],
+            subpixels=subpixels,
         )
         # Lightweight objects for .area only (scalar; no mask materialization)
         apertures = CircularAperture(positions, r=radius)
@@ -2594,7 +2597,7 @@ def calculate_star_snrs_with_aperture_photometry(
             # Calculate noise (Poisson source + empirical background noise)
             bg_noise = (
                 bg_std_counts * np.sqrt(aperture_area)
-                if bg_std_counts > 0
+                if noise_model == "empirical" and bg_std_counts > 0
                 else np.sqrt(bg_per_pixel * aperture_area)
             )
             source_noise = np.sqrt(max(0, counts))
@@ -2628,6 +2631,7 @@ def calculate_star_snrs_with_aperture_photometry(
                     theta=theta,
                 ),
             ],
+            subpixels=subpixels,
         )
         # Lightweight objects for .area only (scalar; no mask materialization)
         apertures = RectangularAperture(positions, w=width_pixels, h=length_pixels, theta=theta)
@@ -2661,7 +2665,7 @@ def calculate_star_snrs_with_aperture_photometry(
             # Calculate noise (Poisson source + empirical background noise)
             bg_noise = (
                 bg_std_counts * np.sqrt(aperture_area)
-                if bg_std_counts > 0
+                if noise_model == "empirical" and bg_std_counts > 0
                 else np.sqrt(bg_per_pixel * aperture_area)
             )
             source_noise = np.sqrt(max(0, counts))
@@ -2744,6 +2748,7 @@ def estimate_limiting_magnitude_from_photometry(
 
         # Initialize weights
         weights = np.ones_like(filtered_magnitudes)
+        completeness_limit: float | None = None  # faintest bin still above completeness_target
 
         # Calculate completeness and variance in each bin and assign weights
         if len(filtered_magnitudes) > 10:
@@ -2779,7 +2784,6 @@ def estimate_limiting_magnitude_from_photometry(
 
                 bin_variances.append(bin_var)
 
-            completeness_limit: float | None = None
             if completeness_candidates:
                 completeness_limit = max(completeness_candidates)
 
@@ -2808,25 +2812,24 @@ def estimate_limiting_magnitude_from_photometry(
         fit_limiting_mag = (np.log10(min_snr) - intercept) / slope
         fit_limiting_mag = max(12.0, fit_limiting_mag)
 
-        # Choose the limiting magnitude. completeness_limit is the faintest bin
-        # still above the target completeness; if that sits at the faint edge of
-        # the data, the curve never actually rolled over — it's just where the
-        # (deliberately shallow, for speed) catalog ran out, not a real 50%
-        # limit. In that case use the SNR-fit crossing (the fitted trend
-        # extrapolated to the threshold). Only trust completeness when it rolls
-        # over *within* the data.
-        data_faint_edge = float(np.max(filtered_magnitudes))
-        comp = completeness_limit if "completeness_limit" in locals() else None
-        if comp is not None and comp < data_faint_edge - 0.5:
-            limiting_mag = comp  # genuine completeness roll-over within the data
+        # Limiting-mag dispatch (refinement_limiting_magnitude_method): 'completeness_hybrid'
+        # (default) prefers a completeness roll-over within the data, falling back to the
+        # SNR-fit crossing when completeness sits at the faint edge (catalog truncation, not a
+        # real limit); 'linear_fit' always uses the SNR-fit crossing.
+        if cfg.photometry.refinement_limiting_magnitude_method == "completeness_hybrid":
+            data_faint_edge = float(np.max(filtered_magnitudes))
+            comp = completeness_limit
+            limiting_mag = (
+                comp if comp is not None and comp < data_faint_edge - 0.5 else fit_limiting_mag
+            )
         else:
-            limiting_mag = fit_limiting_mag  # truncated → extrapolate trend to SNR threshold
+            limiting_mag = fit_limiting_mag
 
         # Optional diagnostic plot
         if cfg.plotting.photometry:
             import matplotlib.pyplot as plt
 
-            fig, ax = plt.subplots(figsize=(8, 6))
+            _fig, ax = plt.subplots(figsize=(8, 6))
 
             ax.scatter(
                 filtered_magnitudes,
