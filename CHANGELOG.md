@@ -28,6 +28,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   written out in full, including fields left at their default, so a change to an upstream
   default shows up in review rather than silently altering a run. Covered by
   `test_all_shipped_configs_load`.
+- **Optional source masking before 2D background subtraction** —
+  `calibrations.background_mask_sources` (default `False`, current behaviour).
+  `measure_background` estimates the mesh from every pixel, so a faint target's
+  own flux inflates the local mesh and is then subtracted along with it. When
+  enabled, pixels above 2 sigma are masked (dilated) before the estimate, so the
+  mesh is taken from source-free background only.
+
+### Fixed
+
+- **Point-source re-detection ran on frames whose registration had failed.** The
+  end-of-collect catch-all extracted sources from any rate-track frame without
+  detections, which includes frames that were shift targets whose shift was
+  rejected. The shift loop deliberately leaves those undetected, so re-detecting
+  them measured sources against a WCS the pipeline had already discarded, and
+  those surface downstream as uncorrelated tracks. Processed shift targets are
+  now skipped; every other rate-track frame is unaffected.
+- **The SSTRC7 region query was centred on CRVAL rather than on the image.** The
+  query is a field-of-view-sized box about a sky position, and that position came
+  from `pix2world(CRPIX)` -- which is CRVAL by definition, the WCS reference
+  point, not the image centre. Any solution whose CRPIX sits away from the centre
+  (a propagated or re-anchored WCS) therefore centred the box off-frame, leaving
+  part of the image outside the region that was read and its stars absent from
+  the result.
+- **`max_stars` capped the padded query region instead of the image.** The region
+  carries a 20% safety margin plus rotation padding, so the brightest N of that
+  region are largely out of frame: a `max_stars=1000` request returned 61 in-frame
+  stars on one benchmark field, starving the catalog FWHM measurement and the WCS
+  refit that size themselves from it. Stars are now sorted brightest-first and the
+  cap counts in-bounds stars. The sort now runs whether or not a cap was
+  requested, so returned stars are magnitude-ordered for every caller.
+- **A degenerate FWHM could size aperture masks until the worker was OOM-killed.**
+  Aperture radii and streak rectangles derive from the measured FWHM and streak
+  fit, which is unbounded; on a noise-flooded frame that fit blows up (a median
+  FWHM of 252 px against a normal <=16 px was observed in production) and the
+  masks grow quadratically with it. Both starfield photometry paths now bound the
+  aggregate mask footprint before allocating any of it. Since both call sites
+  already treat a photometry exception as "no photometry for this frame", one
+  degenerate frame now degrades to a warning instead of ending the run.
+
 ## [2.8.0] - 2026-08-14
 
 ### Added
