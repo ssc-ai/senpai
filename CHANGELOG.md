@@ -35,6 +35,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   enabled, pixels above 2 sigma are masked (dilated) before the estimate, so the
   mesh is taken from source-free background only.
 
+- **Eight opt-in method dispatches for rate-track imagery.** Each defaults to the
+  method senpai uses today, so a merge with no config change is a no-op:
+  `detection.rate_point_detector` (`daostarfinder` | `sep` -- SEP extraction plus
+  a flux-concentration gate, ~7x fewer false positives on our rate-track
+  benchmark), `detection.centroid_guard_mode` / `centroid_guard_value` (how the
+  centroid-vs-peak disagreement guard is sized),
+  `photometry.refinement_star_snr_noise` (`empirical` | `poisson`),
+  `photometry.refinement_limiting_magnitude_method` (`completeness_hybrid` |
+  `linear_fit`), `photometry.refinement_aperture_subpixels`,
+  `star_catalog.magnitude_band_priority` (`johnson_v_first` -- the sstrc7
+  package's own `visual` ladder, returned unchanged -- or `open_first`, which
+  leads with Gaia G for open-filter sensors), and
+  `calibrations.preprocess_float_dtype` (`float32` | `float64`).
 ### Fixed
 
 - **Point-source re-detection ran on frames whose registration had failed.** The
