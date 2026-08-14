@@ -426,8 +426,9 @@ def _off_center_wcs() -> runner.WCSModel:
     )
 
 
-def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict):
+def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict, max_width_degrees=10.0):
     """Stand in for the catalog region read, recording the region it was asked for."""
+    import types
 
     def _query(fov_height, fov_width, center_ra, center_dec, **kwargs):
         captured["center"] = (center_ra, center_dec)
@@ -435,6 +436,13 @@ def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict):
         return list(stars)
 
     monkeypatch.setattr(runner.sstr7, "query_by_los_radec_with_rotation", _query)
+    from senpai.core import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "_config_instance",
+        types.SimpleNamespace(astrometry=types.SimpleNamespace(max_width_degrees=max_width_degrees)),
+    )
     runner._query_catalog_sstr7_cached.cache_clear()
 
 
@@ -496,3 +504,18 @@ def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
     result = runner.query_catalog_sstr7(wcs, "/nonexistent")
 
     assert len(result.stars) == 5
+
+
+def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch) -> None:
+    """A corrupted WCS must fail typed, not read a huge slice of the catalog."""
+    from senpai.exceptions import SiderealSolveError
+
+    # 0.1 deg/px over 100 px is a 10-degree field; a 1-degree configured maximum
+    # puts it past the 2x sanity margin.
+    wcs = _off_center_wcs().model_copy(update={"CDELT1": -0.1, "CDELT2": 0.1})
+    captured: dict = {}
+    _fake_sstr7_region_query(monkeypatch, [], captured, max_width_degrees=1.0)
+
+    with pytest.raises(SiderealSolveError, match="Implausible sensor field of view"):
+        runner.query_catalog_sstr7(wcs, "/nonexistent")
+    assert "center" not in captured, "the catalog was read despite a corrupted WCS"

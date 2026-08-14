@@ -13,9 +13,10 @@ from senpai.catalog import sstrc7_source as sstr7
 import senpai.catalog.sdss as sdss
 import senpai.catalog.gaia as gaia
 from senpai.catalog.constants import CatalogType
-from senpai.core.config import get_config, get_or_initialize_config
+from senpai.core.config import get_config, get_or_initialize_config, settings
 from senpai.engine.models.astrometry import WCSModel
 from senpai.engine.models.starfield import ImageMetadata, StarInSpace, StarListSpace
+from senpai.exceptions import SiderealSolveError
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,19 @@ def _query_catalog_sstr7_cached(
     )
 
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
+
+    # A valid plate solution's field of view stays within the configured scale bounds, so a FOV
+    # well past the maximum field width means the WCS is corrupted -- and querying it reads an
+    # enormous slice of the catalog, which is how a bad solve turns into an out-of-memory kill
+    # rather than a failed collect. Twice the configured maximum is a generous margin, so a
+    # valid solve at the boundary is never rejected.
+    max_fov_degrees = 2 * settings.astrometry.max_width_degrees
+    if fov_width > max_fov_degrees or fov_height > max_fov_degrees:
+        raise SiderealSolveError(
+            f"Implausible sensor field of view ({fov_width:.2f} x {fov_height:.2f} deg) exceeds "
+            f"twice the configured maximum field width ({max_fov_degrees:.1f} deg); the WCS "
+            "solution is likely corrupted. Aborting catalog query to avoid an excessive read."
+        )
 
     # Get center coordinates. The region query below is a FOV-sized box about this point, so
     # it has to be the sky the IMAGE covers: pix2world(CRPIX) is CRVAL by definition, and any
