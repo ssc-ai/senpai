@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Environment-variable overrides for every configuration field.** `AppConfig`
+  is now a pydantic-settings `BaseSettings`, so any field can be set with
+  `SENPAI_<SECTION>__<FIELD>` — `SENPAI_ASTROMETRY__CPULIMIT_SECONDS=3600`,
+  `SENPAI_HEADERS__POINTING__RA_UNITS=degrees` — including nested sections, via
+  the `__` delimiter. Environment variables take precedence over the config
+  file, so containerized and CI runs can override a single setting without
+  templating a YAML. Existing config files, `initialize_config`, `get_config`
+  and the immutability of the loaded config are all unchanged.
+
 ## [2.8.0] - 2026-08-14
 
 ### Added
