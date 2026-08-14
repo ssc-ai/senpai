@@ -182,6 +182,13 @@ class DetectionConfig(BaseModel):
     """Detection configuration"""
 
     detect: bool = Field(default=False, description="Detect point sources")
+    require_wcs_refinement: bool = Field(
+        default=False,
+        description="Only produce detections on rate frames whose WCS refinement succeeded. "
+        "A frame whose refinement failed keeps a WCS the pipeline has already rejected, so "
+        "sources measured against it are positioned by a solution known to be wrong. "
+        "Default False preserves current behaviour, which detects on those frames anyway.",
+    )
     detect_streaks: bool = Field(default=True, description="Run streak detection when detect=True")
     snr_threshold: float = Field(default=3.0, description="SNR threshold")
     verbose: bool = Field(default=False, description="Verbose mode")
