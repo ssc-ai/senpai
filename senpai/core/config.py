@@ -578,6 +578,18 @@ class CalibrationsConfig(BaseModel):
         default=True,
         description="Automatically remove column medians during preprocessing",
     )
+    preprocess_float_dtype: Literal["float32", "float64"] = Field(
+        default="float32",
+        description=(
+            "Float precision frames are promoted to during preprocessing. 'float32' "
+            "(default) is what the pipeline runs in. 'float64' costs one extra "
+            "frame-sized buffer and is available for downstream math that is "
+            "sensitive to float32's ~0.005 ADU quantization at ADU scale — "
+            "rate-track registration cross-correlation is: the rounding shifts "
+            "measured FWHM at the 1e-3 level, which can move the correlation peak "
+            "selection on a marginal frame pair."
+        ),
+    )
     auto_subtract_background: bool = Field(
         default=True,
         description="Automatically subtract background during preprocessing",

@@ -4,6 +4,8 @@ from typing import Optional, Union
 
 import numpy as np
 
+from senpai.core.config import settings
+
 logger = logging.getLogger(__name__)
 from astropy.io import fits
 from astropy.stats import SigmaClip
@@ -88,18 +90,43 @@ def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
     return gain
 
 
-def remove_column_and_row_medians(image: ProcessedFitsImage, store_intermediates: bool = False) -> ProcessedFitsImage:
-    """Remove the median value of each column and row from the image"""
+def preprocess_float_dtype() -> np.dtype:
+    """Resolve the configured float dtype for preprocessing promotions.
+
+    Returns:
+        ``np.float64`` when ``calibrations.preprocess_float_dtype`` selects it,
+        otherwise ``np.float32`` -- the precision the pipeline runs in.
+    """
+    return np.float64 if settings.calibrations.preprocess_float_dtype == "float64" else np.float32
+
+
+def remove_column_and_row_medians(
+    image: ProcessedFitsImage,
+    store_intermediates: bool = False,
+    dtype: np.dtype = np.float32,
+) -> ProcessedFitsImage:
+    """Remove the median value of each column and row from the image.
+
+    Args:
+        image: Image whose column/row medians are subtracted in place.
+        store_intermediates: Whether to record the subtracted column/row medians
+            (and the original frame) on the image.
+        dtype: Float dtype the frame is promoted to. Defaults to float32, which
+            the pipeline runs in; float64 is available for callers whose
+            downstream math is sensitive to float32's ~0.005 ADU rounding at
+            ADU scale (rate-track registration cross-correlation is — the
+            rounding shifts sidereal FWHM estimates at the 1e-3 level, enough
+            to flip a marginal frame-to-frame registration).
+
+    Returns:
+        The image with column and row medians subtracted.
+    """
     from senpai.engine.models.images import ProcessingMetadata
 
     array = image.data
 
-    # Convert to a signed float so the subtraction can go negative. float32
-    # on purpose: the whole downstream pipeline (detection convolutions,
-    # statistics, photometry) inherits this dtype, and float64 doubles every
-    # one of those costs for nothing — the data are ADU-scale (<~1e5), where
-    # float32's 24-bit mantissa resolves ~0.005 ADU, far below read noise.
-    array = array.astype(np.float32)
+    # Convert to a signed float so the subtraction can go negative.
+    array = array.astype(dtype)
 
     # Capture the sky level (flat-fielded frame median, ADU) BEFORE we subtract
     # it away — this is the physical sky background (moonglow/twilight), which
@@ -430,7 +457,7 @@ def auto_apply_calibrations(
             print("Column median removal already applied, skipping")
         else:
             print("Applying column median removal")
-            image = remove_column_and_row_medians(image, store_intermediates)
+            image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
     elif cal_config.auto_remove_row_median:
         if step_already_applied(ProcessingStep.ROW_MEDIAN_SUBTRACT):
             print("Row median removal already applied, skipping")
@@ -438,7 +465,7 @@ def auto_apply_calibrations(
             # If only row median removal is enabled, we need a separate function
             # For now, we'll still call the combined function but note this in the future
             print("Applying row median removal")
-            image = remove_column_and_row_medians(image, store_intermediates)
+            image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
 
     if cal_config.auto_subtract_background:
         if step_already_applied(ProcessingStep.BACKGROUND_SUBTRACT):
@@ -820,7 +847,7 @@ def preprocess_image(
                 step.step_type in [ProcessingStep.ROW_MEDIAN_SUBTRACT, ProcessingStep.COLUMN_MEDIAN_SUBTRACT]
                 for step in image.processing_history
             ):
-                image = remove_column_and_row_medians(image, store_intermediates)
+                image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
             if not any(step.step_type == ProcessingStep.BACKGROUND_SUBTRACT for step in image.processing_history):
                 image = remove_background(image, store_intermediates=store_intermediates)
             return image
@@ -831,7 +858,7 @@ def preprocess_image(
                 step.step_type in [ProcessingStep.ROW_MEDIAN_SUBTRACT, ProcessingStep.COLUMN_MEDIAN_SUBTRACT]
                 for step in image.processing_history
             ):
-                image = remove_column_and_row_medians(image, store_intermediates)
+                image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
             if not any(step.step_type == ProcessingStep.BACKGROUND_SUBTRACT for step in image.processing_history):
                 image = remove_background(image, store_intermediates=store_intermediates)
             return image
@@ -897,19 +924,19 @@ def preprocess_image(
         if row_median_applied and column_median_applied:
             logger.debug("[%s] Row/col median already applied, skipping", fname)
         else:
-            image = remove_column_and_row_medians(image, store_intermediates)
+            image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
             log_stats("after row/col median", image.data)
     elif cal_config.auto_remove_column_median:
         if column_median_applied:
             logger.debug("[%s] Column median already applied, skipping", fname)
         else:
-            image = remove_column_and_row_medians(image, store_intermediates)
+            image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
             log_stats("after col median", image.data)
     elif cal_config.auto_remove_row_median:
         if row_median_applied:
             logger.debug("[%s] Row median already applied, skipping", fname)
         else:
-            image = remove_column_and_row_medians(image, store_intermediates)
+            image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
             log_stats("after row median", image.data)
     else:
         logger.debug("[%s] Row/col median removal disabled", fname)
