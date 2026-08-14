@@ -389,3 +389,110 @@ def test_validate_coverage_empty_logs_error(caplog) -> None:
             max_dec=2.0,
         )
     assert "NO stars" in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+# SSTRC7 region query: centered on the image, max_stars counted in-frame.
+# --------------------------------------------------------------------------- #
+def _off_center_wcs() -> runner.WCSModel:
+    """A 100x100 TAN frame whose reference pixel is the corner, not the center.
+
+    Any propagated or re-anchored solution looks like this, and it is what
+    separates "center the query on CRVAL" from "center it on the image". The
+    10-degree rotation keeps the PC matrix off the identity, as a real plate
+    solution's is.
+    """
+    from senpai.engine.models.astrometry import WCSModel
+
+    theta = np.deg2rad(10.0)
+    return WCSModel(
+        WCSAXES=2,
+        NAXIS1=100,
+        NAXIS2=100,
+        CRPIX1=1.0,
+        CRPIX2=1.0,
+        PC1_1=float(np.cos(theta)),
+        PC1_2=float(-np.sin(theta)),
+        PC2_1=float(np.sin(theta)),
+        PC2_2=float(np.cos(theta)),
+        CDELT1=-0.001,
+        CDELT2=0.001,
+        CUNIT1="deg",
+        CUNIT2="deg",
+        CTYPE1="RA---TAN",
+        CTYPE2="DEC--TAN",
+        CRVAL1=150.0,
+        CRVAL2=2.0,
+    )
+
+
+def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict):
+    """Stand in for the catalog region read, recording the region it was asked for."""
+
+    def _query(fov_height, fov_width, center_ra, center_dec, **kwargs):
+        captured["center"] = (center_ra, center_dec)
+        captured["fov"] = (fov_width, fov_height)
+        return list(stars)
+
+    monkeypatch.setattr(runner.sstr7, "query_by_los_radec_with_rotation", _query)
+    runner._query_catalog_sstr7_cached.cache_clear()
+
+
+def _star_at(wcs, x: float, y: float, mv: float) -> dict:
+    """A catalog record placed at a given pixel position of `wcs`."""
+    ra_deg, dec_deg = wcs.to_astropy_wcs().wcs_pix2world([[x, y]], 0)[0]
+    return {
+        "ra": np.deg2rad(ra_deg),
+        "dec": np.deg2rad(dec_deg),
+        "ra_pm": 0.0,
+        "dec_pm": 0.0,
+        "mv": mv,
+        "magnitudes": {"Johnson_V": mv},
+        "catalog": "Test Catalog",
+    }
+
+
+def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch) -> None:
+    wcs = _off_center_wcs()
+    captured: dict = {}
+    _fake_sstr7_region_query(monkeypatch, [], captured)
+
+    runner.query_catalog_sstr7(wcs, "/nonexistent")
+
+    expected = wcs.to_astropy_wcs().wcs_pix2world([[50.0, 50.0]], 0)[0]
+    assert captured["center"] == pytest.approx(tuple(expected), abs=1e-9)
+    # CRVAL sits at the corner pixel, ~0.05 deg away -- half the frame would be
+    # outside a box centered there.
+    assert abs(captured["center"][0] - wcs.CRVAL1) > 0.01
+
+
+def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch) -> None:
+    wcs = _off_center_wcs()
+    # Ten bright stars in the padded region but outside the image, then five
+    # fainter ones inside it. Capping the region query would return only the
+    # bright ten and leave nothing in frame.
+    stars = [_star_at(wcs, -50.0 - i, 150.0, 4.0 + i * 0.1) for i in range(10)]
+    stars += [_star_at(wcs, 10.0 + i * 10, 50.0, 12.0 + i * 0.1) for i in range(5)]
+    captured: dict = {}
+    _fake_sstr7_region_query(monkeypatch, stars, captured)
+
+    result = runner.query_catalog_sstr7(wcs, "/nonexistent", max_stars=3)
+
+    assert len(result.stars) == 3
+    for star in result.stars:
+        assert 0 < star.x < 100
+        assert 0 < star.y < 100
+    # Brightest-first among the in-frame stars.
+    assert [s.magnitude for s in result.stars] == pytest.approx([12.0, 12.1, 12.2])
+
+
+def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
+    wcs = _off_center_wcs()
+    stars = [_star_at(wcs, -50.0, 150.0, 4.0)]
+    stars += [_star_at(wcs, 10.0 + i * 10, 50.0, 12.0 + i * 0.1) for i in range(5)]
+    captured: dict = {}
+    _fake_sstr7_region_query(monkeypatch, stars, captured)
+
+    result = runner.query_catalog_sstr7(wcs, "/nonexistent")
+
+    assert len(result.stars) == 5
