@@ -147,6 +147,16 @@ class StarCatalogConfig(BaseModel):
         "per-frame memory/CPU on dense galactic-plane fields (a 74k-star field "
         "needed ~30 GB/worker uncapped). None = unbounded.",
     )
+    magnitude_band_priority: Literal["johnson_v_first", "open_first"] = Field(
+        default="johnson_v_first",
+        description=(
+            "Band-priority order reducing the SSTRC7 multi-band magnitude vector to one "
+            "visual magnitude. 'johnson_v_first' (default) is the sstrc7 package's own "
+            "`visual` ladder: Johnson_V, then R, Sloan_r, Gaia_G, Sloan_g, B. 'open_first' "
+            "leads with Gaia_G, then Johnson_R, Sloan_r, Johnson_V, Johnson_B; its broad "
+            "response better matches an open-filter (silicon) sensor."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_catalog_config(self):

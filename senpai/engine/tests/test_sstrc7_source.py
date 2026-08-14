@@ -111,3 +111,69 @@ def test_filter_center_interpolates_a_different_magnitude(stars):
 @pytest.mark.requires_catalog
 def test_examine_catalog_accepts_a_complete_catalog():
     assert sstrc7_source.examine_catalog(_catalog_path()) is True
+
+
+# --------------------------------------------------------------------------- #
+# Band-priority ladder (pure logic -- no catalog on disk).
+# --------------------------------------------------------------------------- #
+class _FakeField:
+    """The two StarField attributes `_priority_ladder` reads."""
+
+    def __init__(self, mag: np.ndarray, visual: np.ndarray) -> None:
+        self.mag = mag
+        self.visual = visual
+
+
+def _fake_field(**bands: float) -> _FakeField:
+    """One star, with the named bands set and every other band a sentinel."""
+    mag = np.full((1, len(sstrc7_source.BAND_NAMES)), sstrc7_source.INVALID_MAG)
+    for name, value in bands.items():
+        mag[0, sstrc7_source.BAND_NAMES.index(name)] = value
+    return _FakeField(mag, np.array([bands.get("Johnson_V", np.nan)]))
+
+
+def _set_priority(monkeypatch, priority: str) -> None:
+    import types
+
+    from senpai.core import config as config_module
+
+    fake = types.SimpleNamespace(star_catalog=types.SimpleNamespace(magnitude_band_priority=priority))
+    monkeypatch.setattr(config_module, "_config_instance", fake)
+
+
+def test_priority_ladder_default_is_the_package_visual(monkeypatch) -> None:
+    _set_priority(monkeypatch, "johnson_v_first")
+    field = _fake_field(Gaia_G=9.0, Johnson_V=11.0)
+    assert sstrc7_source._priority_ladder(field) == pytest.approx([11.0])
+
+
+def test_priority_ladder_open_first_leads_with_gaia_g(monkeypatch) -> None:
+    _set_priority(monkeypatch, "open_first")
+    field = _fake_field(Gaia_G=9.0, Johnson_R=10.0, Johnson_V=11.0)
+    assert sstrc7_source._priority_ladder(field) == pytest.approx([9.0])
+
+
+def test_priority_ladder_open_first_walks_down_the_order(monkeypatch) -> None:
+    _set_priority(monkeypatch, "open_first")
+    # Gaia_G unmeasured (sentinel), so Johnson_R is next in the order.
+    field = _fake_field(Johnson_R=10.0, Johnson_V=11.0, Sloan_r=10.5)
+    assert sstrc7_source._priority_ladder(field) == pytest.approx([10.0])
+
+
+def test_priority_ladder_open_first_is_nan_with_no_usable_band(monkeypatch) -> None:
+    _set_priority(monkeypatch, "open_first")
+    field = _fake_field(**{"2MASS_J": 8.0})
+    assert np.isnan(sstrc7_source._priority_ladder(field)).all()
+
+
+def test_priority_ladder_requires_an_initialized_config(monkeypatch) -> None:
+    """Reading the band priority before initialize_config raises rather than defaulting.
+
+    A silent fallback would score a frame against a different band ladder than the one
+    configured, which is indistinguishable from correct output.
+    """
+    from senpai.core import config as config_module
+
+    monkeypatch.setattr(config_module, "_config_instance", None)
+    with pytest.raises(RuntimeError, match="not initialized"):
+        sstrc7_source._priority_ladder(_fake_field(Gaia_G=9.0, Johnson_V=11.0))
