@@ -306,6 +306,41 @@ def measure_simple_star_photometry(
         return None
 
 
+# Aperture masks are generated one bounding box at a time and cached per sub-pixel offset
+# (<=64 offsets per aperture; see _shared_shape_aperture_sums), so peak mask memory scales as
+# min(n_stars, 64) * side**2 elements. `side` comes from the measured FWHM and streak fit, which
+# is otherwise unbounded: on a noise-flooded frame that fit blows up -- a median FWHM of 252 px
+# against a normal <=16 px was observed in production -- and the masks grow quadratically with it,
+# reaching tens of GB and OOM-killing the worker along with the whole process pool. Cap the
+# footprint and fail such a frame cheaply instead: both callers already treat a photometry
+# exception as "no photometry for this frame", so one degenerate frame can no longer end the run.
+# ~2e9 elements ~= 16 GiB float64 -- generous for real photometry, fatal only to garbage.
+MAX_APERTURE_MASK_ELEMENTS = 2_000_000_000
+# Distinct sub-pixel offsets _shared_shape_aperture_sums caches per aperture (8 x 8 quantization).
+_APERTURE_MASK_CACHE_LIMIT = 64
+
+
+def _guard_aperture_mask_footprint(n_apertures: int, mask_side_px: float, detail: str) -> None:
+    """Raise if aperture photometry would allocate an absurd mask footprint.
+
+    Args:
+        n_apertures: Number of star apertures to be measured.
+        mask_side_px: Bounding-box side of the largest (background) aperture mask, in pixels.
+        detail: Human-readable description of the offending aperture parameters.
+
+    Raises:
+        ValueError: If the cached masks would exceed ``MAX_APERTURE_MASK_ELEMENTS``.
+    """
+    cached_masks = min(n_apertures, _APERTURE_MASK_CACHE_LIMIT)
+    total = cached_masks * mask_side_px * mask_side_px
+    if total > MAX_APERTURE_MASK_ELEMENTS:
+        raise ValueError(
+            f"aperture photometry too large: {cached_masks} cached masks x {mask_side_px:.0f}px "
+            f"= {total:,.0f} elements (> {MAX_APERTURE_MASK_ELEMENTS:,} cap); {detail}. This "
+            "indicates a degenerate FWHM/streak fit on a noise-flooded frame, not real photometry."
+        )
+
+
 def _shared_shape_aperture_sums(data, positions, build_apertures):
     """Aperture sums for many apertures that share one shape.
 
@@ -526,6 +561,14 @@ def measure_simple_starfield_photometry(
     # Rebuild positions array with sampled stars
     positions = np.array([(star.x, star.y) for star in sampled_stars])
     valid_stars = sampled_stars
+
+    # The background annulus is the largest per-star mask; bound its footprint before any of it
+    # is allocated, so a degenerate FWHM fails this frame instead of the worker.
+    _guard_aperture_mask_footprint(
+        len(positions),
+        2.0 * bg_outer + 1.0,
+        f"FWHM {fwhm:.1f}px -> aperture radius {aperture_radius:.1f}px, bg outer {bg_outer:.1f}px",
+    )
 
     # Shared-shape aperture sums (see _shared_shape_aperture_sums): same
     # photutils subpixel mask semantics, one cached mask per fractional
@@ -858,6 +901,16 @@ def measure_rate_starfield_photometry(
 
     positions = np.array([(star.x, star.y) for star in sampled_stars])
     valid_stars = sampled_stars
+
+    # The outer background rectangle bounds each per-star mask: at any rotation its bounding box
+    # is at most the sum of its two outer sides. Bound the footprint before any of it is
+    # allocated, so a degenerate streak length or FWHM fails this frame instead of the worker.
+    _guard_aperture_mask_footprint(
+        len(positions),
+        bg_width_out + bg_length_out,
+        f"streak FWHM {fwhm:.1f}px, length {streak.pixel_length:.1f}px -> background rectangle "
+        f"{bg_width_out:.0f} x {bg_length_out:.0f}px",
+    )
 
     # Shared-shape aperture sums (see _shared_shape_aperture_sums): photutils
     # subpixel masks (vs default "exact": exact polygon-clipping of thousands

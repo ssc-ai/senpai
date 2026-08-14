@@ -512,3 +512,32 @@ def test_compute_completeness_curve_empty_when_too_few():
     sf = _starfield([star])
     comp_mag, comp_pct = compute_completeness_curve(res, sf, _cfg(), isolate=False)
     assert comp_mag == [] and comp_pct == []
+
+
+# --------------------------------------------------------------------------- #
+# Degenerate FWHM / streak fits must fail the frame, not the worker.
+# --------------------------------------------------------------------------- #
+def test_aperture_mask_footprint_guard_allows_real_apertures() -> None:
+    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
+
+    # 50k stars with a 12 px FWHM: a ~100 px background annulus, well inside the cap.
+    _guard_aperture_mask_footprint(50_000, 100.0, "normal frame")
+
+
+def test_aperture_mask_footprint_guard_rejects_a_degenerate_fwhm() -> None:
+    import pytest
+
+    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
+
+    # The production case: a 252 px median FWHM sizes a ~2000 px annulus, and a worse
+    # fit scales quadratically from there.
+    with pytest.raises(ValueError, match="aperture photometry too large"):
+        _guard_aperture_mask_footprint(5_000, 20_000.0, "median FWHM 252px")
+
+
+def test_aperture_mask_footprint_guard_bounds_by_the_mask_cache_not_the_star_count() -> None:
+    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
+
+    # Masks are cached per sub-pixel offset, so a huge star count with sane apertures
+    # costs no more than 64 masks. 1e6 stars must not trip the cap on its own.
+    _guard_aperture_mask_footprint(1_000_000, 500.0, "dense galactic field")
