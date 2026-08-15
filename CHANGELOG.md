@@ -60,6 +60,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `streak.max_fwhm_for_streak_extraction`, `plotting.output_dir`, `FrameShift.correlation`, `senpai/exceptions.py` and a
   `scikit-optimize` dependency.
 
+- **Opt-in SExtractor sidereal solve** -- `astrometry.source_extractor`
+  (`point_detector` default | `sextractor`). Under `sextractor` the sidereal
+  anchor solve extracts its source list with SExtractor/SEP, measures the catalog
+  FWHM on the un-refined WCS, and refines through the Bayesian engine's
+  `refine_sidereal_frame`. Adds `detection/point/sextractor.py` (verified to
+  produce identical positions to the SExtractor binary on 66/66 sources of a test
+  frame) and a vendored DAOStarFinder sidereal extractor supplying the FWHM seed.
+
 ### Fixed
 
 - **Point-source re-detection ran on frames whose registration had failed.** The
