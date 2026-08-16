@@ -43,6 +43,7 @@ app:
     debug: false
     review: false
     photometry: false
+    output_dir: .
     psfs: false
     paper_ready: false
   runtime:
@@ -61,6 +62,8 @@ app:
     streak_correlation_radius_fwhm: 5.0
     streak_angle_tolerance_deg: 15.0
   streak:
+    registration_engine: bayesian                             # dispatch -- default direct
+    max_fwhm_for_streak_extraction: 10.0
     variable_kernel:
       enable: false
       angle_thresh_deg: 1.0
