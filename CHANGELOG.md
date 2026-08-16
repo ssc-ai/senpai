@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A `settings` singleton for reading configuration.** `from senpai.core.config import
+  settings` at import time, then read `settings.detection.snr_threshold` at call time,
+  instead of repeating `get_config()` at each use or threading an `AppConfig` through
+  signatures that do not otherwise need one. Attribute access resolves against whatever
+  `initialize_config` most recently loaded, so a top-level invocation that loads a
+  different YAML swaps what every module already holding the import sees. `get_config()`
+  is unchanged and remains the accessor everywhere else in the tree for now.
 - **Environment-variable overrides for every configuration field.** `AppConfig`
   is now a pydantic-settings `BaseSettings`, so any field can be set with
   `SENPAI_<SECTION>__<FIELD>` — `SENPAI_ASTROMETRY__CPULIMIT_SECONDS=3600`,

@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
@@ -651,6 +651,64 @@ class AppConfig(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """Environment variables override the YAML file passed via ``initialize_config``."""
         return (env_settings, init_settings)
+
+
+class _SettingsProxy:
+    """Lazy proxy forwarding attribute access to the global config instance.
+
+    Lets a module do ``from senpai.core.config import settings`` at import time and read
+    ``settings.detection.snr_threshold`` at call time, rather than repeating
+    ``get_config()`` at every use or threading an ``AppConfig`` through call signatures
+    that do not otherwise need one.
+
+    Attribute access resolves against whatever ``initialize_config`` most recently
+    loaded, so a top-level invocation that loads a different YAML swaps what every
+    module already holding this import sees.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        """Return `name` from the initialized config.
+
+        Args:
+            name: Attribute to look up on the underlying ``AppConfig``.
+
+        Returns:
+            The corresponding value from the global config instance.
+
+        Raises:
+            RuntimeError: If the global config has not been initialized.
+        """
+        if _config_instance is None:
+            raise RuntimeError("Config not initialized")
+        return getattr(_config_instance, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward assignment to the config instance rather than shadowing it here.
+
+        Without this, ``settings.debug = True`` would silently set an attribute on the
+        proxy and be read back happily, masking the fact that the loaded config is
+        frozen. Forwarding makes the frozen-instance error surface instead.
+
+        Args:
+            name: Attribute to set on the underlying ``AppConfig``.
+            value: Value to assign.
+
+        Raises:
+            RuntimeError: If the global config has not been initialized.
+        """
+        if _config_instance is None:
+            raise RuntimeError("Config not initialized")
+        setattr(_config_instance, name, value)
+
+    def __repr__(self) -> str:
+        """Return a representation that states whether config has been initialized."""
+        if _config_instance is None:
+            return "<settings: uninitialized>"
+        return f"<settings: {_config_instance!r}>"
+
+
+#: Import this rather than calling ``get_config()`` at each use.
+settings = _SettingsProxy()
 
 
 def get_config() -> AppConfig:
