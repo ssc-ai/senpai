@@ -1,0 +1,198 @@
+# MDP benchmark config -- the exact configuration behind this PR's reported numbers.
+#
+# MDP is the rate-track evaluation set this work was validated against: 134 collects of
+# resident-space-object imagery from two ground sensors, 1286 catalogued targets, scored by
+# correlating detections against per-night orbital elements.
+#
+# The config is exhaustive: every field the models define is written out, including those left
+# at their default, so a change to an upstream default is visible in review rather than
+# silently altering a run. It grows with the stack -- each PR adds its own fields here, so this
+# file always matches the code alongside it. Every dispatch defaults to the upstream method;
+# this file is where they are turned on. Fill in the two placeholder paths for your host.
+app:
+  version: 0.1.0
+  debug: false
+  logging:
+    level: info
+  astrometry:
+    pipeline_mode: full
+    solver_mode: dotnet
+    fast_solve:
+      mirror_dir: null
+      tetra3_db_path: null
+      sensor_profile: null
+    indices_series: '5200'
+    indices_path: /path/to/astrometry-indices
+    max_sources: 500
+    min_sources_for_attempt: 4
+    min_width_degrees: 0.1
+    max_width_degrees: 10.0
+    cpulimit_seconds: 90
+    docker_image: null
+    reduce_field_by_radius: null
+    tweak_order: 2
+    sip_refit_order: 2
+    sip_refit_enabled: false
+  star_catalog:
+    type: sstrc7
+    path: /path/to/sstrc7
+    faint_limit: 18.0
+    max_stars_per_frame: null
+  plotting:
+    debug: false
+    review: false
+    photometry: false
+    psfs: false
+    paper_ready: false
+  runtime:
+    run_id: senpai
+    output_dir: .
+    save_processed_fits: false
+  detection:
+    detect: true
+    detect_streaks: true
+    snr_threshold: 3.0
+    verbose: false
+    streak_correlation_radius_fwhm: 5.0
+    streak_angle_tolerance_deg: 15.0
+  streak:
+    variable_kernel:
+      enable: false
+      angle_thresh_deg: 1.0
+      length_thresh_fraction: 0.05
+      diagnostics_max_stars: 16
+      diagnostics_grid_nx: 4
+      diagnostics_grid_ny: 4
+    symmetric_border_removal: false
+    reconcile_with_chain: true
+    reconcile_length_tolerance: 0.5
+    reconcile_angle_tolerance_deg: 25.0
+  validation:
+    box_size: 11
+    n_random_trials: 8
+    random_radius_pixels: 40
+    min_correlation_ratio: 0.98
+    min_absolute_correlation: 0.6
+    lenient_absolute_correlation: 0.55
+    fewer_stars_correlation_ratio: 0.985
+    noise_correlation_ratio: 0.99
+    noise_min_absolute_correlation: 0.7
+    max_validation_stars: 50
+    test_negated_shift: true
+    negated_rejection_ratio: 1.05
+  wcs_validation:
+    enable: true
+    n_stars: 30
+    min_stars: 8
+    n_random: 500
+    significance_percentile: 99.0
+    min_frac_significant: 0.12
+    control_margin: 0.1
+    control_offset_px: 300
+    background_block_px: 32
+  chain_gate:
+    enable: true
+    min_history_hops: 2
+    max_rate_deviation_fraction: 0.5
+    min_rate_deviation_px_s: 3.0
+  headers:
+    exposure_time:
+      exposure_time_keys:
+      - EXPTIME
+    observation_time:
+      observation_time_keys:
+      - DATE-OBS
+      format: iso
+    site:
+      site_latitude_keys:
+      - SITELAT
+      site_longitude_keys:
+      - SITELONG
+      site_altitude_keys:
+      - SITEALT
+      positional_format: sexagesimal
+      positional_unit: degrees
+      altitude_unit: kilometers
+    pointing:
+      boresight_azimuth_keys:
+      - CENTAZ
+      boresight_altitude_keys:
+      - CENTALT
+      ra_dec_format: sexagesimal
+      ra_units: hours
+      dec_units: degrees
+      target_ra_keys:
+      - OBJCTRA
+      target_dec_keys:
+      - OBJCTDEC
+    tracking:
+      track_ra_rate_keys:
+      - TELTKRA
+      track_dec_rate_keys:
+      - TELTKDEC
+      track_ra_rate_unit: arcseconds/second
+      track_dec_rate_unit: arcseconds/second
+      track_mode_keys:
+      - TRKMODE
+      data_fallback_enabled: true
+      sidereal_rate_threshold_arcsec_per_second: 1.0
+    filter_keys:
+    - FILTER
+    - FILTER1
+    - INSFILTE
+  photometry:
+    aperture_radius_factor: 2.0
+    bg_inner_factor: 3.0
+    bg_outer_factor: 5.0
+    min_snr: 3.0
+    max_crowding: 0.3
+    isolation_radius_factor: 2.0
+    isolation_delta_mag: 2.0
+    limiting_snr: 3.0
+    limiting_completeness_fraction: 0.5
+    completeness_isolate: true
+    zp_min_snr: 20.0
+    zp_max_crowding: 0.2
+    zp_sigma_clip: 3.0
+    zp_min_stars: 8
+    include_read_noise: true
+    read_noise: 1.0
+    gain: 0.1
+    preferred_filters:
+    - Johnson_V
+    - Johnson_R
+    - Sloan_r
+    - Gaia_G
+    - Sloan_g
+    - Johnson_B
+    target_bands:
+    - Johnson_V
+    - Sloan_r
+    - Gaia_G
+    color_index_bands:
+    - Gaia_BP
+    - Gaia_RP
+    enable_color_terms: true
+  calibrations:
+    master_flats_dir: null
+    master_darks_dir: null
+    auto_apply_flats: false
+    auto_apply_darks: false
+    dark_matching_headers:
+    - XBINNING
+    flat_matching_headers:
+    - BINNING
+    - FILTER
+    max_dark_exposure_ratio: 1.5
+    auto_remove_row_median: true
+    auto_remove_column_median: true
+    auto_subtract_background: false
+    background_box_size: 20
+    background_filter_size: 3
+    background_exclude_percentile: 50.0
+    background_sigma: 3.0
+    background_maxiters: 10
+    auto_scale_images: false
+    scaling_method: median_filter
+    target_fwhm: 3.0
+    oversample_threshold: 4.0
