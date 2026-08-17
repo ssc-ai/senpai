@@ -35,7 +35,7 @@ async def solve_sources(
     request: Request,
     sources: StarListImage = Body(description="sources list", examples=StarListImageExample().get_openapi_examples()),
 ) -> StarField:
-    """Astrometry solve endpoint
+    """Astrometry solve endpoint.
 
     Args:
         request (Request): FastAPI request object
@@ -71,7 +71,7 @@ async def solve_fits(
     request: Request,
     fits_file: UploadFile = File(..., description="FITS image file"),
 ) -> StarField:
-    """Astrometry solve endpoint for FITS files
+    """Astrometry solve endpoint for FITS files.
 
     Args:
         request (Request): FastAPI request object

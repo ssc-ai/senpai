@@ -24,7 +24,7 @@ def load_yaml(path: Path) -> dict:
 
 
 class LoggingConfig(BaseModel):
-    """Logging configuration"""
+    """Logging configuration."""
 
     level: str = "INFO"
 
@@ -32,7 +32,7 @@ class LoggingConfig(BaseModel):
 
 
 class PlottingConfig(BaseModel):
-    """Plotting configuration"""
+    """Plotting configuration."""
 
     debug: bool = Field(description="Debug Plots")
     review: bool = Field(description="Review Plots")
@@ -73,7 +73,7 @@ class FastSolveConfig(BaseModel):
 
 
 class AstrometryConfig(BaseModel):
-    """Astrometry(.net) configuration"""
+    """Astrometry(.net) configuration."""
 
     pipeline_mode: Literal["full", "detect_solve", "detect"] = Field(
         default="full",
@@ -142,7 +142,7 @@ class AstrometryConfig(BaseModel):
 
 
 class StarCatalogConfig(BaseModel):
-    """Star catalog configuration"""
+    """Star catalog configuration."""
 
     type: str = Field(description="Star catalog type")
     path: str | None = Field(
@@ -188,7 +188,7 @@ class StarCatalogConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    """CLI runtime configuration"""
+    """CLI runtime configuration."""
 
     run_id: str = Field(default="senpai", description="Run identifier")
     output_dir: str = Field(default=".", description="Output directory")
@@ -204,7 +204,7 @@ class RuntimeConfig(BaseModel):
 
 
 class DetectionConfig(BaseModel):
-    """Detection configuration"""
+    """Detection configuration."""
 
     detect: bool = Field(default=False, description="Detect point sources")
     require_wcs_refinement: bool = Field(
@@ -326,7 +326,7 @@ class StreakDetectionConfig(BaseModel):
 
 
 class ValidationConfig(BaseModel):
-    """Configuration for box-based shift validation in rate tracking"""
+    """Configuration for box-based shift validation in rate tracking."""
 
     box_size: int = Field(
         default=11,
@@ -433,13 +433,13 @@ class ChainGateConfig(BaseModel):
 
 
 class ExposureTimeConfig(BaseModel):
-    """Configuration for exposure time header keys"""
+    """Configuration for exposure time header keys."""
 
     exposure_time_keys: list[str] = Field(default_factory=list, description="FITS header keys for exposure time")
 
 
 class ObservationTimeConfig(BaseModel):
-    """Configuration for observation time header keys"""
+    """Configuration for observation time header keys."""
 
     observation_time_keys: list[str] = Field(default_factory=list, description="FITS header keys for observation time")
     format: str = Field(
@@ -449,7 +449,7 @@ class ObservationTimeConfig(BaseModel):
 
 
 class SiteConfig(BaseModel):
-    """Configuration for observatory site header keys"""
+    """Configuration for observatory site header keys."""
 
     site_latitude_keys: list[str] = Field(default_factory=list, description="FITS header keys for site latitude")
     site_longitude_keys: list[str] = Field(default_factory=list, description="FITS header keys for site longitude")
@@ -463,7 +463,7 @@ class SiteConfig(BaseModel):
 
 
 class PointingConfig(BaseModel):
-    """Configuration for telescope pointing header keys"""
+    """Configuration for telescope pointing header keys."""
 
     boresight_azimuth_keys: list[str] = Field(
         default_factory=list, description="FITS header keys for boresight azimuth"
@@ -482,7 +482,7 @@ class PointingConfig(BaseModel):
 
 
 class TrackingConfig(BaseModel):
-    """Configuration for telescope tracking header keys"""
+    """Configuration for telescope tracking header keys."""
 
     track_ra_rate_keys: list[str] = Field(default_factory=list, description="FITS header keys for RA tracking rate")
     track_dec_rate_keys: list[str] = Field(default_factory=list, description="FITS header keys for DEC tracking rate")
@@ -504,7 +504,7 @@ class TrackingConfig(BaseModel):
 
 
 class HeadersConfig(BaseModel):
-    """Configuration for FITS header mappings"""
+    """Configuration for FITS header mappings."""
 
     exposure_time: ExposureTimeConfig = Field(
         default_factory=ExposureTimeConfig,
@@ -621,7 +621,7 @@ class PhotometryConfig(BaseModel):
 
 
 class CalibrationsConfig(BaseModel):
-    """Configuration for calibration frames (flats, darks, etc.)"""
+    """Configuration for calibration frames (flats, darks, etc.)."""
 
     master_flats_dir: str | None = Field(default=None, description="Directory containing master flat files")
     master_darks_dir: str | None = Field(default=None, description="Directory containing master dark files")
@@ -861,7 +861,7 @@ def initialize_config(config_path: Path) -> AppConfig:
 
 
 def get_or_initialize_config(config_path: Path | None = None) -> AppConfig:
-    """Get a loaded config, if none, load config_path or LOCAL_OVERRIDE
+    """Get a loaded config, if none, load config_path or LOCAL_OVERRIDE.
 
     Args:
         AppConfig: Configuration instance

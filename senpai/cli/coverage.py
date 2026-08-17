@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sky Coverage Analysis Tool
+"""Sky Coverage Analysis Tool.
 
 Analyzes star coverage across the full sky for different FOVs and magnitude limits.
 Uses convolution analysis to find min/max star counts per position.

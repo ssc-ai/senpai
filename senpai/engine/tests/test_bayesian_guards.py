@@ -42,9 +42,7 @@ def _frame(
         (types.SimpleNamespace(detection_metadata=None), "no detection metadata"),
     ],
 )
-def test_solve_rate_from_sidereal_requires_a_psf_scale(
-    starfield: types.SimpleNamespace | None, expected: str
-) -> None:
+def test_solve_rate_from_sidereal_requires_a_psf_scale(starfield: types.SimpleNamespace | None, expected: str) -> None:
     """Registration without a measured PSF scale raises, rather than failing on None."""
     # 10 s apart with 1 s exposures, so the timing guard above it passes and we reach ours.
     sidereal = _frame(starfield, index=0, seconds=10.0)
@@ -62,9 +60,7 @@ def test_solve_rate_from_sidereal_requires_a_psf_scale(
         (types.SimpleNamespace(detection_metadata=None), "no detection metadata"),
     ],
 )
-def test_refine_sidereal_frame_requires_a_psf_scale(
-    starfield: types.SimpleNamespace | None, expected: str
-) -> None:
+def test_refine_sidereal_frame_requires_a_psf_scale(starfield: types.SimpleNamespace | None, expected: str) -> None:
     """Refinement without a measured PSF scale raises before convolving."""
     with pytest.raises(WcsPropagationError, match=expected):
         refine_sidereal_frame(_frame(starfield, index=7))

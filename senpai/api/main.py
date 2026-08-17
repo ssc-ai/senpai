@@ -23,7 +23,7 @@ DEFAULT_EXECUTOR_MAX_WORKERS = max(1, (os.cpu_count() or 2) - 1)
 
 
 def setup_routes(app: FastAPI) -> None:
-    """Configure application routes"""
+    """Configure application routes."""
     logger.info("Setting up routes...")
     # Import routes here to avoid circular imports
 
@@ -58,7 +58,7 @@ def _init_pool_worker():
 
 
 def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
-    """Application factory supporting both local and Lambda environments"""
+    """Application factory supporting both local and Lambda environments."""
     # Suppress specific warnings
     # Setup logging, will check if already configured
     # Example usage
@@ -118,7 +118,7 @@ def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
     show_default=True,
 )
 def run_server(host: str, port: int, workers: int | None, config: Path | None = None) -> None:
-    """Run the API server locally"""
+    """Run the API server locally."""
     # Load config first
     config_path = config or LOCAL_APP_CONFIG_OVERRIDE
     app_config = initialize_config(config_path)

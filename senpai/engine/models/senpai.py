@@ -509,7 +509,7 @@ class SenpaiRun(BaseModel):
         """Log the analysis chain path with status indicators:
         ✅ - processed and valid
         ❓ - not processed yet
-        ❌ - processed but failed
+        ❌ - processed but failed.
         """
         if not self.frame_shifts and not self.frame_shifts_failed:
             logger.info("No analysis chain to log (no frame shifts)")
@@ -540,7 +540,7 @@ class SenpaiRun(BaseModel):
         return None
 
     def update_valid_path(self) -> list[FrameShift]:
-        """Update a valid path through all frames"""
+        """Update a valid path through all frames."""
         logger = logging.getLogger(__name__)
 
         # Get all failed shifts that have been processed

@@ -28,7 +28,7 @@ def load_senpai_run(json_path: Path | str) -> SenpaiRunResult:
 def load_jpeg_file(jpeg_file: Path | str) -> ProcessedFitsImage:
     """Loads a .JPEG file and returns:
     - grayscale numpy array
-    - metadata header info (as dict)
+    - metadata header info (as dict).
     """
     logger.warning("untested")
     return ProcessedFitsImage.from_file_bytes(jpeg_file.read_bytes(), file_path=str(jpeg_file))
@@ -37,7 +37,7 @@ def load_jpeg_file(jpeg_file: Path | str) -> ProcessedFitsImage:
 def load_dng_file(dng_file: Path | str) -> ProcessedFitsImage:
     """Loads a .DNG file and returns:
     - grayscale numpy array
-    - metadata header info (as dict)
+    - metadata header info (as dict).
     """
     # Open and process the DNG (RAW) file
     with rawpy.imread(dng_file) as raw:

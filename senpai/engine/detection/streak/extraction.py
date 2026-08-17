@@ -602,7 +602,7 @@ def refine_streak_len(
     rotation: float,
     half_max_value: float = 0.55,
 ) -> float:
-    """Refine streak length in cases of noisy PSF by looking along streak angle
+    """Refine streak length in cases of noisy PSF by looking along streak angle.
 
     Args:
         psf (np.array): PSF

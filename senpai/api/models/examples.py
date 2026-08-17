@@ -36,7 +36,7 @@ class StarListImageExample(BaseModel):
 
     @property
     def value(self) -> StarListImage:
-        """Get example StarListImage value"""
+        """Get example StarListImage value."""
         if self._value is None:
             self._value = StarListImage(
                 detections=[StarInImage(x=x, y=y, counts=counts) for x, y, counts in _EXAMPLE_DETECTIONS],
@@ -47,5 +47,5 @@ class StarListImageExample(BaseModel):
         return self._value
 
     def get_openapi_examples(self) -> dict[str, dict[str, Any]]:
-        """Convert to OpenAPI examples format"""
+        """Convert to OpenAPI examples format."""
         return [self.value]

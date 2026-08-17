@@ -1,4 +1,4 @@
-"""Satellite point source detection in rate track, assuming WCS already fit"""
+"""Satellite point source detection in rate track, assuming WCS already fit."""
 
 import logging
 import warnings

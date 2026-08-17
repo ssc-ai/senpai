@@ -11,7 +11,7 @@ def local_jacobian(wcs, x, y, dsky=1 * u.arcsec):
     dsky determines the finite-difference step (1 arcsec default).
     Returns a 2x2 numpy array:
         [[dx/dRA, dx/dDec],
-         [dy/dRA, dy/dDec]]
+         [dy/dRA, dy/dDec]].
     """
     # Central sky coordinate
     sky0 = pixel_to_skycoord(x, y, wcs).transform_to("icrs")

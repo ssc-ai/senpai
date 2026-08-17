@@ -36,7 +36,7 @@ class LogMode(str, Enum):
 
 
 def get_local_config() -> dict[str, Any]:
-    """Configuration for local development with timestamps and color"""
+    """Configuration for local development with timestamps and color."""
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -94,7 +94,7 @@ def get_local_config() -> dict[str, Any]:
 
 
 def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> None:
-    """Configure logging based on level and context
+    """Configure logging based on level and context.
 
     Args:
         level: The default logging level for all loggers

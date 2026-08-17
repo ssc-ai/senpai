@@ -333,7 +333,7 @@ class WCSModel(BaseModel):
         return cls(**wcs_dict)
 
     def to_astropy_wcs(self):
-        """Convert this model to a WCS object
+        """Convert this model to a WCS object.
 
         Returns:
             astropy.wcs.WCS: a WCS object to do calcs with
@@ -362,11 +362,11 @@ class WCSModel(BaseModel):
         return wcs
 
     def get_boresight(self) -> tuple[float, float]:
-        """Get the boresight coordinates (RA, Dec)"""
+        """Get the boresight coordinates (RA, Dec)."""
         return self.CRVAL1, self.CRVAL2
 
     def pix2world_0based(self, x: float | np.ndarray, y: float | np.ndarray) -> tuple[float, float]:
-        """Convert 0-based pixel coordinates to world coordinates (RA, Dec)
+        """Convert 0-based pixel coordinates to world coordinates (RA, Dec).
 
         Args:
             x: 0-based x pixel coordinate(s)
@@ -386,7 +386,7 @@ class WCSModel(BaseModel):
         return ra, dec
 
     def world2pix_0based(self, ra: float, dec: float) -> tuple[float, float]:
-        """Convert world coordinates (RA, Dec) to 0-based pixel coordinates
+        """Convert world coordinates (RA, Dec) to 0-based pixel coordinates.
 
         Args:
             ra: Right Ascension in degrees

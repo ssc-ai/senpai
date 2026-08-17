@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Catalog Magnitude Distribution Analysis Tool
+"""Catalog Magnitude Distribution Analysis Tool.
 
 Samples random sky positions and analyzes the magnitude distribution of stars
 in the catalog to determine the brightest and faintest sources.
