@@ -184,10 +184,14 @@ def _query_catalog_sstr7_cached(
 
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
-    # Get center coordinates
+    # Get center coordinates. The region query below is a FOV-sized box about this point, so
+    # it has to be the sky the IMAGE covers: pix2world(CRPIX) is CRVAL by definition, and any
+    # solution whose CRPIX sits away from the image center (a propagated or re-anchored WCS)
+    # then centers the box off-frame, leaving part of the image outside the queried region
+    # with its stars simply absent.
     header = astropy_wcs.to_header()
     center_ra, center_dec = astropy_wcs.wcs_pix2world(
-        [[header["CRPIX1"], header["CRPIX2"]]], 0
+        [[pixel_width / 2, pixel_height / 2]], 0
     )[0]
 
     # Extract rotation from WCS
@@ -211,10 +215,12 @@ def _query_catalog_sstr7_cached(
         safety_margin=0.2,  # Add 20% safety margin to ensure complete coverage
     )
 
-    if max_stars is not None and len(stars_from_catalog) > max_stars:
-        # Sort stars from brightest to dimmest (lowest to highest magnitude)
-        stars_from_catalog = sorted(stars_from_catalog, key=lambda star: star["mv"])
-        stars_from_catalog = stars_from_catalog[:max_stars]
+    # Brightest first, so the max_stars cap applied during the in-bounds pass below keeps the
+    # brightest stars INSIDE the image. Capping here instead would cap the padded query region
+    # -- the box carries a 20% safety margin plus rotation padding, so most of its brightest N
+    # are out of frame, and downstream consumers that size themselves from the catalog (the
+    # FWHM measurement, the WCS refit) are left with a fraction of the stars they asked for.
+    stars_from_catalog = sorted(stars_from_catalog, key=lambda star: star["mv"])
 
     if proper_motion_date is not None:
         logger.info(f"Applying proper motion for {proper_motion_date}")
@@ -262,6 +268,11 @@ def _query_catalog_sstr7_cached(
                     catalog=star["catalog"],
                 )
             )
+
+            # The requested count is satisfied by in-frame stars, and the list is
+            # brightest-first, so stopping here yields the brightest max_stars in the image.
+            if max_stars is not None and len(star_list) >= max_stars:
+                break
 
     return star_list, ImageMetadata(
         wcs=wcs,

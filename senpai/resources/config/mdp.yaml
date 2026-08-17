@@ -50,6 +50,7 @@ app:
     save_processed_fits: false
   detection:
     detect: true
+    require_wcs_refinement: true                              # opt-in   -- default false
     detect_streaks: true
     snr_threshold: 3.0
     verbose: false
@@ -187,6 +188,7 @@ app:
     auto_remove_row_median: true
     auto_remove_column_median: true
     auto_subtract_background: false
+    background_mask_sources: false
     background_box_size: 20
     background_filter_size: 3
     background_exclude_percentile: 50.0

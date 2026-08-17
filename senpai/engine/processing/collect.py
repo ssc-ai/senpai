@@ -540,9 +540,24 @@ def _process_senpai_collect(
         next_shift = senpai_run.get_next_shift()
 
     # --- Point source detection for rate-track frames that weren't shift targets ---
+    # Under detection.require_wcs_refinement, skip frames the shift loop deliberately
+    # left undetected: it extracts only under `next_shift.is_valid and processed`, so a
+    # target whose registration failed carries no detections on purpose, and detecting
+    # it here would measure sources against a WCS the pipeline had already rejected.
     if config.detection.detect:
+        shift_target_indices = (
+            {
+                shift.target_index
+                for shift in senpai_run.frame_shifts + senpai_run.frame_shifts_failed
+                if shift.processed
+            }
+            if config.detection.require_wcs_refinement
+            else set()
+        )
         for image_frame in senpai_run.rate_track_frames:
             if image_frame.detections is not None:
+                continue
+            if image_frame.index in shift_target_indices:
                 continue
             if image_frame.starfield is None or not image_frame.starfield.fit:
                 continue
