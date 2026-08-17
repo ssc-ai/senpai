@@ -125,6 +125,20 @@ class AstrometryConfig(BaseModel):
         default=True,
         description="Enable SIP refit after initial solve using catalog stars for better edge distortion fitting",
     )
+    source_extractor: Literal["point_detector", "sextractor"] = Field(
+        default="point_detector",
+        description=(
+            "Source extractor feeding the sidereal plate solve. 'point_detector' "
+            "(default = upstream) uses the in-process point-source detector's output. "
+            "'sextractor' (the Bayesian engine's standard) column/row-median + "
+            "box-50 background-subtracts the frame IN PLACE, then extracts with a "
+            "SExtractor-equivalent SEP pass (1.5-sigma, astrometry.net's "
+            "--use-source-extractor parameters) and feeds THOSE to the solve. The "
+            "background-subtracted frame is also what the sidereal->rate registration "
+            "cross-correlates against, so 'sextractor' fixes both the anchor and the "
+            "source floor on background-limited fields."
+        ),
+    )
 
 
 class StarCatalogConfig(BaseModel):

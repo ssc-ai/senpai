@@ -33,6 +33,7 @@ app:
     tweak_order: 2
     sip_refit_order: 2
     sip_refit_enabled: false
+    source_extractor: sextractor                              # dispatch -- default point_detector
   star_catalog:
     type: sstrc7
     path: /path/to/sstrc7

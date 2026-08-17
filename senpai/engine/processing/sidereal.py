@@ -64,9 +64,86 @@ def process_astrometry_fits_sidereal(
     config = get_config()
     pipeline_mode = pipeline_mode or config.astrometry.pipeline_mode
 
+    sextractor_mode = config.astrometry.source_extractor == "sextractor"
+    if sextractor_mode:
+        # Bayesian-engine sidereal solve (config-gated; default upstream = point_detector).
+        # Column/row-median + box-50 background-subtract the frame IN PLACE. This is
+        # load-bearing beyond detection: the subtracted frame is what the downstream
+        # sidereal->rate registration cross-correlates against, so it fixes the WCS
+        # anchor on background-limited fields (seen aliasing an anchor by ~2 arcmin).
+        from senpai.engine.utils.preprocessing import (
+            background_subtract,
+            preprocess_float_dtype,
+            remove_column_and_row_medians,
+        )
+
+        # Promote at the configured preprocessing precision: this frame feeds the
+        # sidereal FWHM fit and (background-subtracted) the sidereal->rate
+        # registration cross-correlation, both sensitive to float32's ~0.005 ADU
+        # rounding at ADU scale (see calibrations.preprocess_float_dtype).
+        fits_image = remove_column_and_row_medians(
+            fits_image, dtype=preprocess_float_dtype()
+        )
+        fits_image.data = background_subtract(
+            fits_image.data, box_size=50, filter_size=3, sigma=3.0
+        )
+
+    # Point-detector pass: the upstream source list + the FWHM used for detection metadata
+    # and downstream (seeing propagated to rate frames).
     sources, initial_fwhm = extract_point_sources(
         fits_image, max_detections=config.astrometry.max_sources
     )
+
+    # Inputs to the catalog-median FWHM measurement (below). The upstream path uses the point
+    # detector's FWHM as the fit seed and its measured saturation level.
+    fwhm_seed = initial_fwhm
+    fwhm_sat_level = sources.sat_level
+    if sextractor_mode:
+        # Feed the plate solve SExtractor's sources (1.5-sigma; astrometry.net's
+        # --use-source-extractor parameters) instead of the point detector's — the
+        # Bayesian engine's standard config. On background-limited fields the point
+        # detector returns too few sources to solve; SExtractor recovers them. The
+        # frame's image metadata (boresight, set below) is preserved.
+        from senpai.engine.detection.point.sextractor import extract_sextractor_sources
+
+        sextractor_detections = extract_sextractor_sources(
+            fits_image, max_detections=config.astrometry.max_sources
+        ).detections
+        # Only replace the source list if SExtractor actually found something. It returns an
+        # empty table when background estimation misbehaves, and assigning that unconditionally
+        # would hand the solve zero sources on a frame where the point detector had some --
+        # strictly worse than the default path. Unlikely at 1.5 sigma, but not impossible.
+        if sextractor_detections:
+            sources.detections = sextractor_detections
+        else:
+            logger.warning(
+                "SExtractor found no sources; keeping the point detector's source list for the solve"
+            )
+
+        # Fork-faithful FWHM-measurement inputs. The Bayesian engine extracts sidereal
+        # sources with daofind (fwhm_guess=1.0) and feeds THAT raw FWHM as the seed to the
+        # catalog-median measurement, with sat_level=None (daofind sets none). The point
+        # detector's seed + real sat_level shift the fitted median enough to move the
+        # refined anchor by ~arcsec on marginal fields, which flips downstream
+        # rate-registration CC peaks (seen as a backward-chain alias). Match the fork.
+        from senpai.engine.detection.point.sidereal_daofind import (
+            extract_point_sources_daofind,
+        )
+
+        try:
+            _dfs, _df_fwhm, _ = extract_point_sources_daofind(
+                fits_image, config.astrometry.max_sources, 1.0
+            )
+            if _df_fwhm and _df_fwhm > 0:
+                fwhm_seed = _df_fwhm
+        except Exception as exc:
+            # Warn, do not whisper: this seed sizes the catalog-median FWHM fit, which sizes
+            # the refinement kernel, which moves the refined anchor and with it the
+            # downstream rate-registration correlation peak. Falling back still produces
+            # output -- computed from a different seed than the configuration asked for --
+            # so the run has to say so rather than leave it at debug level.
+            logger.warning(f"daofind FWHM seed unavailable, keeping the configured seed: {exc}")
+        fwhm_sat_level = None
 
     boresight_ra_degrees, boresight_dec_degrees = extract_boresight_from_header(
         fits_image.header
@@ -108,7 +185,30 @@ def process_astrometry_fits_sidereal(
             starfield=wcs_starfield,
             frame_metadata=frame_metadata,
         )
-        refine_sidereal_frame(sidereal_frame)
+        if sextractor_mode:
+            # Fork-faithful sidereal refinement. The Bayesian engine runs with photometry
+            # enabled, so its process_astrometry_fits_sidereal measures the catalog FWHM
+            # and upgrades detection_metadata.pixel_fwhm to the catalog MEDIAN *before* its
+            # (deferred) refine — i.e. the fork's refine kernel is sized on the median, not
+            # the raw extraction FWHM. Reproduce that order here: query the catalog on the
+            # solved (un-refined) WCS, measure the median, set it, then run the Bayesian
+            # refine (the fork's aperture-SNR + fit_wcs_from_points path), not the port's
+            # rewrite.
+            _pre_catalog = query_catalog(wcs_starfield.wcs, max_stars=1000)
+            _pre_stats = measure_fwhm_from_catalog_stars(
+                fits_image, _pre_catalog.stars, fwhm_seed, config,
+                sat_level=fwhm_sat_level,
+            )
+            wcs_starfield.detection_metadata = DetectionMetadata(
+                pixel_fwhm=_pre_stats.median_fwhm
+            )
+            from senpai.engine.detection.streak.bayesian.wcs_refinement import (
+                refine_sidereal_frame as bayesian_refine_sidereal_frame,
+            )
+
+            bayesian_refine_sidereal_frame(sidereal_frame)
+        else:
+            refine_sidereal_frame(sidereal_frame)
 
         wcs_starfield.wcs = sidereal_frame.starfield.wcs
 
@@ -140,11 +240,22 @@ def process_astrometry_fits_sidereal(
                 wcs_starfield.wcs, wcs_starfield.catalog_stars
             )
 
-        # Use the new function to measure FWHM
-        fwhm_stats = measure_fwhm_from_catalog_stars(
-            fits_image, catalog.stars, initial_fwhm, config,
-            sat_level=sources.sat_level,
-        )
+        # Measure FWHM. The Bayesian engine measures fwhm_stats ONCE, on the
+        # max_stars=1000 (brightest) catalog from the un-refined WCS — that same median feeds
+        # the refine kernel, the rate_sidereal anchor kernel and the downstream seeing.
+        # Re-measuring here on the max_stars=None (all-stars) refined-WCS catalog skews the
+        # median high whenever the daofind seed is degenerate (a 24.5 px seed was measured on
+        # one benchmark anchor frame): the extra faint stars fit badly to the huge seed, the
+        # median inflates, the rate kernel oversizes, and the backward chain aliases. Reuse
+        # that measurement in sextractor mode; the upstream path measures on the full
+        # refined-WCS catalog.
+        if sextractor_mode:
+            fwhm_stats = _pre_stats
+        else:
+            fwhm_stats = measure_fwhm_from_catalog_stars(
+                fits_image, catalog.stars, fwhm_seed, config,
+                sat_level=fwhm_sat_level,
+            )
         wcs_starfield.fwhm_stats = fwhm_stats
         median_fwhm = fwhm_stats.median_fwhm
 
