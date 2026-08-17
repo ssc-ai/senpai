@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from astropy.stats import mad_std, sigma_clip
+
 if TYPE_CHECKING:
     from senpai.engine.models.metadata import StreakMetadata
     from senpai.engine.photometry.color_terms import MultiBandCalibration
@@ -719,7 +721,6 @@ def _save_simple_limiting_mag_plot(
     Same axes (mag vs log10 SNR) + threshold and limit reference lines."""
 
     import matplotlib.pyplot as plt
-    import numpy as np
 
     mags_arr = np.asarray(mags, dtype=float)
     snrs_arr = np.asarray(snrs, dtype=float)
@@ -1597,8 +1598,6 @@ def _isolated_result_mask(
     n = len(results)
     if len(cx) < 2:
         return [True] * n
-
-    from scipy.spatial import cKDTree
 
     cx = np.asarray(cx)
     cy = np.asarray(cy)
@@ -2491,7 +2490,6 @@ def _calculate_simple_zero_point(
 
     # Median + sigma-clip: robust to any residual blend/saturation outliers on
     # either tail (median, not mean; the old mean let the faint tail pull the ZP).
-    from astropy.stats import mad_std, sigma_clip
 
     clipped = sigma_clip(zps, sigma=config.zp_sigma_clip, maxiters=5, masked=True)
     kept = zps[~clipped.mask] if np.ma.is_masked(clipped) else zps
@@ -2512,12 +2510,6 @@ def calculate_star_snrs_with_aperture_photometry(
     This is a shared photometry utility used by both sidereal and rate-track
     pipelines as well as WCS refinement code.
     """
-    from photutils.aperture import (
-        CircularAnnulus,
-        CircularAperture,
-        RectangularAnnulus,
-        RectangularAperture,
-    )
 
     # Determine frame type
     is_sidereal = isinstance(frame, SiderealFrame)

@@ -8,6 +8,7 @@ import logging
 import time
 
 import numpy as np
+from scipy.stats import pearsonr, spearmanr
 
 from senpai.core.config import settings
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
@@ -346,8 +347,6 @@ def quick_correlation_from_boxes(
     # 1. Spearman on net flux (original)
     # 2. Spearman on max values (simpler, no background subtraction)
     # 3. Pearson on net flux (for comparison)
-
-    from scipy.stats import pearsonr, spearmanr
 
     corr_spearman_net, _ = spearmanr(source_stats, target_stats)
     corr_spearman_max, _ = spearmanr(source_max_vals, target_max_vals)

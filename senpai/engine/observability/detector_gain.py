@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from scipy.stats import theilslopes
 
 # <timestamp>_<field tokens...>_f<index>.fits
 _NAME_RE = re.compile(r"^(?P<ts>[^_]+)_(?P<field>.+)_f(?P<idx>\d+)$")
@@ -160,8 +161,6 @@ def fit_gain(points: list[tuple[float, float]]) -> GainFit | None:
     variances = np.array([p[1] for p in pts])
     if float(levels.max() - levels.min()) < 1e-6:
         return None  # no lever arm in level -> slope undefined
-
-    from scipy.stats import theilslopes
 
     # Contamination (residual stars, PRNU that doesn't fully cancel at high sky)
     # can only *raise* a point's variance, so the true shot line is the lower

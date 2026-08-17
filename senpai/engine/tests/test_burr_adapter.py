@@ -7,10 +7,13 @@ Fixtures are built inline against tmp_path so the suite carries no data files.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pytest
+from astropy.io import fits
 
 from senpai.integrations.burr import (
     BurrNight,
@@ -270,7 +273,6 @@ def _record(ts_seconds: int) -> FrameRecord:
     The filename's embedded ts is irrelevant — we inject the timestamp directly
     so we can drive gap-based clustering with arbitrary offsets.
     """
-    from dataclasses import replace
 
     base = datetime(2026, 5, 27, 7, 0, 0, tzinfo=UTC)
     parsed = parse_burr_filename("20260527T070000_photometric_standards_ICRSTarget_f0.fits")
@@ -310,7 +312,6 @@ class TestClusterByTimeGap:
 def _rec(task: str, target: str, ts_seconds: int) -> FrameRecord:
     """A FrameRecord with a chosen task/target and a timestamp offset, for
     exercising the command-less (task, target) clustering path."""
-    from dataclasses import replace
 
     base = datetime(2026, 5, 30, 2, 0, 0, tzinfo=UTC)
     parsed = parse_burr_filename(f"20260530T020000_{task}_{target}_f0.fits")
@@ -556,9 +557,6 @@ def test_frame_batches_by_seq_key(tmp_path):
     """seq_key groups frames by a FITS header id (BURRSEQ): one batch per set,
     and frames missing the keyword fall back to command/orphan batching rather
     than being dropped."""
-
-    import numpy as np
-    from astropy.io import fits
 
     data_dir = tmp_path / "DAO-01"
     meta_dir = tmp_path / "processed" / "DAO-01_20260528" / "metadata"

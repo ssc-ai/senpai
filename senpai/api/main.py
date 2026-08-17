@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 import click
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -121,7 +122,6 @@ def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
 )
 def run_server(host: str, port: int, workers: int | None, config: Path | None = None) -> None:
     """Run the API server locally"""
-    import uvicorn
 
     # Load config first
     config_path = config or LOCAL_APP_CONFIG_OVERRIDE

@@ -2,6 +2,7 @@
 
 import logging
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
@@ -543,7 +544,6 @@ def _process_senpai_collect(
             image_frame.detections = extract_point_sources(image_frame)
 
     # --- Photometry ---
-    from dataclasses import asdict
 
     from senpai.engine.photometry.utils import (
         measure_detection_photometry,

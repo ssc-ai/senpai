@@ -10,6 +10,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.interpolate import griddata
 
 from senpai.core.config import get_config
 from senpai.engine.models.images import ProcessedFitsImage
@@ -521,7 +522,6 @@ def plot_background_contours_on_image(
     X, Y = np.meshgrid(x_grid, y_grid)
 
     # Interpolate background levels onto the grid with cubic interpolation for smoother contours
-    from scipy.interpolate import griddata
 
     points = np.column_stack((x_positions, y_positions))
     Z = griddata(points, background_levels, (X, Y), method="cubic", fill_value=np.nan)

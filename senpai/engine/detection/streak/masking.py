@@ -674,7 +674,6 @@ def remove_border_crossing_streaks_pairwise(
     Returns:
         (image_a, image_b, filled_px_a, filled_px_b)
     """
-    from scipy.ndimage import binary_dilation
 
     mask_a = _border_crossing_mask(image_a)
     mask_b = _border_crossing_mask(image_b)

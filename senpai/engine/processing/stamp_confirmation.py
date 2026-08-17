@@ -1116,8 +1116,6 @@ def _find_de_peak_along_streak(
     if valid.sum() < 5:
         return None
 
-    from scipy.ndimage import map_coordinates
-
     profile = map_coordinates(de_map, [sy[valid], sx[valid]], order=1)
     t_valid = t_values[valid]
 

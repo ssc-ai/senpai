@@ -24,6 +24,7 @@ import glob
 import json
 import logging
 import os
+import time
 
 import numpy as np
 
@@ -81,7 +82,6 @@ def download_chunks(
     still fails, skipped (logged) rather than crashing the whole multi-hour run —
     a later re-run picks up the gaps.
     """
-    import time
 
     from astroquery.gaia import Gaia
 

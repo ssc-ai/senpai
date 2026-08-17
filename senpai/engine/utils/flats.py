@@ -50,6 +50,8 @@ Auto-applying calibrations based on config:
     calibrated_image = auto_apply_calibrations(processed_fits_image)
 """
 
+import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -508,8 +510,6 @@ def _combine_flat_sources(
 
 def main():
     """CLI interface for creating master flat fields."""
-    import argparse
-    import sys
 
     parser = argparse.ArgumentParser(
         description="Create master flat fields from a directory of flat field FITS files",

@@ -40,7 +40,6 @@ def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
     Parse a time string and return (hour, minute, second, microsecond) tuple.
     Returns None if parsing fails.
     """
-    from datetime import datetime
 
     # Try parsing with datetime first
     time_formats = [

@@ -1,4 +1,5 @@
 import logging
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -814,7 +815,6 @@ def preprocess_image(
     """
     Complete preprocessing pipeline that applies all configured steps.
     """
-    import numpy as np
 
     fname = Path(image.file_path).name if image.file_path else "?"
 
@@ -1479,7 +1479,6 @@ def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "
         return streak
 
     # Import here to avoid circular imports
-    from copy import deepcopy
 
     # Create a deep copy to avoid modifying the original
     unscaled_streak = deepcopy(streak)

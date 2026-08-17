@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from astropy.table import Table
 from photutils.detection import DAOStarFinder
+from scipy.ndimage import label
 from scipy.optimize import curve_fit
 
 from senpai.engine.models.images import ProcessedFitsImage
@@ -270,7 +271,6 @@ def _robust_source_fwhm(image: np.ndarray, x: float, y: float, sat_level: float,
     and isolates the source's own component via connected-component labelling so a
     neighbour blend can't inflate the width.
     """
-    from scipy.ndimage import label
 
     x0, y0 = int(round(x)), int(round(y))
     h = box_size // 2

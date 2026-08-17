@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import os
 
+from photutils.detection import DAOStarFinder
+from photutils.detection.daofinder import _StarFinderKernel
+from scipy.signal import fftconvolve
+
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 from datetime import UTC, datetime
@@ -478,9 +482,6 @@ def test_satellite_threshold_search_matches_daostarfinder():
     private-API reimplementation (_StarFinderKernel/_DAOStarFinderCatalog):
     if a photutils upgrade moves those internals, this fails loudly.
     """
-    from photutils.detection import DAOStarFinder
-    from photutils.detection.daofinder import _StarFinderKernel
-    from scipy.signal import fftconvolve
 
     from senpai.engine.detection.point.satellite import (
         _dao_sources_at_threshold,

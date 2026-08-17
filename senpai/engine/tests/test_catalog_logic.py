@@ -6,6 +6,7 @@ leaves the process.
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from typing import Any
@@ -331,7 +332,6 @@ def _wcs_model() -> runner.WCSModel:
 # just that the function runs without error on a wrap field)
 # --------------------------------------------------------------------------- #
 def test_validate_coverage_collapses_large_positive_ra_span(caplog) -> None:
-    import logging
 
     caplog.set_level(logging.WARNING, logger="senpai.catalog.runner")
     # When min_ra/max_ra are given in ascending order, a >180deg span is folded to
@@ -356,7 +356,6 @@ def test_validate_coverage_descending_ra_wrap_folds(caplog) -> None:
     # field area is ~4 deg^2 and 50 stars (12.5 stars/deg^2) is NOT sparse.
     # Before the (max_ra - min_ra) % 360 fix this computed ~715 deg^2 and
     # logged a spurious sparse-coverage warning.
-    import logging
 
     with caplog.at_level(logging.WARNING):
         runner._validate_catalog_coverage(
@@ -374,7 +373,6 @@ def test_validate_coverage_descending_ra_wrap_folds(caplog) -> None:
 
 
 def test_validate_coverage_empty_logs_error(caplog) -> None:
-    import logging
 
     with caplog.at_level(logging.ERROR):
         runner._validate_catalog_coverage(
@@ -428,7 +426,6 @@ def _off_center_wcs() -> runner.WCSModel:
 
 def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict, max_width_degrees=10.0):
     """Stand in for the catalog region read, recording the region it was asked for."""
-    import types
 
     def _query(fov_height, fov_width, center_ra, center_dec, **kwargs):
         captured["center"] = (center_ra, center_dec)

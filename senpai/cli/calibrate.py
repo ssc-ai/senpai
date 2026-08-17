@@ -17,6 +17,7 @@ the rest still render. ``--from-plot-data`` re-renders everything from a saved
 ``plot_data.json`` with no reprocessing and no raw data.
 """
 
+import argparse
 import logging
 from pathlib import Path
 
@@ -24,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
 
     from senpai.engine.observability.calibration import (
         analyze_night,

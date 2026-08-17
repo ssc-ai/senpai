@@ -5,11 +5,13 @@ test_astrometry_install, examine_indices, enforce_indices, require_astrometry_in
 while delegating all actual astrometry work to astroeasy.
 """
 
+import contextlib
 import logging
 from pathlib import Path
 
 import astroeasy
-from astroeasy import AstrometryIndexSeries
+from astroeasy import AstrometryIndexSeries, cascade
+from astropy.io import fits as astropy_fits
 
 from senpai.core.config import get_or_initialize_config
 from senpai.engine.models.astrometry import ReturnAstrometryConfig, WCSModel, WCSStatus
@@ -58,7 +60,6 @@ def _sources_to_detections(sources: StarListImage) -> tuple[list[astroeasy.Detec
 
 def _wcsmodel_to_wcsresult(wcs: WCSModel) -> astroeasy.WCSResult:
     """Convert senpai WCSModel → astroeasy WCSResult via FITS header round-trip."""
-    from astropy.io import fits as astropy_fits
 
     header_dict = {k: v for k, v in wcs.model_dump().items() if v is not None}
     header_dict["IMAGEW"] = header_dict.pop("NAXIS1", wcs.NAXIS1)
@@ -74,9 +75,6 @@ def _wcsmodel_to_wcsresult(wcs: WCSModel) -> astroeasy.WCSResult:
 
 def _wcsresult_to_wcsmodel(wcs_result: astroeasy.WCSResult) -> WCSModel:
     """Convert astroeasy WCSResult → senpai WCSModel via raw FITS header."""
-    import contextlib
-
-    from astropy.io import fits as astropy_fits
 
     hdr = astropy_fits.Header()
     for key, value in wcs_result.raw_header.items():
@@ -175,7 +173,6 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
     astrometry.net required); 'chain' = native tiers with the existing
     astrometry.net path as the T3 backstop.
     """
-    from astroeasy import cascade
 
     a = config.astrometry
     mode = a.solver_mode

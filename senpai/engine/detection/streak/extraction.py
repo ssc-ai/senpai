@@ -1,7 +1,12 @@
 import logging
+import weakref
 
 import numpy as np
-from scipy.ndimage import median_filter, rotate
+from scipy import fft as sfft
+from scipy import ndimage, signal
+from scipy.ndimage import center_of_mass, gaussian_filter1d, label, median_filter, rotate
+from scipy.ndimage import gaussian_filter1d as _g1d
+from scipy.ndimage import median_filter as _medfilt
 from scipy.optimize import curve_fit
 from scipy.signal import convolve
 
@@ -200,7 +205,6 @@ def refine_robust_streak(
     # FWHM included) lands too low → length is over-measured. A 3x3 median
     # rejects single-pixel spikes while preserving the streak, so its max is the
     # true peak scale.
-    from scipy.ndimage import median_filter
 
     psf_norm = psf.copy().astype(float)
     psf_norm -= np.min(psf_norm)
@@ -224,8 +228,6 @@ def refine_robust_streak(
 
         if not np.any(mask):
             continue
-
-        from scipy.ndimage import label
 
         labeled_mask, num_features = label(mask)
 
@@ -447,8 +449,6 @@ def refine_robust_streak(
     # whole trail because the outer points stay above the half level. The stable
     # peak (95th pct of the smoothed profile) keeps a lone hot pixel from setting
     # the scale.
-    from scipy.ndimage import gaussian_filter1d as _g1d
-    from scipy.ndimage import median_filter as _medfilt
 
     def _stable_half_extent(prof: np.ndarray, frac: float = 0.5) -> float:
         if prof.size == 0:
@@ -921,7 +921,6 @@ def refine_streak_length_by_overhang(
     intensities = data[sorted_y, sorted_x]
 
     # Smooth the intensity profile to reduce noise
-    from scipy.ndimage import gaussian_filter1d
 
     smoothed_intensities = gaussian_filter1d(intensities, sigma=1.0)
 
@@ -1361,7 +1360,6 @@ def extract_streak_dims_robust(
             continue
 
         # Find connected component containing peak
-        from scipy import ndimage
 
         labeled, num_features = ndimage.label(binary_cutout)
         peak_y, peak_x = np.unravel_index(np.argmax(norm_cutout), norm_cutout.shape)
@@ -2143,7 +2141,6 @@ def measure_streak_shift_centroid(
     Returns:
         np.ndarray: Shift vector from center to streak centroid [x, y]
     """
-    from scipy.ndimage import center_of_mass, label
 
     center = np.array(centered_cutout.shape) / 2
     y_center, x_center = int(center[0]), int(center[1])
@@ -2224,7 +2221,6 @@ def cross_corr(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
     """
     # scipy.fft: same pocketfft as numpy's, multithreaded with workers —
     # identical values, several times faster on full frames.
-    from scipy import fft as sfft
 
     ccf = np.roll(
         sfft.ifft2(
@@ -2345,7 +2341,6 @@ def streak_mask_effective_kernel(kernel: np.ndarray, threshold: float = 0.01) ->
     Depends only on the kernel, so it's cached: the candidate loop reuses the same
     streak kernel ~30x, and the self-convolution of a ~85x207 kernel costs ~0.8 s
     each — recomputing it every call dominated runtime."""
-    from scipy import signal
 
     key = (kernel.shape, float(kernel.sum()), round(threshold, 6))
     cached = _EK_CACHE.get(key)
@@ -2363,7 +2358,6 @@ def _cached_working_bg(working_data: np.ndarray) -> float:
     validated against id reuse). Masking a handful of small regions doesn't shift
     a 66 MP median, so computing it once per extraction (not ~30x) is exact enough
     and avoids ~0.8 s/call."""
-    import weakref
 
     key = id(working_data)
     ent = _BG_CACHE.get(key)

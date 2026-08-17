@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy.optimize import linear_sum_assignment
 
 from senpai.engine.models.starfield import StarInImage
 from senpai.engine.utils.wcs_helpers import find_local_maxima, match_stars_to_detections
@@ -45,7 +46,6 @@ def test_find_local_maxima_respects_threshold():
 
 def _match_reference(stars, detected_points, max_distance=20):
     """The original (pre-vectorization) implementation, kept as the oracle."""
-    from scipy.optimize import linear_sum_assignment
 
     cost = np.zeros((len(stars), len(detected_points)))
     for i, star in enumerate(stars):

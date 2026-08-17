@@ -19,11 +19,15 @@ when a TRKMODE is present, so metadata-tagged frames pay nothing for it.
 
 from __future__ import annotations
 
+import argparse
+import glob
 import logging
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+from astropy.io import fits
 from scipy import ndimage
 
 from senpai.engine.models.metadata import TrackMode
@@ -238,11 +242,6 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
 #   python -m senpai.engine.detection.track_mode <fits...> [--from-data] [--raw]
 # --------------------------------------------------------------------------
 def _main(argv=None) -> int:
-    import argparse
-    import glob
-    from pathlib import Path
-
-    from astropy.io import fits
 
     from senpai.core.config import get_config, initialize_config
     from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE

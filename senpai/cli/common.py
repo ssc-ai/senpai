@@ -1,17 +1,22 @@
 """Shared CLI utilities for command/config saving, profiling, and serialization."""
 
+import cProfile
+import io
 import json
 import logging
+import pstats
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from pstats import SortKey
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
 
 def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
     """Save command.txt and config.yaml to output_dir for reproducibility."""
-    import yaml
 
     output_dir = Path(output_dir)
 
@@ -65,10 +70,6 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
 def profile_run(func, *args, run_id: str = "profile", **kwargs):
     """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
     saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result."""
-    import cProfile
-    import io
-    import pstats
-    from pstats import SortKey
 
     from senpai.core.config import get_config
 

@@ -13,6 +13,7 @@ Usage::
 holding a ``senpai_*.json`` result is replotted.
 """
 
+import argparse
 import logging
 from pathlib import Path
 
@@ -24,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
 
     from senpai.engine.plotting.replot import ALL_KINDS, replot
 

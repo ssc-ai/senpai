@@ -28,7 +28,9 @@ import logging
 
 import numpy as np
 from astropy.stats import sigma_clipped_stats
+from photutils.aperture import RectangularAnnulus, RectangularAperture, aperture_photometry
 from pydantic import BaseModel, field_serializer
+from scipy.fft import irfft2, next_fast_len, rfft2
 from scipy.ndimage import label, map_coordinates, maximum_filter
 from scipy.optimize import curve_fit
 
@@ -102,7 +104,6 @@ def _apply_directional_filters_fft(
     filter_length_fwhm: float = 5.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Core FFT-based directional filter bank on an image at native resolution."""
-    from scipy.fft import irfft2, next_fast_len, rfft2
 
     kernels, angles = build_directional_filter_bank(fwhm, n_angles, filter_length_fwhm)
 
@@ -1401,7 +1402,6 @@ def measure_streak_candidate_photometry(
 
     Updates each candidate in-place with flux, SNR, and magnitudes.
     """
-    from photutils.aperture import RectangularAnnulus, RectangularAperture, aperture_photometry
 
     if exposure_time is None or exposure_time <= 0:
         exposure_time = 1.0

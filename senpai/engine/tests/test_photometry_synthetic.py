@@ -21,6 +21,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from astropy.io import fits
+from scipy.spatial import cKDTree
 
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import CONFIG_DIR
@@ -393,7 +394,6 @@ def test_has_bright_neighbor_ignores_distant_or_faint():
 
 def test_has_bright_neighbor_kdtree_matches_bruteforce():
     """KD-tree path and the O(n) fallback must agree."""
-    from scipy.spatial import cKDTree
 
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     bright = StarInSpace(ra=0, dec=0, x=104.0, y=100.0, magnitude=12.0)
@@ -542,7 +542,6 @@ def test_aperture_mask_footprint_guard_allows_real_apertures() -> None:
 
 
 def test_aperture_mask_footprint_guard_rejects_a_degenerate_fwhm() -> None:
-    import pytest
 
     from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
 

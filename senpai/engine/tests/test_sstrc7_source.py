@@ -6,6 +6,7 @@ skipped in CI. Point `SSTRC7_PATH` at it (or let the package resolve
 """
 
 import os
+import types
 
 import numpy as np
 import pytest
@@ -127,7 +128,6 @@ def _fake_field(**bands: float) -> _FakeField:
 
 
 def _set_priority(monkeypatch, priority: str) -> None:
-    import types
 
     from senpai.core import config as config_module
 

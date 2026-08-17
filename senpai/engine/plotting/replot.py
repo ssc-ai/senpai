@@ -28,7 +28,9 @@ JSON expansion is needed for any of the above.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from senpai.core.config import get_config
 from senpai.engine.utils.file_io import load_fits_file, load_senpai_run
@@ -77,7 +79,6 @@ def _streak_candidate_objs(candidates):
     """The serializable model stores streak_candidates as raw dicts, but
     ``plot_single_frame`` reads them by attribute (``.x``, ``.length_pixels``,
     ...). Wrap each dict so attribute access (and getattr-with-default) works."""
-    from types import SimpleNamespace
 
     if not candidates:
         return None
@@ -179,7 +180,6 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     stars = stars[:_MAX_STARS_FOR_APERTURE]
 
     # Serializable timestamps are ISO strings; the full frame model wants datetime.
-    from datetime import datetime
 
     ts = frame.timestamp
     if isinstance(ts, str):

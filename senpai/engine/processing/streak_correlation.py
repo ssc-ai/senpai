@@ -12,6 +12,7 @@ import logging
 import uuid
 
 import numpy as np
+from astropy.stats import sigma_clipped_stats
 
 from senpai.core.config import get_config
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
@@ -49,7 +50,6 @@ def detect_streaks_in_sidereal_frames(
         Dictionary mapping frame index to ``(directional_excess_map, noise_std, best_angle_deg)``
         for use in multi-frame DE-based confirmation.
     """
-    from astropy.stats import sigma_clipped_stats
 
     from senpai.engine.detection.streak.sidereal_streak import (
         detect_streaks_in_sidereal,

@@ -3,7 +3,7 @@ from enum import Enum
 
 import astropy.units as u
 import numpy as np
-from astropy.coordinates import Angle
+from astropy.coordinates import Angle, SkyCoord
 from astropy.io import fits
 from astropy.io.fits import PrimaryHDU
 from astropy.wcs import WCS
@@ -396,7 +396,6 @@ class WCSModel(BaseModel):
         wcs = self.to_astropy_wcs()
 
         # Create a SkyCoord object from the RA and Dec values
-        from astropy.coordinates import SkyCoord
 
         coords = SkyCoord(ra * u.deg, dec * u.deg)
 
@@ -443,7 +442,6 @@ class WCSModel(BaseModel):
                 world_corners.append((ra, dec))
 
         # Calculate the width and height FOV
-        from astropy.coordinates import SkyCoord
 
         ra_vals = [c[0] for c in world_corners]
         dec_vals = [c[1] for c in world_corners]

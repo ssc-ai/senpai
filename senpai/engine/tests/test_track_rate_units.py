@@ -7,6 +7,8 @@ classifier and downstream code assume arcsec/s. The helper normalizes so the
 upstream unit convention.
 """
 
+import logging
+
 import pytest
 
 from senpai.engine.utils.fits_io import _to_arcsec_per_second
@@ -34,7 +36,6 @@ def test_case_insensitive():
 
 
 def test_unknown_unit_passes_through_with_warning(caplog):
-    import logging
 
     with caplog.at_level(logging.WARNING):
         v = _to_arcsec_per_second(42.0, "furlongs/fortnight")

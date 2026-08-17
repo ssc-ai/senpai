@@ -2,6 +2,7 @@
 
 import json
 import logging
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -49,7 +50,6 @@ def process_rate_fits_rate(
         through the unified collect pipeline with full feature support
         (streak detection, catalog filtering, stamp confirmation).
     """
-    import warnings
 
     warnings.warn(
         "process_rate_fits_rate is deprecated — use process_senpai_collect([image]) instead",

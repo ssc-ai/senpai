@@ -47,6 +47,8 @@ Applying dark corrections:
     )
 """
 
+import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -232,7 +234,6 @@ def apply_dark_subtraction(
             dark_exposure_time = 1.0  # Default if not provided
 
     # Clean the dark frame by removing hot pixels
-    from astropy.stats import SigmaClip
 
     sigma_clip = SigmaClip(sigma=5.0, maxiters=3)
     dark_median = np.median(master_dark_data)
@@ -502,8 +503,6 @@ def _create_descriptive_filename(
 
 def main():
     """CLI interface for creating master darks."""
-    import argparse
-    import sys
 
     parser = argparse.ArgumentParser(
         description="Create master dark frames from a directory of dark frame FITS files",

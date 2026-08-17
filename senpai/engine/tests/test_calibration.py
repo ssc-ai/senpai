@@ -159,7 +159,6 @@ class TestPercentile:
         assert _percentile([1.0, 2.0, 3.0], 0.25) == 1.5
 
     def test_empty_returns_nan(self):
-        import math
 
         assert math.isnan(_percentile([], 0.5))
 

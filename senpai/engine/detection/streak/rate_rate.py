@@ -2,6 +2,7 @@ import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import fft as sfft
 from scipy.ndimage import gaussian_filter
 from scipy.signal import convolve
 
@@ -130,7 +131,6 @@ def refine_correlation_shift_by_global_shift(
 def whiten_image(im, sigma=3, eps=1e-6):
     # scipy.fft is the same pocketfft as numpy's but multithreaded with
     # workers — identical values, several times faster on full frames.
-    from scipy import fft as sfft
 
     # subtract mean (optional but recommended)
     im0 = im - np.mean(im)

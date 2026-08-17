@@ -17,13 +17,24 @@ geometric aggregates (extinction, Az/Alt coverage) drop those frames.
 
 from __future__ import annotations
 
+import argparse
+import glob as _glob
 import json
 import logging
 import math
-from dataclasses import dataclass, field
-from datetime import datetime
+import statistics
+import statistics as st
+from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime, timedelta
+from datetime import datetime as _dt
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+from astropy.io import fits
+from scipy import ndimage
+from scipy.ndimage import map_coordinates
+from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 
@@ -542,7 +553,6 @@ class NightCalibration:
     def conditions(self) -> dict[str, Any]:
         """One-line-per-night observing-conditions summary (PSF, sky, extinction,
         Moon) for cross-night tracking. Medians over the night's frames."""
-        import statistics as st
 
         def _med(xs):
             xs = [x for x in xs if x is not None]
@@ -613,7 +623,6 @@ class NightCalibration:
 
 def _asdict_safe(obj: Any) -> Any:
     """Pure-stdlib dataclass→dict that handles our datetime fields."""
-    from dataclasses import asdict, is_dataclass
 
     if is_dataclass(obj):
         d = asdict(obj)
@@ -641,7 +650,6 @@ def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
     """Mark frames taken well above the night's CCD setpoint and return a summary
     (or None when no CCDTEMP telemetry is present). The setpoint is the median
     temperature — robust as long as warm frames aren't the majority."""
-    import statistics as st
 
     temps = [f.ccd_temp_c for f in frames if f.ccd_temp_c is not None]
     if len(temps) < 5:
@@ -716,7 +724,6 @@ def _clear_sky_zp_band(frames: list[FramePhoto]) -> tuple[float, float] | None:
     the clear-sky stability. Frames within ±sigma of the mode are a "weather
     mask": photometric-condition frames with the cloud-attenuated ones dropped.
     Returns None if too few sidereal frames to estimate."""
-    import numpy as np
 
     zps = np.array([f.zero_point for f in _zp_frames(frames) if f.zero_point is not None])
     if len(zps) < 10:
@@ -764,8 +771,6 @@ def _snr_consistent(snr: float, mag: float, f: FramePhoto, tolerance: float = 5.
 
 def _summarize_zp(frames: list[FramePhoto]) -> dict[str, ZeroPointStat]:
     """Median + 16/84 percentile of zero_point per filter (sidereal frames)."""
-
-    import statistics
 
     by_filter: dict[str, list[FramePhoto]] = {}
     for f in _zp_frames(frames):
@@ -819,7 +824,6 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
     with extinction). Returns fit + the bin median/envelope points for plotting,
     plus a clear_fraction diagnostic. None if too few points / airmass range.
     """
-    import numpy as np
 
     if len(pairs) < 3:
         return None
@@ -906,7 +910,6 @@ def _summarize_limiting_mag(frames: list[FramePhoto], attr: str) -> dict[str, fl
     is unreliable. The night's authoritative depth comes from the sidereal legs
     (the raw rate per-frame values are still retained on each FramePhoto for
     limiting-case studies)."""
-    import statistics
 
     by_filter: dict[str, list[float]] = {}
     for f in _zp_frames(frames):
@@ -1041,7 +1044,6 @@ def save_calibration(calib: NightCalibration, output_dir: str | Path) -> Path:
 def _jsonify(obj: Any) -> Any:
     """Recursively convert numpy / datetime values to JSON-native types so the
     plotted arrays round-trip through plot_data.json."""
-    import numpy as np
 
     if isinstance(obj, dict):
         return {k: _jsonify(v) for k, v in obj.items()}
@@ -1182,7 +1184,6 @@ def plot_calibration(source, output_dir: str | Path, *, save_data: bool = True) 
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import numpy as np
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1391,9 +1392,6 @@ def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_zp_drift(calib: NightCalibration):
-    from datetime import timedelta
-
-    import numpy as np
 
     drift = [
         (f.timestamp, f.zero_point, f.filter_name or "unknown")
@@ -1433,7 +1431,6 @@ def _data_zp_drift(calib: NightCalibration):
 
 
 def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
-    from datetime import datetime as _dt
 
     fig, ax = plt.subplots(figsize=(10, 5))
     for filt in sorted(d["per_filter"]):
@@ -1483,7 +1480,6 @@ def _data_gain(calib: NightCalibration):
     ]
     if len(pts) < 3:
         return None
-    import statistics as st
 
     gains = [g for _, g in pts]
     return {
@@ -1578,7 +1574,6 @@ def _empirical_overhead(timings) -> tuple[float | None, str]:
     those exist, the median over all usable pairs (at least readout + settle).
     Returns (overhead_s, label), or (None, "") when there's no usable timing at
     all so the caller can apply its last-resort default."""
-    import numpy as np
 
     _fr, dist, over = _slew_pairs(timings)
     if not over:
@@ -1611,7 +1606,6 @@ def _fit_slew_model(timings) -> dict | None:
     plotting; or None if there aren't enough usable pairs (the caller then uses
     _empirical_overhead).
     """
-    import numpy as np
 
     fr, dist, over = _slew_pairs(timings)
     if len(dist) < 2 * _SLEW_ENV_MIN_PTS:
@@ -1665,7 +1659,6 @@ def _fit_slew_model(timings) -> dict | None:
 
 
 def _data_search_rate(calib: NightCalibration):
-    import numpy as np
 
     # Search rate = sky area/hour surveyable while still reaching a TARGET-σ (3σ)
     # detection per field. A star measured at SNR s in a known exposure pins its
@@ -1935,7 +1928,6 @@ _CONC_DEFOCUS = 0.7  # C below this ≈ defocused
 def _batch_result_paths(source_dir: str) -> dict[str, Path]:
     """{batch_id: result JSON path}, re-anchored on source_dir when the
     manifest's absolute paths are stale (drive remounted elsewhere)."""
-    import glob as _glob
 
     md = json.loads((Path(source_dir) / "manifest.json").read_text())
     out: dict[str, Path] = {}
@@ -1968,10 +1960,6 @@ def _sidereal_frame_dict(batch_path: Path, index: int) -> dict | None:
 def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int, max_stars: int = _PSF_MAX_STARS):
     """Median-stacked, peak-normalized PSF stamp from a frame's bright, isolated,
     unsaturated catalog stars. Returns (stamp2d, n_stars) or (None, 0)."""
-    import numpy as np
-    from astropy.io import fits
-    from scipy import ndimage
-    from scipy.spatial import cKDTree
 
     try:
         data = fits.getdata(fits_path).astype(np.float64)
@@ -2128,7 +2116,6 @@ def _wcs_sky_axes(wcs_dict: dict):
 def _sample_line(stamp, half, unit, np):
     """Sample the stamp along a line through its center in pixel direction
     ``unit`` (x, y), one sample per pixel from -half to +half."""
-    from scipy.ndimage import map_coordinates
 
     t = np.arange(-half, half + 1.0)
     xs = half + t * unit[0]
@@ -2137,7 +2124,6 @@ def _sample_line(stamp, half, unit, np):
 
 
 def _data_psf_profile(calib: NightCalibration):
-    import numpy as np
 
     if not calib.source_dir:
         return None
@@ -2348,7 +2334,6 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_ccd_temperature(calib: NightCalibration):
-    import statistics as st
 
     pts = [
         (f.timestamp, f.ccd_temp_c, bool(f.ccd_warm))
@@ -2396,7 +2381,6 @@ def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_psf_concentration(calib: NightCalibration):
-    import numpy as np
 
     if not calib.source_dir:
         return None
@@ -2562,7 +2546,6 @@ _PLOT_BUILDERS.update(
 
 
 def _data_snr_vs_exposure(calib: NightCalibration):
-    import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None:
@@ -2702,7 +2685,6 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
 
 
 def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
-    import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None:
@@ -2821,7 +2803,6 @@ _PLOT_BUILDERS.update(
 
 
 def _data_moon_az_el(calib: NightCalibration):
-    import numpy as np
 
     moon_frames = [
         f
@@ -2878,7 +2859,6 @@ def _render_moon_az_el(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_snr_vs_moon_distance(calib: NightCalibration):
-    import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None or not any(f.moon_sep_deg is not None for f in calib.frames):
@@ -3040,7 +3020,6 @@ def _best_sampled_mag(usable, min_meas_snr):
 
 
 def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
-    import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None or not any(f.moon_sep_deg is not None for f in calib.frames):
@@ -3130,7 +3109,6 @@ def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
-    import numpy as np
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None or not any(f.moon_sep_deg is not None for f in calib.frames):
@@ -3232,7 +3210,6 @@ _PLOT_BUILDERS.update(
 
 
 def _data_fwhm(calib: NightCalibration):
-    import numpy as np
 
     pts = [
         (f.timestamp, f.fwhm_px, f.airmass) for f in calib.frames if f.fwhm_px is not None and f.timestamp is not None
@@ -3251,7 +3228,6 @@ def _data_fwhm(calib: NightCalibration):
 
 
 def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
-    from datetime import datetime as _dt
 
     fig, ax = plt.subplots(figsize=(10, 5))
     xs = [_dt.fromisoformat(t) for t in d["t"]]
@@ -3279,7 +3255,6 @@ def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_sky_background(calib: NightCalibration):
-    import numpy as np
 
     rows = []  # (moon_sep, sky_adu, mu_or_nan, altitude)
     for f in calib.frames:
@@ -3387,7 +3362,6 @@ def _data_sky_background_altaz(calib: NightCalibration):
     fall back to the exposure-normalized sky rate (ADU/s) so different exposure
     times stay comparable. Below-horizon pointings (alt < 0, slew/edge artifacts)
     are dropped."""
-    import numpy as np
 
     rows = []  # (alt, az, mu_or_nan, rate_or_nan)
     for f in calib.frames:
@@ -3527,8 +3501,6 @@ def main(argv: list[str] | None = None) -> int:
     """Standalone CLI: ``python -m senpai.engine.observability.calibration <night_dir>``.
 
     The same code is invokable from ``senpai-burr calibrate`` (Phase 3 wiring)."""
-
-    import argparse
 
     parser = argparse.ArgumentParser(description="Aggregate per-batch SenpaiRun JSONs into a night calibration.")
     parser.add_argument(

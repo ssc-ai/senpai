@@ -1,5 +1,7 @@
+import json
 import logging
 import math
+import os
 import time
 from datetime import datetime
 from functools import lru_cache
@@ -948,8 +950,6 @@ def examine_catalog():
 def _examine_gaia_local_catalog(catalog_path: str) -> bool:
     """Validate the local Gaia mirror: index.json present and every tile it
     references exists on disk (catches a partial / in-progress download)."""
-    import json
-    import os
 
     if not catalog_path:
         logger.error("gaia_local catalog path not configured")

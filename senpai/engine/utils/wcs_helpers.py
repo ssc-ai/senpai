@@ -2,7 +2,11 @@
 
 import logging
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
+from astropy.wcs.utils import fit_wcs_from_points
+from photutils.aperture import RectangularAnnulus, RectangularAperture, aperture_photometry
 from scipy.ndimage import maximum_filter
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import ConvexHull
@@ -202,7 +206,6 @@ def extract_counts_with_rectangular_aperture(image, x, y, streak: StreakMetadata
         counts: Background-subtracted counts within the aperture
         background: Local background level (per pixel)
     """
-    from photutils.aperture import RectangularAnnulus, RectangularAperture
 
     # Create rectangular aperture aligned with the streak
     width = streak.fwhm * 4
@@ -225,7 +228,6 @@ def extract_counts_with_rectangular_aperture(image, x, y, streak: StreakMetadata
         )
 
     # Perform photometry
-    from photutils.aperture import aperture_photometry
 
     phot_table = aperture_photometry(image, aperture)
     aperture_sum = float(phot_table["aperture_sum"][0])
@@ -554,9 +556,6 @@ def fit_and_validate_wcs(
         fit's residual statistics (rms_px, rms_arcsec, n_stars), or
         (*fallback_wcs*, None) if validation fails.
     """
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-    from astropy.wcs.utils import fit_wcs_from_points
 
     ra_values = [wc[0] for wc in world_coords]
     dec_values = [wc[1] for wc in world_coords]

@@ -29,6 +29,7 @@ import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from scipy import ndimage
+from scipy.ndimage import map_coordinates
 from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,6 @@ def sky_axes(astropy_wcs):
 
 
 def _sample_line(stamp, half, unit):
-    from scipy.ndimage import map_coordinates
 
     t = np.arange(-half, half + 1.0)
     return map_coordinates(stamp, [half + t * unit[1], half + t * unit[0]], order=1, mode="constant", cval=0.0)
@@ -226,7 +226,6 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
 def _oriented_stamp(data, x, y, cos_a, sin_a, half_a, half_p):
     """Sample a streak-aligned stamp (rows = perpendicular, cols = along) at
     (x, y). Returns the float stamp or None if out of bounds."""
-    from scipy.ndimage import map_coordinates
 
     ta = np.arange(-half_a, half_a + 1.0)
     tp = np.arange(-half_p, half_p + 1.0)
