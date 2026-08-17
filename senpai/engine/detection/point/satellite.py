@@ -15,7 +15,7 @@ from photutils.utils.exceptions import NoDetectionsWarning
 from scipy.ndimage import median_filter
 from scipy.signal import fftconvolve
 
-from senpai.core.config import get_config
+from senpai.core.config import get_config, settings
 from senpai.engine.detection.streak.masking import percent_difference
 from senpai.engine.models.senpai import RateTrackFrame
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
@@ -642,6 +642,13 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     Returns:
         A SatelliteListImage containing detected point sources
     """
+    # Dispatch to the configured rate-frame point detector. Default keeps the
+    # upstream DAOStarFinder path below; "sep" selects the opt-in SEP detector.
+    if settings.detection.rate_point_detector == "sep":
+        from senpai.engine.detection.point.satellite_sep import extract_point_sources_sep
+
+        return extract_point_sources_sep(frame)
+
     logger.info("Extracting point sources")
 
     config = get_config()

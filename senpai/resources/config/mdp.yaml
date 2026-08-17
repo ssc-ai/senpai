@@ -38,6 +38,7 @@ app:
     path: /path/to/sstrc7
     faint_limit: 18.0
     max_stars_per_frame: null
+    magnitude_band_priority: open_first                       # dispatch -- default johnson_v_first
   plotting:
     debug: false
     review: false
@@ -54,6 +55,9 @@ app:
     detect_streaks: true
     snr_threshold: 3.0
     verbose: false
+    rate_point_detector: sep                                  # dispatch -- default daostarfinder
+    centroid_guard_mode: fwhm
+    centroid_guard_value: 0.4
     streak_correlation_radius_fwhm: 5.0
     streak_angle_tolerance_deg: 15.0
   streak:
@@ -152,6 +156,9 @@ app:
     limiting_snr: 3.0
     limiting_completeness_fraction: 0.5
     completeness_isolate: true
+    refinement_star_snr_noise: poisson                        # dispatch -- default empirical
+    refinement_limiting_magnitude_method: linear_fit          # dispatch -- default completeness_hybrid
+    refinement_aperture_subpixels: 10                         # dispatch -- default 5
     zp_min_snr: 20.0
     zp_max_crowding: 0.2
     zp_sigma_clip: 3.0
@@ -187,6 +194,7 @@ app:
     max_dark_exposure_ratio: 1.5
     auto_remove_row_median: true
     auto_remove_column_median: true
+    preprocess_float_dtype: float64                           # dispatch -- default float32
     auto_subtract_background: false
     background_mask_sources: false
     background_box_size: 20

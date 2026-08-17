@@ -147,6 +147,16 @@ class StarCatalogConfig(BaseModel):
         "per-frame memory/CPU on dense galactic-plane fields (a 74k-star field "
         "needed ~30 GB/worker uncapped). None = unbounded.",
     )
+    magnitude_band_priority: Literal["johnson_v_first", "open_first"] = Field(
+        default="johnson_v_first",
+        description=(
+            "Band-priority order reducing the SSTRC7 multi-band magnitude vector to one "
+            "visual magnitude. 'johnson_v_first' (default) is the sstrc7 package's own "
+            "`visual` ladder: Johnson_V, then R, Sloan_r, Gaia_G, Sloan_g, B. 'open_first' "
+            "leads with Gaia_G, then Johnson_R, Sloan_r, Johnson_V, Johnson_B; its broad "
+            "response better matches an open-filter (silicon) sensor."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_catalog_config(self):
@@ -192,6 +202,32 @@ class DetectionConfig(BaseModel):
     detect_streaks: bool = Field(default=True, description="Run streak detection when detect=True")
     snr_threshold: float = Field(default=3.0, description="SNR threshold")
     verbose: bool = Field(default=False, description="Verbose mode")
+    rate_point_detector: Literal["sep", "daostarfinder"] = Field(
+        default="daostarfinder",
+        description=(
+            "Point-source detector for rate-track frames. 'daostarfinder' (default) = the "
+            "upstream photutils DAOStarFinder path. 'sep' = SEP background + adaptive threshold "
+            "+ flux-concentration PSF filter (opt-in; MDP-validated on rate-track imagery). Both "
+            "are retained so the method can be re-evaluated per sensor/dataset."
+        ),
+    )
+    centroid_guard_mode: Literal["fwhm", "fixed", "none"] = Field(
+        default="fwhm",
+        description=(
+            "SEP detector only: guard for the reported point-source position. The sub-pixel "
+            "centroid is reported unless it disagrees with the brightest pixel by more than a "
+            "threshold, in which case the brightest pixel is reported (saturation/trail/blend "
+            "protection). 'fwhm': threshold = centroid_guard_value * FWHM; 'fixed': "
+            "centroid_guard_value pixels; 'none': always report the sub-pixel centroid."
+        ),
+    )
+    centroid_guard_value: float = Field(
+        default=0.4,
+        description=(
+            "SEP detector only: threshold for centroid_guard_mode (a multiple of the PSF FWHM "
+            "for 'fwhm', or an absolute pixel distance for 'fixed'). Ignored when mode is 'none'."
+        ),
+    )
     streak_correlation_radius_fwhm: float = Field(
         default=5.0, description="Match radius for cross-frame streak correlation, in FWHM units"
     )
@@ -509,6 +545,28 @@ class PhotometryConfig(BaseModel):
         description="Drop catalog stars blended with brighter neighbors from the completeness curve",
     )
 
+    # WCS-refinement photometry method dispatch: defaults keep the upstream methods;
+    # the opt-in values (see mdp.yaml) reproduce the MDP-validated rate-track behaviour.
+    # These affect the star-SNR / limiting-magnitude estimate the WCS refit consumes.
+    refinement_star_snr_noise: Literal["poisson", "empirical"] = Field(
+        default="empirical",
+        description=(
+            "Refinement star-SNR noise model: 'empirical' (default) uses the per-pixel "
+            "background std; 'poisson' uses sqrt(bg_level*area)."
+        ),
+    )
+    refinement_limiting_magnitude_method: Literal["linear_fit", "completeness_hybrid"] = Field(
+        default="completeness_hybrid",
+        description=(
+            "Refinement limiting-magnitude estimator: 'completeness_hybrid' (default) prefers the "
+            "completeness roll-over; 'linear_fit' uses the SNR-fit crossing."
+        ),
+    )
+    refinement_aperture_subpixels: int = Field(
+        default=5,
+        description="Refinement star-SNR aperture subpixel sampling (5 default; higher = sharper).",
+    )
+
     # Zero-point star selection. The ZP must come from well-measured stars only:
     # a faint catalog tail (where forced photometry latches onto neighbour flux /
     # trails and reports a spurious SNR floor) biases the median ZP up by ~1 mag.
@@ -577,6 +635,18 @@ class CalibrationsConfig(BaseModel):
     auto_remove_column_median: bool = Field(
         default=True,
         description="Automatically remove column medians during preprocessing",
+    )
+    preprocess_float_dtype: Literal["float32", "float64"] = Field(
+        default="float32",
+        description=(
+            "Float precision frames are promoted to during preprocessing. 'float32' "
+            "(default) is what the pipeline runs in. 'float64' costs one extra "
+            "frame-sized buffer and is available for downstream math that is "
+            "sensitive to float32's ~0.005 ADU quantization at ADU scale — "
+            "rate-track registration cross-correlation is: the rounding shifts "
+            "measured FWHM at the 1e-3 level, which can move the correlation peak "
+            "selection on a marginal frame pair."
+        ),
     )
     auto_subtract_background: bool = Field(
         default=True,

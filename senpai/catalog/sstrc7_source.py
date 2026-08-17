@@ -25,6 +25,8 @@ import logging
 import numpy as np
 import sstrc7
 
+from senpai.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # 1 mas/yr expressed in radians per second.
@@ -76,6 +78,30 @@ def _catalog_labels(source_flags: np.ndarray) -> list[str]:
     return [labels[int(f)] for f in source_flags]
 
 
+# Band order for the `open_first` priority ladder: the broad Gaia G response is
+# the closest stand-in for an unfiltered silicon detector, so it leads.
+OPEN_FIRST_BANDS = ("Gaia_G", "Johnson_R", "Sloan_r", "Johnson_V", "Johnson_B")
+
+
+def _priority_ladder(field) -> np.ndarray:
+    """Per-star visual magnitude under the configured band priority.
+
+    `johnson_v_first` (the default) is the package's own `visual` ladder. NaN
+    where no band of the ladder is usable, as `visual` is.
+    """
+    if settings.star_catalog.magnitude_band_priority != "open_first":
+        return field.visual
+
+    mags = field.mag
+    ladder = np.full(len(mags), np.nan)
+    # Lowest priority first, so each better band overwrites what precedes it.
+    for name in reversed(OPEN_FIRST_BANDS):
+        column = mags[:, BAND_NAMES.index(name)]
+        usable = np.isfinite(column) & (column > MAG_MIN) & (column < MAG_MAX)
+        ladder = np.where(usable, column, ladder)
+    return ladder
+
+
 def _star_records(field, filter_center: float | None) -> list[dict]:
     """Convert a package StarField into senpai's star dicts."""
     # The catalog stores magnitudes as integer millimags; the package hands
@@ -85,11 +111,12 @@ def _star_records(field, filter_center: float | None) -> list[dict]:
     mags = np.round(field.mag.astype(np.float64), MAG_DECIMALS)
     valid = np.isfinite(mags) & (mags > MAG_MIN) & (mags < MAG_MAX)
 
-    # `visual` is the package's broadband priority ladder, which matches the
-    # vendored Johnson_V > Johnson_R > Sloan_r > Gaia_G > ... order exactly.
-    # A star with no usable band gets the sentinel rather than NaN, so the
-    # magnitude limits below and downstream `mv < 32` checks behave as before.
-    ladder = np.round(np.where(np.isfinite(field.visual), field.visual, INVALID_MAG).astype(np.float64), MAG_DECIMALS)
+    # The configured priority ladder: by default the package's `visual`, which
+    # matches the vendored Johnson_V > Johnson_R > Sloan_r > Gaia_G > ... order
+    # exactly. A star with no usable band gets the sentinel rather than NaN, so
+    # the magnitude limits below and downstream `mv < 32` checks behave as before.
+    visual = _priority_ladder(field)
+    ladder = np.round(np.where(np.isfinite(visual), visual, INVALID_MAG).astype(np.float64), MAG_DECIMALS)
 
     if filter_center is not None:
         interpolated = field.at_wavelength(filter_center)
@@ -175,7 +202,8 @@ def query_by_los_radec_with_rotation(
 
     # The vendored reader applied both limits against the priority-ladder
     # magnitude even when filter_center was set. Keep that.
-    ladder = np.where(np.isfinite(field.visual), field.visual, INVALID_MAG)
+    visual = _priority_ladder(field)
+    ladder = np.where(np.isfinite(visual), visual, INVALID_MAG)
     keep = np.ones(len(ladder), dtype=bool)
     if faint_lim is not None:
         keep &= ladder < faint_lim

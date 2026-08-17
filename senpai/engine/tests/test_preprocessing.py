@@ -132,6 +132,16 @@ class TestRemoveColumnAndRowMedians:
         # Median-subtracted data must contain negatives somewhere.
         assert out.data.min() < 0
 
+    def test_dtype_override_promotes_to_float64(self):
+        data = np.full((16, 16), 10, dtype=np.int16)
+        data[0, 0] = 0
+        img = _make_image(data, header=fits.Header())
+        out = remove_column_and_row_medians(img, dtype=np.float64)
+        # Opt-in float64 for callers whose downstream math is sensitive to
+        # float32's ADU-scale rounding (rate-track registration).
+        assert out.data.dtype == np.float64
+        assert out.data.min() < 0
+
     def test_store_intermediates_keeps_correction_frames(self):
         data = RNG.normal(50, 3, (24, 24))
         # NOTE: remove_column_and_row_medians indexes correction_frames without
