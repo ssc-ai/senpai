@@ -1,3 +1,13 @@
+"""WCS models: a plate solution as senpai stores it, converts it, and reports on it.
+
+`WCSModel` is the persisted form -- a flat set of FITS keywords including SIP coefficients --
+so it round-trips through JSON without an astropy dependency in the schema. It converts to and
+from `astropy.wcs.WCS` for calculation, and to a FITS header for the solver.
+
+`WCSMetadata` is the derived summary (plate scale, field of view, field centre) that reports
+and consumers read instead of recomputing it.
+"""
+
 import logging
 import warnings
 from enum import Enum
@@ -16,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class WCSStatus(str, Enum):
+    """How a frame's WCS was obtained, or why it has none."""
+
     NO_WCS = "NO_WCS"
     SIDEREAL_FIT_WCS = "SIDEREAL_FIT_WCS"
     PIXEL_SHIFTED_WCS = "PIXEL_SHIFTED_WCS"
@@ -61,6 +73,8 @@ class WCSQualityMetrics(BaseModel):
 
 
 class ReturnAstrometryConfig(BaseModel):
+    """The astrometry settings a result reports back, so a run is reproducible from it."""
+
     indices_series: str = Field(description="Indices series (5200/5200_LITE/4100/5200_LITE_4100)")
     max_sources: int = Field(description="Maximum number of sources to solve for")
     min_width_degrees: float = Field(description="Minimum width in degrees")
@@ -68,6 +82,7 @@ class ReturnAstrometryConfig(BaseModel):
 
     @classmethod
     def from_app_config(cls, config: AppConfig) -> "ReturnAstrometryConfig":
+        """Capture the astrometry settings this run used."""
         return cls(
             indices_series=config.astrometry.indices_series,
             max_sources=config.astrometry.max_sources,
@@ -77,6 +92,8 @@ class ReturnAstrometryConfig(BaseModel):
 
 
 class WCSModel(BaseModel):
+    """A plate solution as flat FITS keywords, SIP included, ready to persist."""
+
     model_config = ConfigDict(extra="allow")  # Allow extra fields for dynamic SIP coefficients
 
     WCSAXES: int
@@ -138,6 +155,7 @@ class WCSModel(BaseModel):
 
     @classmethod
     def from_astrometrydotnet(cls, astrometry_net_wcs: PrimaryHDU) -> "WCSModel":
+        """Build a model from the FITS header astrometry.net writes."""
         header = astrometry_net_wcs.header
 
         # Try PC matrix first
@@ -189,7 +207,8 @@ class WCSModel(BaseModel):
             **sip_params,
         )
 
-    def to_astrometrydotnet_fits(self, output_path: str):
+    def to_astrometrydotnet_fits(self, output_path: str) -> None:
+        """Write this solution as a FITS header at `output_path`, as the solver expects it."""
         values = self.model_dump()
         values["IMAGEW"] = values["NAXIS1"]
         values["IMAGEH"] = values["NAXIS2"]
@@ -204,7 +223,8 @@ class WCSModel(BaseModel):
         hdu.writeto(output_path)
 
     @classmethod
-    def from_astropy_wcs(cls, astropy_wcs: WCS, image_shape=None):
+    def from_astropy_wcs(cls, astropy_wcs: WCS, image_shape: tuple[int, int] | None = None) -> "WCSModel":
+        """Build a model from an astropy WCS, recording the image shape when known."""
         """Convert an Astropy WCS object to a WCSModel.
 
         Parameters
@@ -332,7 +352,7 @@ class WCSModel(BaseModel):
 
         return cls(**wcs_dict)
 
-    def to_astropy_wcs(self):
+    def to_astropy_wcs(self) -> WCS | None:
         """Convert this model to a WCS object.
 
         Returns:
@@ -464,6 +484,8 @@ class WCSModel(BaseModel):
 
 
 class WCSMetadata(BaseModel):
+    """Plate scale, field of view and field centre, derived once from a solution."""
+
     x_ifov_arcsec: float
     y_ifov_arcsec: float
     x_fov_degrees: float
@@ -475,14 +497,17 @@ class WCSMetadata(BaseModel):
 
     @field_serializer("x_ifov_arcsec", "y_ifov_arcsec", "x_fov_degrees", "y_fov_degrees")
     def serialize_3digits(self, v: float) -> float:
+        """Round to three decimals for output."""
         return round(v, 3)
 
     @field_serializer("RA_center_deg", "Dec_center_deg")
     def serialize_6digits(self, v: float) -> float:
+        """Round to six decimals for output."""
         return round(v, 6)
 
     @classmethod
     def from_wcs(cls, wcs: WCS) -> "WCSMetadata":
+        """Derive plate scale, field of view and field centre from a solution."""
         x_ifov, y_ifov = wcs.proj_plane_pixel_scales()
         x_fov_deg, y_fov_deg = np.array([x_ifov.value, y_ifov.value]) * np.array(wcs.pixel_shape)
 
@@ -524,4 +549,5 @@ class WCSMetadata(BaseModel):
 
     @classmethod
     def from_wcsmodel(cls, wcs_model: WCSModel) -> "WCSMetadata":
+        """Derive the summary from a stored model, via its astropy form."""
         return cls.from_wcs(wcs_model.to_astropy_wcs())

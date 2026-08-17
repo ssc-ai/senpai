@@ -1,3 +1,14 @@
+"""The run model: frames, the shifts that register them, and the result that is persisted.
+
+A collect is a set of frames -- sidereal ones that can be plate-solved directly, and
+rate-tracked ones that cannot. Registration proceeds as a chain of `FrameShift`s carrying the
+solved WCS from a sidereal anchor into the rate frames, so most of this module concerns
+building that chain, walking it, and reporting what it achieved.
+
+Each model has a `*Serializable` counterpart where the persisted shape differs from the
+working one -- the working frame holds pixel data, the serializable one must not.
+"""
+
 import json
 import logging
 import os
@@ -33,9 +44,10 @@ MAX_SERIALIZED_CATALOG_STARS = 500
 
 
 def _starfield_for_output(sf: StarField | None) -> StarField | None:
-    """Copy a StarField with catalog_stars trimmed to the brightest
-    MAX_SERIALIZED_CATALOG_STARS for serialization; the live frame keeps the
-    full list.
+    """Copy a StarField with its catalog stars trimmed for serialization.
+
+    Only the brightest MAX_SERIALIZED_CATALOG_STARS are kept; the live frame keeps the full
+    list, since downstream photometry and FWHM measurement need all of them.
     """
     if sf is None or not sf.catalog_stars or len(sf.catalog_stars) <= MAX_SERIALIZED_CATALOG_STARS:
         return sf
@@ -46,6 +58,8 @@ def _starfield_for_output(sf: StarField | None) -> StarField | None:
 
 
 class SiderealFrameSerializable(BaseModel):
+    """A sidereal frame as persisted: metadata and results, without the pixels."""
+
     starfield: StarField | None = None
     seeing: SeeingModel | None = None
     hardware: TelescopeMetadata | None = None
@@ -63,6 +77,8 @@ class SiderealFrameSerializable(BaseModel):
 
 
 class SiderealFrame(BaseModel):
+    """A sidereal frame in flight, carrying its image data and solved starfield."""
+
     starfield: StarField | None = None
     seeing: SeeingModel | None = None
     hardware: TelescopeMetadata | None = None
@@ -76,6 +92,8 @@ class SiderealFrame(BaseModel):
 
 
 class RateTrackFrameSerializable(BaseModel):
+    """A rate-tracked frame as persisted: metadata and results, without the pixels."""
+
     starfield: StarField | None = None
     streak: StreakMetadata | None = None
     seeing: SeeingModel | None = None
@@ -95,10 +113,13 @@ class RateTrackFrameSerializable(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round a track rate for output, preserving None."""
         return round(v, 3) if v is not None else None
 
 
 class RateTrackFrame(BaseModel):
+    """A rate-tracked frame in flight, carrying its image data and streak geometry."""
+
     starfield: StarField | None = None
     streak: StreakMetadata | None = None
     seeing: SeeingModel | None = None
@@ -114,10 +135,13 @@ class RateTrackFrame(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round a track rate for output, preserving None."""
         return round(v, 3) if v is not None else None
 
 
 class FrameShift(BaseModel):
+    """One registration step: the pixel shift carrying a WCS from one frame to another."""
+
     source_index: int
     target_index: int
     x_shift: float | None = None  # source to target
@@ -170,6 +194,7 @@ class FrameSummary(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round a track rate for output, preserving None."""
         return round(v, 3) if v is not None else None
 
 
@@ -229,12 +254,14 @@ class SenpaiRunSummary(BaseModel):
     frames: list[FrameSummary] = []
     correlated_streaks: list[CorrelatedStreak] = []
 
-    def model_dump(self, **kwargs):
-        """Override model_dump to ensure datetime fields are serialized as ISO format strings."""
+    def model_dump(self, **kwargs: object) -> dict:
+        """Dump with datetime fields rendered as ISO-format strings."""
         return super().model_dump(mode="json", **kwargs)
 
 
 class SenpaiRunResult(BaseModel):
+    """The persisted outcome of a collect: every frame, shift and correlated streak."""
+
     id: str
     num_frames: int
     collect_metadata: CollectionMetadata
@@ -255,12 +282,14 @@ class SenpaiRunResult(BaseModel):
     rate_track_frames: list[RateTrackFrameSerializable] = []
     correlated_streaks: list[CorrelatedStreak] = []
 
-    def model_dump(self, **kwargs):
-        """Override model_dump to ensure datetime fields are serialized as ISO format strings."""
+    def model_dump(self, **kwargs: object) -> dict:
+        """Dump with datetime fields rendered as ISO-format strings."""
         return super().model_dump(mode="json", **kwargs)
 
 
 class SenpaiRun(BaseModel):
+    """A collect in flight: its frames, the registration chain, and the run's state."""
+
     id: str
     num_frames: int
     completed: bool = False
@@ -282,6 +311,18 @@ class SenpaiRun(BaseModel):
         id: str = "",
         force_track_mode: TrackMode | None = None,
     ) -> "SenpaiRun":
+        """Sort frames into sidereal and rate-tracked, and seed the registration chain.
+
+        Args:
+            frames: Every frame of the collect, in any order.
+            id: Identifier recorded on the run.
+            force_track_mode: Override the per-frame track-mode classification, for
+                imagery whose headers do not state it.
+
+        Returns:
+            A run with its frames classified and ordered.
+
+        """
         # Initialize empty lists and create a new SenpaiRun instancexxx
         sidereal_frames = []
         rate_track_frames = []
@@ -506,10 +547,9 @@ class SenpaiRun(BaseModel):
         self.log_analysis_chain()
 
     def log_analysis_chain(self) -> None:
-        """Log the analysis chain path with status indicators:
-        ✅ - processed and valid
-        ❓ - not processed yet
-        ❌ - processed but failed.
+        """Log the analysis chain with a status marker per shift.
+
+        ✅ processed and valid, ❓ not processed yet, ❌ processed but failed.
         """
         if not self.frame_shifts and not self.frame_shifts_failed:
             logger.info("No analysis chain to log (no frame shifts)")
