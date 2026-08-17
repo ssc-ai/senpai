@@ -1,0 +1,134 @@
+# SENPAI config for the Aperture-X toy_dataset FITS.
+#
+# This is based on local.yaml and matches the sample headers in toy_dataset:
+#   - pointing: OBJCTRA / OBJCTDEC (sexagesimal)
+#   - track rates: TELTKRA / TELTKDEC
+#   - optional explicit track mode: ORCHCOMM contains "rate" on the sample data
+#   - boresight alt/az: CENTAZ / CENTALT
+#   - site: SITELAT / SITELONG
+#   - timing: DATE-OBS / EXPTIME
+#
+# Required edit before first run:
+#   - set app.astrometry.indices_path to a real Astrometry.net index directory
+#     on your machine; I did not auto-fill this because I could not find local
+#     5200 index files to point at safely
+#
+# Optional edits:
+#   - this config is already set to use the Docker image you built locally
+#     (`astrometry-cli:latest`)
+#   - if you instead use a local Astrometry.net install on the host, set
+#     app.astrometry.docker_image to null
+#   - if you want an offline star catalog, switch star_catalog.type to
+#     gaia_local or sstrc7 and add the matching path
+app:
+  astrometry:
+    cpulimit_seconds: 30
+    docker_image: astrometry-cli:latest
+    indices_path: /path/to/indices/5000/5200-LITE
+    indices_series: 5200_LITE
+    max_sources: 500
+    max_width_degrees: 10
+    min_sources_for_attempt: 4
+    min_width_degrees: 0.1
+    sip_refit_enabled: false
+    sip_refit_order: 2
+    tweak_order: 2
+  calibrations:
+    auto_apply_darks: false
+    auto_apply_flats: false
+    auto_remove_column_median: true
+    auto_remove_row_median: true
+    auto_scale_images: false
+    auto_subtract_background: false
+    background_box_size: 20
+    background_exclude_percentile: 50.0
+    background_filter_size: 3
+    background_maxiters: 10
+    background_sigma: 3.0
+    clip_negative_after_dark: true
+    dark_matching_headers:
+    - XBINNING
+    flat_matching_headers:
+    - BINNING
+    - FILTER
+    master_darks_dir: null
+    master_flats_dir: null
+    max_dark_exposure_ratio: 1.5
+    negative_clip_threshold: -1000
+    oversample_threshold: 4.0
+    scaling_method: median_filter
+    target_fwhm: 3.0
+  cors:
+    allowed_origins:
+    - http://localhost:8000
+  debug: false
+  detection:
+    detect: true
+    snr_threshold: 3.0
+    verbose: false
+  headers:
+    exposure_time:
+      exposure_time_keys:
+      - EXPTIME
+      - EXPOSURE
+    observation_time:
+      observation_time_keys:
+      - DATE-OBS
+    pointing:
+      az_alt_format: sexagesimal
+      boresight_altitude_keys:
+      - CENTALT
+      boresight_azimuth_keys:
+      - CENTAZ
+      ra_dec_format: sexagesimal
+      ra_units: hours
+      target_dec_keys:
+      - OBJCTDEC
+      target_ra_keys:
+      - OBJCTRA
+    site:
+      altitude_unit: kilometers
+      positional_format: float NSEW
+      site_altitude_keys:
+      - SITEALT
+      site_latitude_keys:
+      - SITELAT
+      site_longitude_keys:
+      - SITELONG
+    tracking:
+      track_dec_rate_keys:
+      - TELTKDEC
+      - DEC_RATE
+      track_dec_rate_unit: arcseconds/second
+      track_mode_keys:
+      - TRKMODE
+      - ORCHCOMM
+      track_ra_rate_keys:
+      - TELTKRA
+      - RA_RATE
+      track_ra_rate_unit: arcseconds/second
+  logging:
+    level: info
+  photometry:
+    gain: 0.1
+    include_read_noise: true
+    max_crowding: 0.3
+    min_snr: 3.0
+    preferred_filters:
+    - Johnson_V
+    - Johnson_R
+    - Sloan_r
+    - Gaia_G
+    - Sloan_g
+    - Johnson_B
+    read_noise: 1.0
+    limiting_snr: 3.0
+    limiting_completeness_fraction: 0.5
+  plotting:
+    debug: false
+    review: true
+    photometry: true
+  star_catalog:
+    type: gaia
+    faint_limit: 20.0
+  version: 0.1.0
