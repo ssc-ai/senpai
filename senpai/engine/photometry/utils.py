@@ -787,7 +787,7 @@ def measure_rate_starfield_photometry(
         fwhm = starfield.fwhm_stats.median_fwhm
     else:
         fwhm = streak.fwhm
-        logger.warning("No FWHM stats in starfield, using streak FWHM")
+        logger.debug("No FWHM stats in starfield, using streak FWHM")
 
     # Only use catalog stars
     catalog_stars = starfield.catalog_stars or []
@@ -2188,7 +2188,7 @@ def _estimate_simple_limiting_magnitude(
                     # Don't use the edge case checks - they might be wrong if bins are sparse
                     # Instead, if we scanned through all bins and didn't find a crossing,
                     # it means there really isn't one (or the bins aren't adjacent)
-                    logger.warning(
+                    logger.debug(
                         f"Could not find crossing for {target_completeness:.2f} completeness "
                         f"after scanning {len(valid_bins)} bins. "
                         f"Faintest: {faintest_bin_center:.2f} ({faintest_frac:.3f}), "
@@ -2196,7 +2196,7 @@ def _estimate_simple_limiting_magnitude(
                     )
                     return None
 
-                logger.warning(f"No valid bins found for {target_completeness:.2f} completeness calculation")
+                logger.debug(f"No valid bins found for {target_completeness:.2f} completeness calculation")
                 return None
             except Exception as e:
                 logger.debug(f"Completeness limit calculation failed for target {target_completeness}: {e}")
@@ -2244,7 +2244,7 @@ def _estimate_simple_limiting_magnitude(
             if completeness_limit_90 is not None:
                 logger.info(f"Limiting magnitude at 90% completeness: {completeness_limit_90:.2f}")
             if completeness_limit is None:
-                logger.warning(
+                logger.info(
                     "Completeness-based limiting magnitude could not be determined "
                     f"(no crossing found, completeness never dropped below {completeness_target:.2f})"
                 )
@@ -2297,7 +2297,7 @@ def _estimate_simple_limiting_magnitude(
             # Check if SNR-fit limit is extrapolated beyond actual data range
             max_mag_actual = float(np.max(mags_all)) if len(mags_all) > 0 else None
             if max_mag_actual is not None and snr_fit_limit > max_mag_actual:
-                logger.warning(
+                logger.info(
                     f"SNR-fit limiting magnitude ({snr_fit_limit:.2f}) is extrapolated "
                     f"beyond actual data range (max sampled mag={max_mag_actual:.2f}). "
                     f"This may be unreliable."

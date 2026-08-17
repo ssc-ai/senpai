@@ -234,7 +234,7 @@ def plot_magnitude_vs_snr(
 
                 # Warn if limiting magnitude is extrapolated beyond actual data range
                 if summary.limiting_magnitude > max_mag_actual:
-                    logger.warning(
+                    logger.info(
                         f"Limiting magnitude ({summary.limiting_magnitude:.2f}) "
                         f"is extrapolated beyond actual data range (max sampled mag={max_mag_actual:.2f}). "
                         f"Completeness data only extends to {max_mag_actual:.2f} mag."
