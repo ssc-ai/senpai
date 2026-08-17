@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> None:
-    """Iteratively remove the brightest streak from whichever frame is brighter.
+    """Remove the brightest streak from whichever frame is brighter, iteratively.
 
     While the percent difference between the two frames' near-peak (99.99th percentile)
     values exceeds the threshold, the brightest streak in the brighter frame is filled in,

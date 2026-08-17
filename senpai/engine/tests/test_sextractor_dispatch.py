@@ -39,7 +39,7 @@ POINT_DETECTOR_SOURCES = [
 
 
 @pytest.fixture
-def sextractor_mode(monkeypatch):
+def sextractor_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the config singleton at a copy in sextractor mode, detect-only.
 
     AppConfig is frozen, so this copies rather than mutates; monkeypatch restores the
@@ -51,10 +51,12 @@ def sextractor_mode(monkeypatch):
 
 
 @pytest.fixture
-def stubbed_extraction(monkeypatch):
+def stubbed_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the point detector and the daofind seed; leave the SExtractor call to the test."""
 
-    def fake_point_sources(fits_image, max_detections=None):
+    def fake_point_sources(
+        fits_image: ProcessedFitsImage, max_detections: int | None = None
+    ) -> tuple[StarListImage, float]:
         return (
             StarListImage(
                 detections=list(POINT_DETECTOR_SOURCES),
@@ -68,7 +70,7 @@ def stubbed_extraction(monkeypatch):
 
 
 def _image(width: int = 64, height: int = 64) -> ProcessedFitsImage:
-    """A frame with faint structure, so preprocessing has something to work on."""
+    """Build a frame with faint structure, so preprocessing has something to work on."""
     rng = np.random.default_rng(0)
     data = rng.normal(100.0, 5.0, size=(height, width)).astype(np.float32)
     return ProcessedFitsImage(
@@ -80,7 +82,10 @@ def _image(width: int = 64, height: int = 64) -> ProcessedFitsImage:
 
 
 def test_empty_sextractor_result_keeps_the_point_detector_sources(
-    sextractor_mode, stubbed_extraction, monkeypatch, caplog
+    sextractor_mode: None,
+    stubbed_extraction: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An empty SExtractor extraction must not wipe the source list."""
     monkeypatch.setattr(
@@ -97,7 +102,9 @@ def test_empty_sextractor_result_keeps_the_point_detector_sources(
     assert "SExtractor found no sources" in caplog.text
 
 
-def test_non_empty_sextractor_result_replaces_the_source_list(sextractor_mode, stubbed_extraction, monkeypatch) -> None:
+def test_non_empty_sextractor_result_replaces_the_source_list(
+    sextractor_mode: None, stubbed_extraction: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The normal case still replaces: the whole point of the dispatch."""
     monkeypatch.setattr(
         "senpai.engine.detection.point.sextractor.extract_sextractor_sources",

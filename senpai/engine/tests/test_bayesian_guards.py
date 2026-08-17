@@ -20,8 +20,13 @@ from senpai.engine.detection.streak.bayesian.wcs_refinement import refine_sidere
 from senpai.exceptions import WcsPropagationError
 
 
-def _frame(starfield, index: int = 0, exptime: float = 1.0, seconds: float = 0.0):
-    """A frame stand-in exposing only what the guards read before failing."""
+def _frame(
+    starfield: types.SimpleNamespace | None,
+    index: int = 0,
+    exptime: float = 1.0,
+    seconds: float = 0.0,
+) -> types.SimpleNamespace:
+    """Build a frame stand-in exposing only what the guards read before failing."""
     return types.SimpleNamespace(
         frame=types.SimpleNamespace(header={"EXPTIME": exptime}, data=None),
         index=index,
@@ -37,7 +42,9 @@ def _frame(starfield, index: int = 0, exptime: float = 1.0, seconds: float = 0.0
         (types.SimpleNamespace(detection_metadata=None), "no detection metadata"),
     ],
 )
-def test_solve_rate_from_sidereal_requires_a_psf_scale(starfield, expected: str) -> None:
+def test_solve_rate_from_sidereal_requires_a_psf_scale(
+    starfield: types.SimpleNamespace | None, expected: str
+) -> None:
     """Registration without a measured PSF scale raises, rather than failing on None."""
     # 10 s apart with 1 s exposures, so the timing guard above it passes and we reach ours.
     sidereal = _frame(starfield, index=0, seconds=10.0)
@@ -55,7 +62,9 @@ def test_solve_rate_from_sidereal_requires_a_psf_scale(starfield, expected: str)
         (types.SimpleNamespace(detection_metadata=None), "no detection metadata"),
     ],
 )
-def test_refine_sidereal_frame_requires_a_psf_scale(starfield, expected: str) -> None:
+def test_refine_sidereal_frame_requires_a_psf_scale(
+    starfield: types.SimpleNamespace | None, expected: str
+) -> None:
     """Refinement without a measured PSF scale raises before convolving."""
     with pytest.raises(WcsPropagationError, match=expected):
         refine_sidereal_frame(_frame(starfield, index=7))
