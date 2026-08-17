@@ -66,8 +66,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   FWHM on the un-refined WCS, and refines through the Bayesian engine's
   `refine_sidereal_frame`. Adds `detection/point/sextractor.py` (parameters
   taken from astrometry.net's own SExtractor invocation -- `solver/augment-xylist.c`
-  plus SExtractor's `default.sex` -- and reproduced in-process with `sep`, so no
-  external binary is required) and a vendored DAOStarFinder sidereal extractor supplying the FWHM seed.
+  plus SExtractor's `default.sex` -- reproduced in-process with `sep`, so no external
+  binary is required; checked against `source-extractor` itself on a benchmark frame,
+  where both find the same 106 sources and match one-to-one by position at a median
+  offset of 0.0000 px, maximum 0.0002 px) and a vendored DAOStarFinder sidereal extractor supplying the FWHM seed.
 
 ### Fixed
 

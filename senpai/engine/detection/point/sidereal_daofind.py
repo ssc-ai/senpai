@@ -79,7 +79,7 @@ def estimate_fwhm(
         if box_size % 2 == 0:
             box_size += 1
 
-        logger.info(f"Auto box_size set to {box_size} based on FWHM guess {fwhm_scale}")
+        logger.debug(f"Auto box_size set to {box_size} based on FWHM guess {fwhm_scale}")
 
     # Calculate box boundaries with boundary checks
     y_min = max(0, y0 - box_size // 2)
@@ -104,7 +104,7 @@ def estimate_fwhm(
         y_center = (y_max - y_min) // 2
         initial_guess = (cutout.max(), x_center, y_center, fwhm_x_guess, fwhm_y_guess, 0, 0)
     except Exception:
-        logger.exception("Error estimating FWHM")
+        logger.debug("Error estimating FWHM", exc_info=True)
         return None
 
     try:
