@@ -1,8 +1,16 @@
+"""Reading physical quantities out of FITS headers, whatever form they arrive in.
+
+Header conventions vary by sensor: coordinates appear as sexagesimal strings, decimal
+degrees, or N/S/E/W-suffixed floats; rates appear per second or per minute; the keyword names
+themselves differ. Each extractor here consults the configured keyword list for its quantity
+and returns None rather than raising when a header simply does not carry it, so a frame with
+sparse metadata degrades instead of failing.
+"""
+
 import argparse
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import arrow
 import astropy.units as u
@@ -79,13 +87,15 @@ def sexagesimal_to_decimal(value: str, units: str = "degrees") -> float:
     return decimal
 
 
-def extract_header_value(header: Header, key: str) -> Any:
+def extract_header_value(header: Header, key: str) -> object:
+    """Return a header value, or None when the keyword is absent."""
     if key in header:
         return header[key]
     return None
 
 
 def float_nsew_to_decimal(value: str) -> float:
+    """Convert a float with an N/S/E/W suffix to a signed decimal."""
     # Handle coordinates with cardinal directions (N, S, E, W)
     value = value.strip()
     cardinal = None
@@ -107,7 +117,8 @@ def float_nsew_to_decimal(value: str) -> float:
     return decimal
 
 
-def convert_to_decimal_degrees_unknown_format(value: str, units: str = None) -> float:
+def convert_to_decimal_degrees_unknown_format(value: str, units: str | None = None) -> float:
+    """Convert a coordinate to decimal degrees without knowing which form it is in."""
     for converter in [sexagesimal_to_decimal, float, float_nsew_to_decimal]:
         try:
             value = converter(value)
@@ -126,7 +137,8 @@ def convert_to_decimal_degrees_unknown_format(value: str, units: str = None) -> 
     raise ValueError(f"Could not convert value to decimal degrees: {value}")
 
 
-def convert_to_decimal_kilometers(value: str, units: str = None) -> float:
+def convert_to_decimal_kilometers(value: str, units: str | None = None) -> float:
+    """Convert an altitude to kilometres from metres, feet or kilometres."""
     if units == "kilometers":
         return float(value)
     elif units == "meters":
@@ -136,7 +148,8 @@ def convert_to_decimal_kilometers(value: str, units: str = None) -> float:
         raise ValueError(f"Unsupported units: {units}")
 
 
-def convert_to_decimal_degrees(value, fmt: str = None, units: str = None) -> float:
+def convert_to_decimal_degrees(value: str | float, fmt: str | None = None, units: str | None = None) -> float:
+    """Convert a coordinate to decimal degrees, using `fmt` when the form is known."""
     if fmt == "sexagesimal":
         return sexagesimal_to_decimal(str(value), units)
     elif fmt == "float":
@@ -157,6 +170,7 @@ _CLEAR_FILTER_ALIASES = {"", "open", "l", "lum", "luminance", "clear", "none"}
 
 
 def extract_filter_from_header(header: Header) -> str | None:
+    """Return the filter name, or None when the header does not record one."""
     """Extract observation filter from FITS header.
 
     Tries configured header keys and normalizes common clear/open filter
@@ -180,6 +194,7 @@ def extract_filter_from_header(header: Header) -> str | None:
 
 
 def extract_observation_time_from_header(header: Header) -> datetime | None:
+    """Return the exposure start time, or None when the header does not record one."""
     config = get_config()
     for key in config.headers.observation_time.observation_time_keys:
         observation_time = extract_header_value(header, key)
@@ -205,6 +220,7 @@ def extract_observation_time_from_header(header: Header) -> datetime | None:
 
 
 def extract_exposure_time_from_header(header: Header) -> float | None:
+    """Return the exposure length in seconds, or None when absent."""
     config = get_config()
     for key in config.headers.exposure_time.exposure_time_keys:
         exposure_time = extract_header_value(header, key)
@@ -217,6 +233,7 @@ def extract_exposure_time_from_header(header: Header) -> float | None:
 
 
 def extract_observing_site_from_header(header: Header) -> SiteMetadata | None:
+    """Return the observing site, or None when the header lacks its position."""
     config = get_config()
 
     latitude = None
@@ -262,6 +279,7 @@ def extract_observing_site_from_header(header: Header) -> SiteMetadata | None:
 
 
 def extract_boresight_from_header(header: Header) -> tuple[float, float]:
+    """Return boresight RA/Dec in degrees, converting from Az/Alt when that is all there is."""
     config = get_config()
 
     ra = None
@@ -371,9 +389,11 @@ _RATE_UNIT_TO_ARCSEC_PER_SEC: dict[str, float] = {
 
 
 def _to_arcsec_per_second(value: float, unit: str) -> float:
-    """Normalize a track-rate value to arcseconds/second using the unit string
-    declared in ``config.headers.tracking.track_*_rate_unit``. Unknown unit
-    strings are treated as arcsec/s (the senpai default) with a warning.
+    """Normalise a track-rate value to arcseconds per second.
+
+    The unit comes from ``config.headers.tracking.track_*_rate_unit``. An unrecognised unit
+    string is treated as arcsec/s -- senpai's default -- and warned about, since guessing
+    silently would scale every rate on the frame.
     """
     factor = _RATE_UNIT_TO_ARCSEC_PER_SEC.get(unit.strip().lower())
     if factor is None:
@@ -387,6 +407,7 @@ def _to_arcsec_per_second(value: float, unit: str) -> float:
 
 
 def extract_track_rates_from_header(header: Header) -> tuple[float, float, TrackMode]:
+    """Return the mount track rates in arcsec/s and the resulting track mode."""
     config = get_config()
 
     ra_rate = None
@@ -442,7 +463,8 @@ def extract_track_rates_from_header(header: Header) -> tuple[float, float, Track
     return ra_rate, dec_rate, mode_enum
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
+    """Parse this module's command-line arguments."""
     parser = argparse.ArgumentParser(description="Extract information from FITS files based on configuration.")
     parser.add_argument("fits_file", help="Path to the FITS file to analyze")
     parser.add_argument(
@@ -455,7 +477,8 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
+    """Print the header-derived metadata for the FITS file given on the command line."""
     args = parse_arguments()
 
     set_log_level(level="DEBUG")

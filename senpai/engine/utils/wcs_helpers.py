@@ -1,6 +1,7 @@
 """Detection, matching, fitting, and shared helpers for WCS refinement."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import astropy.units as u
 import numpy as np
@@ -25,6 +26,9 @@ from senpai.engine.utils.wcs_ops import (
     filter_catalog_stars_by_radius,
 )
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,12 +37,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _local_maxima_above_floor(image, half, floor):
-    """(ys, xs, values) of pixels above ``floor`` that equal the maximum of
-    their (2*half+1)^2 window, matching ``maximum_filter(mode='constant')``
-    semantics for positive floors (out-of-bounds zeros never beat an
-    above-floor pixel). Offsets run nearest-first so almost every
-    non-maximum dies on an immediate neighbor before the wide scans.
+def _local_maxima_above_floor(image: np.ndarray, half: int, floor: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Find pixels above `floor` that dominate their own window.
+
+    Matches ``maximum_filter(mode='constant')`` semantics for positive floors, since
+    out-of-bounds zeros can never beat an above-floor pixel. Offsets are tested
+    nearest-first, so almost every non-maximum is eliminated by an immediate neighbour
+    before the wider scans run.
+
+    Args:
+        image: 2D image to scan.
+        half: Half-width of the window; it spans (2*half+1) pixels.
+        floor: Intensity a pixel must exceed to be considered.
+
+    Returns:
+        ``(ys, xs, values)`` for the surviving maxima.
+
     """
     ys, xs = np.nonzero(image > floor)
     vals = image[ys, xs]
@@ -61,7 +75,12 @@ def _local_maxima_above_floor(image, half, floor):
     return ys, xs, vals
 
 
-def find_local_maxima(image, min_distance=30, threshold=None, max_detections=None):
+def find_local_maxima(
+    image: np.ndarray,
+    min_distance: int = 30,
+    threshold: float | None = None,
+    max_detections: int | None = None,
+) -> np.ndarray:
     """Find local maxima in an image with minimum separation distance.
 
     Args:
@@ -137,7 +156,7 @@ def match_stars_to_detections(
     stars: list[StarInImage],
     detected_points: list[tuple[float, float]],
     max_distance: float = 20,
-):
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
     """Match catalog stars to detected points using bipartite matching.
 
     Args:
@@ -192,7 +211,13 @@ def match_stars_to_detections(
 # ---------------------------------------------------------------------------
 
 
-def extract_counts_with_rectangular_aperture(image, x, y, streak: StreakMetadata, background_annulus=True):
+def extract_counts_with_rectangular_aperture(
+    image: np.ndarray,
+    x: float,
+    y: float,
+    streak: StreakMetadata,
+    background_annulus: bool = True,
+) -> tuple[float, float]:
     """Extract counts from an image using a rectangular aperture aligned with a streak.
 
     Args:
@@ -256,7 +281,7 @@ def extract_counts_with_rectangular_aperture(image, x, y, streak: StreakMetadata
 # ---------------------------------------------------------------------------
 
 
-def calculate_spatial_coverage(positions, image_shape):
+def calculate_spatial_coverage(positions: np.ndarray, image_shape: tuple[int, int]) -> dict:
     """Calculate metrics for spatial coverage of reference stars.
 
     Args:
@@ -327,12 +352,18 @@ def calculate_spatial_coverage(positions, image_shape):
 # ---------------------------------------------------------------------------
 
 
-def determine_optimal_sip_order(world_coords, pixel_coords, image_shape, max_order: int = 3):
+def determine_optimal_sip_order(
+    world_coords: list[tuple[float, float]],
+    pixel_coords: list[tuple[float, float]],
+    image_shape: tuple[int, int],
+    max_order: int = 3,
+) -> int:
     """Determine optimal SIP order based on spatial coverage and number of reference stars.
 
     Args:
         world_coords: List of (ra, dec) pairs
         pixel_coords: List of (x, y) pairs
+        max_order: Highest SIP order to allow, whatever the coverage supports
         image_shape: (height, width) of image
 
     Returns:
@@ -374,7 +405,7 @@ def determine_optimal_sip_order(world_coords, pixel_coords, image_shape, max_ord
 
 
 def compute_snr_and_filter_stars(
-    frame,
+    frame: "SiderealFrame | RateTrackFrame",
     catalog_stars: list[StarInSpace],
     min_snr: float = 8.0,
     min_stars_to_preserve: int = 6,
@@ -658,7 +689,7 @@ def fit_and_validate_wcs(
 
 
 def update_starfield_wcs(
-    frame,
+    frame: "SiderealFrame | RateTrackFrame",
     new_wcs: WCSModel,
     limiting_magnitude: float | None = None,
 ) -> None:
