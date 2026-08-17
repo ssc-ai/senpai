@@ -1105,8 +1105,8 @@ def plot_sip_distortions(
 
     Returns:
         tuple: (fig, ax) if output_file is None, None otherwise
-    """
 
+    """
     # Check if WCS has SIP distortions
     has_sip = False
     if (hasattr(wcs, "sip") and wcs.sip is not None) or wcs.sip is not None:

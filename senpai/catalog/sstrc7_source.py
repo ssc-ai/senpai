@@ -192,6 +192,7 @@ def query_by_los_radec_with_rotation(
 
     Returns:
         A list of star dicts, in senpai's cross-catalog record shape.
+
     """
     margin = 1.0 + safety_margin
     # Half-diagonal of the expanded field: the smallest cone that contains the

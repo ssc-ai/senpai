@@ -1,6 +1,4 @@
-"""
-Catalog-related constants and enums.
-"""
+"""Catalog-related constants and enums."""
 
 from enum import Enum
 
@@ -63,6 +61,7 @@ def get_filters_for_catalog(catalog_type: CatalogType):
 
     Returns:
         List of available filter names for the catalog
+
     """
     filter_mappings = {
         CatalogType.SSTRC7: SSTRC7Filter,

@@ -18,6 +18,7 @@ def calculate_residual_errors(wcs_model: WCSModel, stars_with_radec_xy: list[tup
 
     Returns:
         dict with 'x_errors', 'y_errors', 'radial_errors' and statistics
+
     """
     if not stars_with_radec_xy:
         return {}
@@ -72,6 +73,7 @@ def log_residual_errors(phase_name: str, error_dict: dict):
     Args:
         phase_name: Name of the phase (e.g., "Phase 1 - Before SIP fit")
         error_dict: Dictionary returned from calculate_residual_errors()
+
     """
     if not error_dict:
         logger.warning(f"{phase_name}: No error data available")

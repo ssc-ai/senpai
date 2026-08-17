@@ -808,8 +808,8 @@ def _write_sequence_gif(image_paths: list, gif_path) -> None:
     sizes (different overlays/colorbars), so a naive ``np.stack`` of the frames
     raises "all input arrays must have the same shape". We pad each frame to the
     max height/width before stacking. The GIF is a diagnostic nicety, so any
-    failure is logged and swallowed rather than failing the batch."""
-
+    failure is logged and swallowed rather than failing the batch.
+    """
     try:
         import imageio.v3 as iio
         import numpy as np

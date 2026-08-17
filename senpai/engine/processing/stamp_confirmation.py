@@ -974,6 +974,7 @@ def _de_multiframe_snr(
     Returns:
         ``(fwd_other_snr, rev_other_snr)`` — combined SNR of DE values
         in other frames for forward and reverse directions.
+
     """
     rate = candidate.rate_pixels_per_sec or 0.0
     angle_rad = np.radians(candidate.angle_deg)

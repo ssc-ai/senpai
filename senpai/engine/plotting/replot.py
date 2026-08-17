@@ -74,7 +74,8 @@ def _find_result_json(batch_dir: Path) -> Path | None:
 
 def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
     """Load a frame's processed FITS, preferring the stored path but falling back
-    to a same-named file in ``batch_dir`` (so a moved/copied dir still plots)."""
+    to a same-named file in ``batch_dir`` (so a moved/copied dir still plots).
+    """
     candidates: list[Path] = []
     if processed_path:
         candidates.append(Path(processed_path))
@@ -88,8 +89,8 @@ def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
 def _streak_candidate_objs(candidates):
     """The serializable model stores streak_candidates as raw dicts, but
     ``plot_single_frame`` reads them by attribute (``.x``, ``.length_pixels``,
-    ...). Wrap each dict so attribute access (and getattr-with-default) works."""
-
+    ...). Wrap each dict so attribute access (and getattr-with-default) works.
+    """
     if not candidates:
         return None
     out = []
@@ -100,7 +101,6 @@ def _streak_candidate_objs(candidates):
 
 def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
     """final_<idx>.png (overlays) + raw_<idx>.png for one frame."""
-
     written: list[Path] = []
     final_path = out_dir / f"final_{frame.index}.png"
     raw_path = out_dir / f"raw_{frame.index}.png"
@@ -123,7 +123,6 @@ def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
 
 def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
     """Completeness + limiting-mag diagnostics from the stored summary arrays."""
-
     ps = frame.photometry_summary or {}
     written: list[Path] = []
 
@@ -162,7 +161,6 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     ``plotting.photometry`` is on) — the same routine the WCS-refinement path uses
     inline. No astrometry/catalog/WCS recompute: the solved StarField is reused.
     """
-
     ap_path = out_dir / f"frame_{frame.index}_aperture_photometry_stars.png"
     if not force and ap_path.exists():
         return []
@@ -216,8 +214,8 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
 def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
     """Per-frame empirical PSF panel. Prefers the saved .npy stamp (cheap, no FITS
     reload); falls back to reloading the processed FITS and re-stacking (which
-    also re-writes the .npy), so panels regenerate even if psfs was off at run."""
-
+    also re-writes the .npy), so panels regenerate even if psfs was off at run.
+    """
     suffix = "psf" if mode == "sidereal" else "streak"
     png = out_dir / f"frame_{frame.index}_{suffix}.png"
     npy = out_dir / f"frame_{frame.index}_{suffix}.npy"
@@ -285,7 +283,6 @@ def replot_batch_dir(
 
     Returns a per-kind count of files written.
     """
-
     batch_dir = Path(batch_dir)
     result_json = _find_result_json(batch_dir)
     if result_json is None:

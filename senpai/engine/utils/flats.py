@@ -1,5 +1,4 @@
-"""
-Flat field utilities for creating and applying master flat corrections.
+"""Flat field utilities for creating and applying master flat corrections.
 
 This module provides functions for:
 1. Creating master flat fields from directories of flat frame FITS files
@@ -67,7 +66,8 @@ from senpai.engine.utils.darks import find_best_dark_for_exposure
 class _FlatSource:
     """A validated flat frame, referenced by path; data is re-read lazily
     chunk-by-chunk during combination so full frames never co-reside in
-    memory (a night of unbinned 8120^2 twilight flats is ~50 GB)."""
+    memory (a night of unbinned 8120^2 twilight flats is ~50 GB).
+    """
 
     path: Path
     median: float  # frame median (after dark subtraction); normalizes the frame
@@ -88,8 +88,7 @@ def create_master_flat(
     dark_directory: str | Path | None = None,
     max_dark_exptime_ratio: float = 10.0,
 ) -> tuple[np.ndarray, fits.Header]:
-    """
-    Create a master flat from a directory of flat field FITS files.
+    """Create a master flat from a directory of flat field FITS files.
 
     Parameters
     ----------
@@ -123,6 +122,7 @@ def create_master_flat(
         flat: dividing a science frame by it preserves the flux scale)
     header : fits.Header
         Header from the first valid flat frame
+
     """
     flat_directory = Path(flat_directory)
 
@@ -191,8 +191,7 @@ def apply_flat_field(
     master_flat: str | Path | np.ndarray,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage | np.ndarray:
-    """
-    Apply flat field correction to an image.
+    """Apply flat field correction to an image.
 
     Parameters
     ----------
@@ -207,6 +206,7 @@ def apply_flat_field(
     -------
     corrected_image : ProcessedFitsImage or np.ndarray
         Flat field corrected image
+
     """
     # Load master flat if provided as file path. float32 throughout: master
     # flats are saved as float32 anyway, and the corrected frame's dtype is
@@ -263,8 +263,7 @@ def apply_flat_field(
 
 
 def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]) -> dict[tuple[str, ...], list[Path]]:
-    """
-    Group FITS files by consistent header values.
+    """Group FITS files by consistent header values.
 
     Parameters
     ----------
@@ -277,6 +276,7 @@ def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]
     -------
     groups : dict
         Dictionary mapping group keys (tuples of header values) to lists of file paths
+
     """
     if not required_headers:
         # If no headers specified, return all files as one group
@@ -308,8 +308,7 @@ def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]
 
 
 def load_master_flat(file_path: str | Path) -> tuple[np.ndarray, fits.Header]:
-    """
-    Load a master flat from a FITS file.
+    """Load a master flat from a FITS file.
 
     Parameters
     ----------
@@ -322,6 +321,7 @@ def load_master_flat(file_path: str | Path) -> tuple[np.ndarray, fits.Header]:
         The master flat field data
     header : fits.Header
         The FITS header
+
     """
     with fits.open(file_path) as hdul:
         return hdul[0].data.astype(np.float64), hdul[0].header
@@ -332,8 +332,7 @@ def _create_descriptive_filename(
     group_key: tuple[str, ...],
     header_names: list[str],
 ) -> Path:
-    """
-    Create a descriptive filename based on group characteristics.
+    """Create a descriptive filename based on group characteristics.
 
     Parameters
     ----------
@@ -348,6 +347,7 @@ def _create_descriptive_filename(
     -------
     Path
         Descriptive filename incorporating group characteristics
+
     """
     base_path = Path(base_output_path)
     output_dir = base_path.parent
@@ -374,7 +374,6 @@ def _find_dark_for_flat(
     max_exptime_ratio: float = 10.0,
 ) -> tuple[Path, float] | None:
     """Find the best-matching dark for a flat exposure. Returns (path, dark_exptime)."""
-
     return find_best_dark_for_exposure(
         dark_directory=dark_directory,
         target_exptime=flat_exptime,
@@ -510,7 +509,6 @@ def _combine_flat_sources(
 
 def main():
     """CLI interface for creating master flat fields."""
-
     parser = argparse.ArgumentParser(
         description="Create master flat fields from a directory of flat field FITS files",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -691,9 +689,7 @@ def _create_master_flat_from_files(
     dark_directory: str | Path | None = None,
     max_dark_exptime_ratio: float = 10.0,
 ) -> tuple[np.ndarray, fits.Header]:
-    """
-    Helper function to create master flat from a specific list of files.
-    """
+    """Helper function to create master flat from a specific list of files."""
     valid_sources, valid_headers, dark_subtracted_count = _validate_flat_sources(
         fits_files,
         min_median=min_median,

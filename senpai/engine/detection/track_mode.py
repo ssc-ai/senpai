@@ -75,7 +75,8 @@ class TrackModeDecision:
 
 def _blob_elongation(stamp: np.ndarray) -> tuple[float, float] | None:
     """Axis ratio (major/minor) and position angle (rad) from a blob's intensity
-    second moments. Returns None for a degenerate blob."""
+    second moments. Returns None for a degenerate blob.
+    """
     tot = float(stamp.sum())
     if tot <= 0:
         return None
@@ -102,7 +103,8 @@ def infer_track_mode_from_image(data: np.ndarray, max_sources: int = _MAX_SOURCE
     """Round sources -> sidereal, mutually aligned streaks -> rate, else UNKNOWN.
 
     Rate-independent on purpose: it measures source *shape* directly, so it does
-    not inherit any error in the header tracking rates."""
+    not inherit any error in the header tracking rates.
+    """
     a = np.asarray(data, dtype=np.float32)
     if a.ndim != 2:
         return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, 0, float("nan"), float("nan"))
@@ -170,7 +172,6 @@ def infer_track_mode_from_image(data: np.ndarray, max_sources: int = _MAX_SOURCE
 
 def _header_trkmode(header, mode_keys) -> TrackMode | None:
     """Explicit, unambiguous TRKMODE from the header, or None."""
-
     for k in mode_keys:
         v = extract_header_value(header, k)
         if v is None:
@@ -189,8 +190,8 @@ def _header_trkmode(header, mode_keys) -> TrackMode | None:
 def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
     """Classify a frame sidereal vs rate, cheapest evidence first (see module
     docstring). ``data`` (the 2-D image) enables the pixel arbiter; omit it to
-    stay metadata-only."""
-
+    stay metadata-only.
+    """
     if config is None:
         from senpai.core.config import get_config
 

@@ -82,7 +82,6 @@ def download_chunks(
     still fails, skipped (logged) rather than crashing the whole multi-hour run —
     a later re-run picks up the gaps.
     """
-
     from astroquery.gaia import Gaia
 
     Gaia.ROW_LIMIT = -1

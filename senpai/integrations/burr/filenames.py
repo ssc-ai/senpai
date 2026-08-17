@@ -67,7 +67,6 @@ def parse_burr_filename(path: str | Path) -> ParsedFilename:
     record where every parsed field is None and is_uuid is False, so the caller
     can decide whether to skip or fall back to header inspection.
     """
-
     p = Path(path)
     stem = p.stem
 

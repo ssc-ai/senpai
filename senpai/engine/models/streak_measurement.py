@@ -10,6 +10,7 @@ def normalize_angle(angle: float) -> float:
 
     Returns:
         Normalized angle in [0, 180) range
+
     """
     # First normalize to [0, 180)
     normalized = angle % 180
@@ -28,6 +29,7 @@ def angular_difference(angle1: float, angle2: float) -> float:
 
     Returns:
         Minimum angular difference in degrees (0 to 90)
+
     """
     # Normalize both angles to [0, 180)
     a1 = normalize_angle(angle1)
@@ -196,6 +198,7 @@ class StreakMeasurements(BaseModel):
 
         Returns:
             StreakMeasurement with sigma-clipped mean values
+
         """
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 

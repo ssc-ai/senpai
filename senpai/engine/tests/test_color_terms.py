@@ -153,7 +153,8 @@ def test_bandcalibration_rounds_fields():
 
 def _make_results(zp, coeff, band="Johnson_V", n=20, with_color=True, exposure_time=1.0, seed=10):
     """Photometry results whose flux obeys cat = zp + coeff*color + inst,
-    with inst = -2.5*log10(flux/texp). Color comes from Gaia BP-RP."""
+    with inst = -2.5*log10(flux/texp). Color comes from Gaia BP-RP.
+    """
     rng = np.random.default_rng(seed)
     results = []
     for _ in range(n):
@@ -218,7 +219,8 @@ def test_multiband_simple_fallback_without_color():
 
 def test_multiband_respects_exposure_time():
     """Instrumental mag uses flux/texp; a longer exposure must not shift the ZP
-    as long as flux scales with exposure time."""
+    as long as flux scales with exposure time.
+    """
     texp = 30.0
     results = _make_results(25.0, 0.1, n=20, exposure_time=texp)
     sf = _starfield_for(results, exposure_time=texp)
@@ -245,7 +247,8 @@ def test_multiband_skips_band_with_too_few_matches():
 
 def test_multiband_ignores_poor_quality_results():
     """Flagging all-but-a-few results as poor quality drops them below the
-    3-star minimum, so the band is skipped."""
+    3-star minimum, so the band is skipped.
+    """
     results = _make_results(25.0, 0.1, n=20)
     for r in results[2:]:
         r.quality_flag = False

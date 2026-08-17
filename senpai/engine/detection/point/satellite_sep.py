@@ -49,6 +49,7 @@ def cutout_gauss(sub_image: np.ndarray, pixel_seeing: float) -> tuple[float, flo
 
     Raises:
         ValueError: If the Gaussian fit does not converge.
+
     """
     size = sub_image.shape[0]
 
@@ -96,6 +97,7 @@ def find_two_brightest_points(
 
     Returns:
         Coordinates of the two brightest points as ((y1, x1), (y2, x2))
+
     """
     # Find the coordinates of the brightest point
     brightest_point_1 = np.unravel_index(np.argmax(arr), arr.shape)
@@ -119,6 +121,7 @@ def euclidean_distance(point1: tuple[int, int], point2: tuple[int, int]) -> floa
 
     Returns:
         Euclidean distance.
+
     """
     return float(np.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2))
 
@@ -133,6 +136,7 @@ def generate_cutout(frame: np.ndarray, detection: tuple[float, float], side: int
 
     Returns:
         Square cutout of the image.
+
     """
     x, y = detection
     y_min = max(0, round(y) - side)
@@ -171,6 +175,7 @@ def _flux_concentration(cutout: np.ndarray) -> float:
 
     Returns:
         core_flux / total_flux, or 0.0 if the cutout is too small.
+
     """
     cy, cx = np.array(cutout.shape) // 2
     if cy - 1 < 0 or cx - 1 < 0 or cy + 2 > cutout.shape[0] or cx + 2 > cutout.shape[1]:
@@ -201,6 +206,7 @@ def psf_flux_concentration(cutout: np.ndarray, pixel_fwhm: float) -> float:
     Returns:
         inner_flux / outer_flux, or 0.0 when the cutout is too small to contain the
         outer aperture or the outer aperture holds no flux.
+
     """
     r_in = _CONCENTRATION_INNER_FWHM * pixel_fwhm
     r_out = _CONCENTRATION_OUTER_FWHM * pixel_fwhm
@@ -240,6 +246,7 @@ def measured_pixel_fwhm(frame: RateTrackFrame) -> float:
 
     Returns:
         The measured PSF FWHM in pixels.
+
     """
 
     def _valid(value: float | None) -> bool:
@@ -270,6 +277,7 @@ def _simple_mask(shape: tuple[int, int], center_yx: tuple[float, float], radius:
 
     Returns:
         Boolean array; True inside the aperture.
+
     """
     mask = np.zeros(shape, dtype=bool)
     cy, cx = int(center_yx[0]), int(center_yx[1])
@@ -362,6 +370,7 @@ def filter_point_sources(
 
     Returns:
         List of (x, y, fwhm) for accepted point sources.
+
     """
     verbose = settings.detection.verbose
     filtered_detections = []
@@ -484,6 +493,7 @@ def extract_point_sources_sep(frame: RateTrackFrame) -> SatelliteListImage:
 
     Returns:
         A SatelliteListImage of detected point sources.
+
     """
     # Pre-processing
     image_data = median_filter(frame.frame.data, size=3)

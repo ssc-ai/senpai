@@ -46,7 +46,6 @@ def test_find_local_maxima_respects_threshold():
 
 def _match_reference(stars, detected_points, max_distance=20):
     """The original (pre-vectorization) implementation, kept as the oracle."""
-
     cost = np.zeros((len(stars), len(detected_points)))
     for i, star in enumerate(stars):
         if star is None:

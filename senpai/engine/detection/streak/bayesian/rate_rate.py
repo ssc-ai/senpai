@@ -49,6 +49,7 @@ def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> No
 
     Returns:
         None.
+
     """
     max_r1 = np.percentile(rate1_img, 99.99)
     max_r2 = np.percentile(rate2_img, 99.99)
@@ -103,6 +104,7 @@ def windowed_correlation_peaks(
     Returns:
         A list of up to ``n_peaks`` (row, column) peak locations in the full image's coordinates,
         brightest first.
+
     """
     center = np.array(cross_correlated_image.shape) / 2
     if expected_shift and expected_shift > 0:
@@ -153,6 +155,7 @@ def track_rate_from_header(header: object, plate_scale_arcsec: float, dec_deg: f
 
     Returns:
         The pixel track rate in pixels per second, or ``None`` if it cannot be derived.
+
     """
     ra_rate = header.get("TELTKRA")
     dec_rate = header.get("TELTKDEC")
@@ -180,6 +183,7 @@ def _initial_track_rate(rate_frame: RateTrackFrame) -> float | None:
     Returns:
         The object's pixel track rate in pixels per second, or ``None`` if neither source is
         available (then the search window falls back to its default size).
+
     """
     starfield = rate_frame.starfield
     if starfield is not None and starfield.wcs is not None and starfield.wcs_metadata is not None:
@@ -216,6 +220,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
 
     Returns:
         None.
+
     """
     # The reference (source) frame must already have a WCS solution. If an upstream shift was
     # rejected, this frame was never solved, so there is nothing to register against. This is a
@@ -470,6 +475,7 @@ def bayesian_optimize_proposed_shift(
     Returns:
         A tuple of ``(best_shift_x, best_shift_y, best_correlation)`` for the highest-
         correlation shift found.
+
     """
     # Define the search space for the parameters.
     space = [

@@ -273,7 +273,6 @@ def _record(ts_seconds: int) -> FrameRecord:
     The filename's embedded ts is irrelevant — we inject the timestamp directly
     so we can drive gap-based clustering with arbitrary offsets.
     """
-
     base = datetime(2026, 5, 27, 7, 0, 0, tzinfo=UTC)
     parsed = parse_burr_filename("20260527T070000_photometric_standards_ICRSTarget_f0.fits")
     parsed = replace(parsed, timestamp=base + timedelta(seconds=ts_seconds))
@@ -311,8 +310,8 @@ class TestClusterByTimeGap:
 
 def _rec(task: str, target: str, ts_seconds: int) -> FrameRecord:
     """A FrameRecord with a chosen task/target and a timestamp offset, for
-    exercising the command-less (task, target) clustering path."""
-
+    exercising the command-less (task, target) clustering path.
+    """
     base = datetime(2026, 5, 30, 2, 0, 0, tzinfo=UTC)
     parsed = parse_burr_filename(f"20260530T020000_{task}_{target}_f0.fits")
     parsed = replace(parsed, timestamp=base + timedelta(seconds=ts_seconds))
@@ -373,7 +372,6 @@ def _make_night(
     commands: list[dict],
 ) -> tuple[BurrNight, Path]:
     """Spin up a tmp_path layout that mirrors /burr/{Hornet/, burr/Hornet_XXXX/}."""
-
     burr_root = tmp_path / "burr_root"
     sensor_dir = burr_root / "Hornet"
     night_meta = burr_root / "burr" / "Hornet_20260527" / "metadata"
@@ -497,8 +495,8 @@ def test_burrnight_skips_out_of_window_frames(tmp_path):
 def test_auto_nights_splits_flat_multi_night_dir(tmp_path):
     """A flat dir holding two observing nights (burr's 'didn't split per night'
     bug) splits into two BurrNights with evening-local ids, frame-derived
-    windows, and command-less (task, target) batching."""
-
+    windows, and command-less (task, target) batching.
+    """
     data_dir = tmp_path / "DAO-01"
     meta_dir = tmp_path / "processed" / "DAO-01_20260528" / "metadata"
     data_dir.mkdir(parents=True)
@@ -556,8 +554,8 @@ def test_auto_nights_splits_flat_multi_night_dir(tmp_path):
 def test_frame_batches_by_seq_key(tmp_path):
     """seq_key groups frames by a FITS header id (BURRSEQ): one batch per set,
     and frames missing the keyword fall back to command/orphan batching rather
-    than being dropped."""
-
+    than being dropped.
+    """
     data_dir = tmp_path / "DAO-01"
     meta_dir = tmp_path / "processed" / "DAO-01_20260528" / "metadata"
     data_dir.mkdir(parents=True)

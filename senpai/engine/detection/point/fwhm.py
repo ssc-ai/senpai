@@ -89,8 +89,7 @@ def measure_fwhm_from_catalog_stars(
     config=None,
     sat_level: float | None = None,
 ) -> FWHMMetadata:
-    """
-    Measure FWHM from well-isolated catalog stars.
+    """Measure FWHM from well-isolated catalog stars.
 
     Parameters
     ----------
@@ -111,6 +110,7 @@ def measure_fwhm_from_catalog_stars(
     -------
     FWHMMetadata
         FWHM statistics and measurements
+
     """
     logger.info(f"Measuring FWHM from {len(catalog_stars)} catalog stars")
 

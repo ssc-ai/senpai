@@ -39,6 +39,7 @@ def preprocess_for_shift(frame: ProcessedFitsImage) -> None:
 
     Returns:
         None.
+
     """
     # Only apply if not already processed. History entries are
     # ProcessingMetadata records (bare ProcessingStep enums tolerated).
@@ -71,6 +72,7 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
 
     Raises:
         TypeError: If the source/target frame types are not a supported combination.
+
     """
     frame_source = senpai_run.get_frame_by_index(frame_shift.source_index)
     frame_target = senpai_run.get_frame_by_index(frame_shift.target_index)

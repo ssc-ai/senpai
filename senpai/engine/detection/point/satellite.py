@@ -1,6 +1,4 @@
-"""
-Satellite point source detection in rate track, assuming WCS already fit
-"""
+"""Satellite point source detection in rate track, assuming WCS already fit"""
 
 import logging
 import warnings
@@ -121,8 +119,7 @@ def _dao_sources_at_threshold(
 
 
 def cutout_gauss(sub_image: np.ndarray, pixel_seeing: float, plot: bool = False) -> tuple[float, float, float]:
-    """
-    Fit a 2D Gaussian to a sub-image and return FWHM measurements.
+    """Fit a 2D Gaussian to a sub-image and return FWHM measurements.
 
     Args:
         sub_image: Small image cutout centered on a detection
@@ -131,6 +128,7 @@ def cutout_gauss(sub_image: np.ndarray, pixel_seeing: float, plot: bool = False)
 
     Returns:
         Tuple of (FWHM_x, FWHM_y, average_FWHM)
+
     """
     size = sub_image.shape[0]
 
@@ -210,14 +208,14 @@ def cutout_gauss(sub_image: np.ndarray, pixel_seeing: float, plot: bool = False)
 def find_two_brightest_points(
     arr: np.ndarray,
 ) -> tuple[tuple[int, int], tuple[int, int]]:
-    """
-    Find the coordinates of the two brightest points in a 2D array.
+    """Find the coordinates of the two brightest points in a 2D array.
 
     Args:
         arr: 2D numpy array
 
     Returns:
         Coordinates of the two brightest points as ((y1, x1), (y2, x2))
+
     """
     # Find the coordinates of the brightest point
     brightest_point_1 = np.unravel_index(np.argmax(arr), arr.shape)
@@ -233,8 +231,7 @@ def find_two_brightest_points(
 
 
 def euclidean_distance(point1: tuple[int, int], point2: tuple[int, int]) -> float:
-    """
-    Calculate the Euclidean distance between two points.
+    """Calculate the Euclidean distance between two points.
 
     Args:
         point1: Coordinates of the first point (y, x)
@@ -242,13 +239,13 @@ def euclidean_distance(point1: tuple[int, int], point2: tuple[int, int]) -> floa
 
     Returns:
         Euclidean distance
+
     """
     return np.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2)
 
 
 def generate_cutout(frame: np.ndarray, detection: tuple[float, float], side: int, plot: bool = False) -> np.ndarray:
-    """
-    Generate a square cutout centered on a detection.
+    """Generate a square cutout centered on a detection.
 
     Args:
         frame: Full image array
@@ -257,6 +254,7 @@ def generate_cutout(frame: np.ndarray, detection: tuple[float, float], side: int
 
     Returns:
         Square cutout of the image
+
     """
     x, y = detection
     y_min = max(0, int(round(y) - side))
@@ -279,8 +277,7 @@ def filter_point_sources(
     pixel_seeing: float,
     hot_pixel_threshold: float = 0.35,
 ) -> list[tuple[float, float, float]]:
-    """
-    Filter out hot pixels, extended sources, and other non-point-like detections.
+    """Filter out hot pixels, extended sources, and other non-point-like detections.
 
     Args:
         frame: RateTrackFrame containing the image data
@@ -290,6 +287,7 @@ def filter_point_sources(
 
     Returns:
         List of filtered (x, y) coordinates for confirmed point sources
+
     """
     config = get_config()
     filtered_detections = []
@@ -607,8 +605,7 @@ def veto_catalog_star_detections(
 
 
 def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
-    """
-    Extract point sources from a rate track frame.
+    """Extract point sources from a rate track frame.
 
     This function identifies point sources in astronomical frames where stars may be streaked.
     It uses a combination of techniques to distinguish point sources from streaks, hot pixels, and noise.
@@ -618,6 +615,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
 
     Returns:
         A SatelliteListImage containing detected point sources
+
     """
     # Dispatch to the configured rate-frame point detector. Default keeps the
     # upstream DAOStarFinder path below; "sep" selects the opt-in SEP detector.

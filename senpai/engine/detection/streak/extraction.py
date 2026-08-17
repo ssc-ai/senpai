@@ -97,6 +97,7 @@ def prepare_rate_frame(rate_frame, padding: float = 0.05) -> np.ndarray:
     -------
     np.ndarray
         Prepared frame data
+
     """
     # Get the data after any scaling has been applied
     rate_data = rate_frame.frame.data.copy().astype(np.float32)
@@ -132,6 +133,7 @@ def prepare_sidereal_frame(sidereal_frame, padding: float = 0.05) -> tuple[np.nd
     -------
     tuple[np.ndarray, bool]
         Prepared frame data and whether synthetic frame was used
+
     """
     # Check if we should use synthetic frame
     if sidereal_frame.starfield and sidereal_frame.starfield.wcs:
@@ -194,6 +196,7 @@ def refine_robust_streak(
 
     Returns:
         tuple: (refined StreakMeasurement, measured_fwhm)
+
     """
     if psf is None or seed is None:
         logger.warning("Invalid inputs to refine_robust_streak")
@@ -599,7 +602,7 @@ def refine_streak_len(
     rotation: float,
     half_max_value: float = 0.55,
 ) -> float:
-    """refine streak length in cases of noisy PSF by looking along streak angle
+    """Refine streak length in cases of noisy PSF by looking along streak angle
 
     Args:
         psf (np.array): PSF
@@ -609,6 +612,7 @@ def refine_streak_len(
 
     Returns:
         float: refined estimate of streak length
+
     """
     rotated_psf = rotate(psf, angle=rotation, mode="constant", cval=np.min(psf))
     rotated_psf /= np.max(rotated_psf)
@@ -880,8 +884,7 @@ def refine_streak_length_by_overhang(
     rotation: float,
     fwhm: float,
 ) -> float:
-    """
-    Refine streak length by detecting overhang at the ends.
+    """Refine streak length by detecting overhang at the ends.
     Looks for sharp drops in intensity that indicate the streak extends beyond the data.
 
     Args:
@@ -893,6 +896,7 @@ def refine_streak_length_by_overhang(
 
     Returns:
         float: Refined length estimate
+
     """
     # Get coordinates of streak pixels
     y_coords, x_coords = np.where(streak_mask)
@@ -970,8 +974,7 @@ def extract_streak_dims_simple_long(
     rotation: float = None,
     fwhm: float = 4.0,
 ) -> tuple[StreakMeasurement, np.ndarray, float]:
-    """
-    Extract streak dimensions for very long streaks using a simple threshold-based approach.
+    """Extract streak dimensions for very long streaks using a simple threshold-based approach.
     This method is optimized for streaks longer than ~100 pixels.
 
     Args:
@@ -982,6 +985,7 @@ def extract_streak_dims_simple_long(
 
     Returns:
         tuple: (StreakMeasurement, psf, measured_fwhm)
+
     """
     logger.info(f"Using simple long streak extraction method (est: len={length:.1f}, rot={rotation:.1f}°)")
 
@@ -1156,8 +1160,7 @@ def extract_streak_dims_robust(
     rotation: float = None,
     fwhm: float | None = None,
 ) -> tuple[StreakMeasurement, np.ndarray, float]:
-    """
-    Extract streak dimensions using a robust approach that combines matched filtering,
+    """Extract streak dimensions using a robust approach that combines matched filtering,
     morphological analysis, and statistical validation.
 
     Args:
@@ -1169,6 +1172,7 @@ def extract_streak_dims_robust(
 
     Returns:
         tuple: (rotation, length, psf, measured_fwhm)
+
     """
     # Only fall back to the simple long-streak extractor for *very* long streaks.
     # The previous 150px threshold split a single set across two extractors
@@ -1725,6 +1729,7 @@ def streak_fwhm_from_cutout(cutout_frame: np.ndarray, rotation: float) -> float:
 
     Returns:
         float: FWHM in pixels, or None if measurement fails
+
     """
     if rotation != 0:
         rotated_cutout = rotate(cutout_frame, angle=rotation, mode="constant", cval=np.nan)
@@ -1812,6 +1817,7 @@ def streak_parameters_from_xcorr(
 
     Returns:
         tuple: (StreakMeasurement with quality info, processed cutout)
+
     """
     cutout_frame = (cutout_frame.copy() - np.min(cutout_frame)) / np.max(cutout_frame)
 
@@ -1996,6 +2002,7 @@ def measure_gaussian_shift(centered_cutout: np.ndarray) -> tuple[np.ndarray, flo
     Returns:
         tuple: (shift_vector, fwhm) where shift_vector is the offset from center and fwhm is the
                full width at half maximum of the fitted Gaussian in pixels
+
     """
     # Find the peak location
     psf_center = np.unravel_index(np.argmax(centered_cutout), centered_cutout.shape)
@@ -2085,6 +2092,7 @@ def measure_psf_shift_parameter_free(
 
     Returns:
         np.ndarray: Shift vector from center to peak
+
     """
     center = np.array(centered_cutout.shape) / 2
 
@@ -2139,8 +2147,8 @@ def measure_streak_shift_centroid(
 
     Returns:
         np.ndarray: Shift vector from center to streak centroid [x, y]
-    """
 
+    """
     center = np.array(centered_cutout.shape) / 2
     y_center, x_center = int(center[0]), int(center[1])
 
@@ -2217,6 +2225,7 @@ def cross_corr(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
 
     Returns:
         np.ndarray: Cross correlated image
+
     """
     # scipy.fft: same pocketfft as numpy's, multithreaded with workers —
     # identical values, several times faster on full frames.
@@ -2234,8 +2243,7 @@ def cross_corr(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
 
 
 def measure_psf_fwhm(data: np.ndarray, rotation: float | None = None) -> float:
-    """
-    Measure the FWHM of the PSF perpendicular to the streak direction with sub-pixel precision.
+    """Measure the FWHM of the PSF perpendicular to the streak direction with sub-pixel precision.
 
     Args:
         data: 2D array containing a normalized PSF or source
@@ -2243,6 +2251,7 @@ def measure_psf_fwhm(data: np.ndarray, rotation: float | None = None) -> float:
 
     Returns:
         float: FWHM in pixels
+
     """
     # If rotation is not provided, try to determine it
     if rotation is None:
@@ -2339,8 +2348,8 @@ def streak_mask_effective_kernel(kernel: np.ndarray, threshold: float = 0.01) ->
 
     Depends only on the kernel, so it's cached: the candidate loop reuses the same
     streak kernel ~30x, and the self-convolution of a ~85x207 kernel costs ~0.8 s
-    each — recomputing it every call dominated runtime."""
-
+    each — recomputing it every call dominated runtime.
+    """
     key = (kernel.shape, float(kernel.sum()), round(threshold, 6))
     cached = _EK_CACHE.get(key)
     if cached is not None:
@@ -2356,8 +2365,8 @@ def _cached_working_bg(working_data: np.ndarray) -> float:
     """Median background of working_data, cached by array identity (weakref-
     validated against id reuse). Masking a handful of small regions doesn't shift
     a 66 MP median, so computing it once per extraction (not ~30x) is exact enough
-    and avoids ~0.8 s/call."""
-
+    and avoids ~0.8 s/call.
+    """
     key = id(working_data)
     ent = _BG_CACHE.get(key)
     if ent is not None and ent[0]() is working_data:
@@ -2380,8 +2389,7 @@ def mask_streak_region(
     response: np.ndarray | None = None,
     response_fill: float = -np.inf,
 ):
-    """
-    Mask a streak region's area of influence in ``processed_mask`` /
+    """Mask a streak region's area of influence in ``processed_mask`` /
     ``working_data`` (and optionally a ``response`` map used for peak-finding).
 
     For speed in the candidate loop, pass a precomputed ``effective_kernel``
@@ -2399,6 +2407,7 @@ def mask_streak_region(
 
     Returns:
         tuple: (updated_processed_mask, updated_working_data)
+
     """
     if effective_kernel is None:
         effective_kernel = streak_mask_effective_kernel(kernel, threshold)
@@ -2431,8 +2440,7 @@ def mask_streak_region(
 
 
 def is_valid_psf(cutout, processed_mask, y_max, x_max, cutout_size):
-    """
-    Check if a PSF cutout is valid by ensuring it doesn't overlap with masked regions.
+    """Check if a PSF cutout is valid by ensuring it doesn't overlap with masked regions.
 
     Args:
         cutout: The extracted PSF cutout
@@ -2442,6 +2450,7 @@ def is_valid_psf(cutout, processed_mask, y_max, x_max, cutout_size):
 
     Returns:
         bool: True if the PSF is valid, False otherwise
+
     """
     # Extract the corresponding region from the processed mask
     y_start = max(0, y_max - cutout_size)

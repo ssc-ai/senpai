@@ -29,7 +29,8 @@ from senpai.engine.plotting.replot import (
 @pytest.fixture(autouse=True)
 def _config():
     """Replot reads completeness/SNR defaults from the global config, which the
-    CLI always initializes; mirror that here."""
+    CLI always initializes; mirror that here.
+    """
     initialize_config(CONFIG_DIR / "dao.yaml")
 
 
@@ -113,8 +114,8 @@ def test_replot_photometry_skips_existing_without_force(tmp_path):
 def test_streak_candidate_objs_wraps_dicts():
     """Serializable streak_candidates are dicts; plot_single_frame reads them by
     attribute. The wrapper must expose .x/.length_pixels etc. (regression: the
-    full replot failed 6 batches with 'dict' object has no attribute 'x')."""
-
+    full replot failed 6 batches with 'dict' object has no attribute 'x').
+    """
     assert _streak_candidate_objs(None) is None
     assert _streak_candidate_objs([]) is None
     objs = _streak_candidate_objs(

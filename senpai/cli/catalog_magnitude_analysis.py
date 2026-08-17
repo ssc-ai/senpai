@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Catalog Magnitude Distribution Analysis Tool
+"""Catalog Magnitude Distribution Analysis Tool
 
 Samples random sky positions and analyzes the magnitude distribution of stars
 in the catalog to determine the brightest and faintest sources.
@@ -28,14 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 def sample_random_sky_positions(num_samples: int) -> list[tuple[float, float]]:
-    """
-    Generate random sky positions uniformly distributed across the celestial sphere.
+    """Generate random sky positions uniformly distributed across the celestial sphere.
 
     Args:
         num_samples: Number of positions to generate
 
     Returns:
         List of (ra, dec) tuples in degrees
+
     """
     # Generate uniform random positions
     # For RA: uniform in [0, 360)
@@ -50,8 +49,7 @@ def sample_random_sky_positions(num_samples: int) -> list[tuple[float, float]]:
 
 
 def query_stars_for_sample(ra: float, dec: float, fov_size: float, catalog_path: str) -> list[dict]:
-    """
-    Query catalog stars for a given sky position.
+    """Query catalog stars for a given sky position.
 
     Args:
         ra: Right ascension in degrees
@@ -61,6 +59,7 @@ def query_stars_for_sample(ra: float, dec: float, fov_size: float, catalog_path:
 
     Returns:
         List of star dictionaries with 'ra', 'dec', 'mv' keys (in degrees)
+
     """
     stars = sstr7.query_by_los_radec_with_rotation(
         y_fov=fov_size,
@@ -104,8 +103,7 @@ def analyze_catalog_magnitudes(
     fov_size: float = 10.0,
     output_dir: Path | None = None,
 ) -> dict:
-    """
-    Analyze magnitude distribution of stars in the catalog.
+    """Analyze magnitude distribution of stars in the catalog.
 
     Args:
         catalog_path: Path to SSTR7 catalog
@@ -115,6 +113,7 @@ def analyze_catalog_magnitudes(
 
     Returns:
         Dictionary with analysis results
+
     """
     logger.info(f"Sampling {num_samples} random sky positions with {fov_size}° FOV")
     positions = sample_random_sky_positions(num_samples)

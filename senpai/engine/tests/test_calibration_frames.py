@@ -311,7 +311,8 @@ class TestFindBestDarkCalibration:
 
 def test_dark_selection_then_apply_scales_correctly(tmp_path):
     """The exposure-ratio-selected dark, when applied, is scaled by the
-    image/dark exposure ratio."""
+    image/dark exposure ratio.
+    """
     dark_data = np.full((16, 16), 50.0)
     _write_fits(tmp_path / "dark_5s.fits", dark_data, XBINNING=1, EXPTIME=5.0)
     image = _make_image(np.full((16, 16), 600.0), XBINNING=1, EXPTIME=10.0)

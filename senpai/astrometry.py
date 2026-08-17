@@ -60,7 +60,6 @@ def _sources_to_detections(sources: StarListImage) -> tuple[list[astroeasy.Detec
 
 def _wcsmodel_to_wcsresult(wcs: WCSModel) -> astroeasy.WCSResult:
     """Convert senpai WCSModel → astroeasy WCSResult via FITS header round-trip."""
-
     header_dict = {k: v for k, v in wcs.model_dump().items() if v is not None}
     header_dict["IMAGEW"] = header_dict.pop("NAXIS1", wcs.NAXIS1)
     header_dict["IMAGEH"] = header_dict.pop("NAXIS2", wcs.NAXIS2)
@@ -75,7 +74,6 @@ def _wcsmodel_to_wcsresult(wcs: WCSModel) -> astroeasy.WCSResult:
 
 def _wcsresult_to_wcsmodel(wcs_result: astroeasy.WCSResult) -> WCSModel:
     """Convert astroeasy WCSResult → senpai WCSModel via raw FITS header."""
-
     hdr = astropy_fits.Header()
     for key, value in wcs_result.raw_header.items():
         if key and not key.startswith("COMMENT") and not key.startswith("HISTORY"):
@@ -137,6 +135,7 @@ def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarFiel
 
     Returns:
         StarField with WCS solution, matched stars, and fit status.
+
     """
     logger.info("attempting astrometric solution on %i sources", len(sources.detections))
     config = get_or_initialize_config()
@@ -173,7 +172,6 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
     astrometry.net required); 'chain' = native tiers with the existing
     astrometry.net path as the T3 backstop.
     """
-
     a = config.astrometry
     mode = a.solver_mode
     fast = a.fast_solve

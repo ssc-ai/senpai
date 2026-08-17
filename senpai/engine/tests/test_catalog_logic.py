@@ -264,7 +264,8 @@ def test_sky_dedup_key_prefers_source_id() -> None:
 # --------------------------------------------------------------------------- #
 def test_query_catalog_gaia_faint_limit_from_config(monkeypatch) -> None:
     """When faint_lim is None, query_catalog_gaia pulls cfg.star_catalog.faint_limit
-    (via getattr) and passes int(it) to the cached query."""
+    (via getattr) and passes int(it) to the cached query.
+    """
     captured = {}
 
     def fake_cached(wcs_tuple, faint_lim, bright_lim, pm_ts, max_stars):
@@ -402,7 +403,6 @@ def _off_center_wcs() -> runner.WCSModel:
     10-degree rotation keeps the PC matrix off the identity, as a real plate
     solution's is.
     """
-
     theta = np.deg2rad(10.0)
     return WCSModel(
         WCSAXES=2,
@@ -505,7 +505,6 @@ def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
 
 def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch) -> None:
     """A corrupted WCS must fail typed, not read a huge slice of the catalog."""
-
     # 0.1 deg/px over 100 px is a 10-degree field; a 1-degree configured maximum
     # puts it past the 2x sanity margin.
     wcs = _off_center_wcs().model_copy(update={"CDELT1": -0.1, "CDELT2": 0.1})

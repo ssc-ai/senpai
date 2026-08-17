@@ -152,7 +152,8 @@ def whiten_image(im, sigma=3, eps=1e-6):
 def _block_median_downsample(img: np.ndarray, factor: int) -> np.ndarray:
     """Downsample by f×f block MEDIAN (not mean) — robust to hot pixels / cosmics
     that would otherwise spike the whitened cross-correlation. Trailing
-    rows/cols that don't fill a block are dropped."""
+    rows/cols that don't fill a block are dropped.
+    """
     if factor <= 1:
         return img
     h, w = img.shape
@@ -170,7 +171,8 @@ def cc_downsample_factor(
     """Downsample factor for the coarse cross-correlation, chosen by information
     content: shed PSF oversampling down to ~target_fwhm px (FWHM 12 → factor 4),
     with a size floor so small frames (e.g. 512²) are left at full resolution. The
-    shift only needs to be coarse — the catalog-star match refines to sub-pixel."""
+    shift only needs to be coarse — the catalog-star match refines to sub-pixel.
+    """
     if not fwhm or fwhm <= target_fwhm:
         return 1
     f = max(1, int(round(fwhm / target_fwhm)))

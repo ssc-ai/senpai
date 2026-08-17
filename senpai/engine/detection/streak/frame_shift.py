@@ -53,7 +53,8 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
 def _hop_rate(senpai_run: SenpaiRun, shift: FrameShift) -> tuple[float, float] | None:
     """Star-drift rate (px/s) implied by a solved hop, normalized by the
     *signed* time gap so hops solved in either temporal direction are
-    comparable."""
+    comparable.
+    """
     if shift.x_shift is None or shift.y_shift is None:
         return None
     source = senpai_run.get_frame_by_index(shift.source_index)

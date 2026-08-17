@@ -70,7 +70,8 @@ def cut_width(profile, level: float = 0.5) -> float:
 def profile_shape(profile) -> dict:
     """Multi-level widths + Gaussianity ``spike_index`` of a 1D cut.
     ~1 Gaussian, >>1 a narrow core on a broad halo (FWHM then spurious), <1
-    flat-top / donut."""
+    flat-top / donut.
+    """
     w50 = cut_width(profile, 0.5)
     w25 = cut_width(profile, 0.25)
     w75 = cut_width(profile, 0.75)
@@ -99,7 +100,8 @@ def radial_profile(stamp, half, rstep: float = 0.5):
 
 def sky_axes(astropy_wcs):
     """Pixel-space (x, y) unit vectors pointing East(+RA) and North(+Dec) at the
-    frame center. Returns (east, north) or None."""
+    frame center. Returns (east, north) or None.
+    """
     if astropy_wcs is None:
         return None
     try:
@@ -136,7 +138,8 @@ def _ring_noise(ring) -> float:
     6500 vs a true scatter of ~500 ADU), which collapses the peak/noise ratio and
     makes every star fail the SNR gate — the panel then silently vanishes on
     perfectly good, bright frames. The MAD ignores those few contaminated pixels
-    and recovers the real sky scatter."""
+    and recovers the real sky scatter.
+    """
     ring = np.asarray(ring, dtype=float)
     med = np.median(ring)
     mad = float(np.median(np.abs(ring - med)))
@@ -145,7 +148,8 @@ def _ring_noise(ring) -> float:
 
 def _isolated_order(xy, mags, iso_radius):
     """Brightest-first indices of stars with no brighter-or-comparable neighbor
-    within ``iso_radius``."""
+    within ``iso_radius``.
+    """
     tree = cKDTree(xy)
     for i in np.argsort(mags):
         neigh = tree.query_ball_point(xy[i], iso_radius)
@@ -156,7 +160,8 @@ def _isolated_order(xy, mags, iso_radius):
 def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
     """Median-stacked, peak-normalized point-source PSF (sidereal).
 
-    ``stars`` is a list of (x, y, mag). Returns (stamp, n) or (None, 0)."""
+    ``stars`` is a list of (x, y, mag). Returns (stamp, n) or (None, 0).
+    """
     keep = [(s[0], s[1], s[2] if s[2] is not None else np.inf) for s in stars if s[0] is not None and s[1] is not None]
     if len(keep) < 20:
         return None, 0
@@ -225,8 +230,8 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
 
 def _oriented_stamp(data, x, y, cos_a, sin_a, half_a, half_p):
     """Sample a streak-aligned stamp (rows = perpendicular, cols = along) at
-    (x, y). Returns the float stamp or None if out of bounds."""
-
+    (x, y). Returns the float stamp or None if out of bounds.
+    """
     ta = np.arange(-half_a, half_a + 1.0)
     tp = np.arange(-half_p, half_p + 1.0)
     TA, TP = np.meshgrid(ta, tp)
@@ -242,7 +247,8 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
     """Median-stacked, peak-normalized streak PSF in streak-aligned coords.
 
     Each catalog star is a streak; stack oriented stamps centered on the bright
-    isolated ones. Returns (stamp[perp, along], half_along, half_perp, n)."""
+    isolated ones. Returns (stamp[perp, along], half_along, half_perp, n).
+    """
     # The stamp must contain the whole streak *plus* a clean sky margin on every
     # side: the along ends should roll fully into background (so a 183px trail
     # reads off with sky on either side, not clipped flush to the border) and
@@ -314,7 +320,8 @@ def paper_ready_enabled() -> bool:
 
 def strip_titles(fig) -> None:
     """Blank the figure suptitle and every axes title for a caption-ready copy
-    (the figure caption replaces the on-figure title in a paper)."""
+    (the figure caption replaces the on-figure title in a paper).
+    """
     st = getattr(fig, "_suptitle", None)
     if st is not None:
         st.set_text("")
@@ -420,7 +427,8 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
 
 def render_streak_psf(stamp, half_a, half_p, n_stars, length, fwhm, sky_in_streak, meta, png_path):
     """Rate per-frame streak panel: oriented 2D stamp (+box, contour, N/E) +
-    along-streak and across-streak profiles."""
+    along-streak and across-streak profiles.
+    """
     psc = meta.get("pixel_scale_arcsec")
     along = stamp.sum(axis=0)  # collapse perpendicular
     along = along / along.max() if along.max() > 0 else along

@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 def initialize_engine():
     """Initialize all required engine components."""
-
     logger.info("Initializing engine...")
 
     # Set up matplotlib first (affects matplotlib imports)

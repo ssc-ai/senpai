@@ -149,7 +149,6 @@ def _canned_run() -> SenpaiRun:
 @pytest.fixture
 def mocked_pipeline(monkeypatch):
     """Patch the collect route's I/O and processing to canned outputs."""
-
     calls = {"loaded": [], "processed": 0}
 
     def fake_load(encoded_files):

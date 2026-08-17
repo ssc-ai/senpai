@@ -12,8 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_date_string(date_str: str) -> arrow.Arrow:
-    """
-    Parse a date string, trying arrow's default formats first,
+    """Parse a date string, trying arrow's default formats first,
     then falling back to MM/DD/YY and MM/DD/YYYY formats.
     """
     try:
@@ -36,11 +35,9 @@ def _parse_date_string(date_str: str) -> arrow.Arrow:
 
 
 def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
-    """
-    Parse a time string and return (hour, minute, second, microsecond) tuple.
+    """Parse a time string and return (hour, minute, second, microsecond) tuple.
     Returns None if parsing fails.
     """
-
     # Try parsing with datetime first
     time_formats = [
         "%H:%M:%S.%f",  # 21:36:28.604000

@@ -25,11 +25,11 @@ def extract_rate_streak_measurement(
     n_streaks: int = 10,
     initial_fwhm: float | None = None,
 ) -> tuple[StreakMeasurement | None, np.ndarray | None, float | None]:
-    """
-    Measure the characteristic star-streak in a single rate-track frame.
+    """Measure the characteristic star-streak in a single rate-track frame.
 
     Returns:
         (measurement, psf, measured_fwhm)
+
     """
     # Work on a padded/cropped version to avoid edge artifacts.
     rate_data = prepare_rate_frame(rate_frame)
@@ -68,8 +68,7 @@ def extract_streak_centers_as_sources(
     max_sources: int = 200,
     threshold_sigma: float = 3.0,
 ) -> list[StarInImage]:
-    """
-    Extract streak centroids using matched filtering with a rectangular kernel.
+    """Extract streak centroids using matched filtering with a rectangular kernel.
 
     Uses the measured streak parameters (length, angle, FWHM) to create a matched
     filter kernel, then finds local maxima in the convolved image.
@@ -82,6 +81,7 @@ def extract_streak_centers_as_sources(
 
     Returns:
         List of StarInImage objects representing streak centroids
+
     """
     # Use measured streak parameters if available, otherwise conservative defaults
     if streak is not None:

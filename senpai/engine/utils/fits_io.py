@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def sexagesimal_to_decimal(value: str, units: str = "degrees") -> float:
-    """
-    Convert sexagesimal coordinates to decimal degrees.
+    """Convert sexagesimal coordinates to decimal degrees.
 
     Args:
         value: String in sexagesimal format (e.g., "+20 44 48.24" or "14 15 39.7")
@@ -30,6 +29,7 @@ def sexagesimal_to_decimal(value: str, units: str = "degrees") -> float:
 
     Returns:
         float: Decimal degrees
+
     """
     # Clean up the input string
     value = value.strip()
@@ -166,6 +166,7 @@ def extract_filter_from_header(header: Header) -> str | None:
     -------
     str or None
         Normalized filter name, or None if not found.
+
     """
     config = get_config()
     for key in config.headers.filter_keys:
@@ -372,8 +373,8 @@ _RATE_UNIT_TO_ARCSEC_PER_SEC: dict[str, float] = {
 def _to_arcsec_per_second(value: float, unit: str) -> float:
     """Normalize a track-rate value to arcseconds/second using the unit string
     declared in ``config.headers.tracking.track_*_rate_unit``. Unknown unit
-    strings are treated as arcsec/s (the senpai default) with a warning."""
-
+    strings are treated as arcsec/s (the senpai default) with a warning.
+    """
     factor = _RATE_UNIT_TO_ARCSEC_PER_SEC.get(unit.strip().lower())
     if factor is None:
         logger.warning(

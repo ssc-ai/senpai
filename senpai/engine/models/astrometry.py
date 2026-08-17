@@ -205,8 +205,7 @@ class WCSModel(BaseModel):
 
     @classmethod
     def from_astropy_wcs(cls, astropy_wcs: WCS, image_shape=None):
-        """
-        Convert an Astropy WCS object to a WCSModel.
+        """Convert an Astropy WCS object to a WCSModel.
 
         Parameters
         ----------
@@ -220,6 +219,7 @@ class WCSModel(BaseModel):
         -------
         WCSModel
             The converted WCS model
+
         """
         # Use relax=True to include SIP keywords in header
         header = astropy_wcs.to_header(relax=True)
@@ -337,8 +337,8 @@ class WCSModel(BaseModel):
 
         Returns:
             astropy.wcs.WCS: a WCS object to do calcs with
-        """
 
+        """
         try:
             # Filter out None values from the model dump
             header_dict = {k: v for k, v in self.model_dump().items() if v is not None}
@@ -374,6 +374,7 @@ class WCSModel(BaseModel):
 
         Returns:
             tuple[float, float]: (RA, Dec) in degrees
+
         """
         wcs = self.to_astropy_wcs()
         # Add 1 to convert from 0-based to 1-based coordinates
@@ -393,6 +394,7 @@ class WCSModel(BaseModel):
 
         Returns:
             tuple[float, float]: (x, y) pixel coordinates in 0-based indexing
+
         """
         wcs = self.to_astropy_wcs()
 
@@ -408,8 +410,7 @@ class WCSModel(BaseModel):
         return x - 1, y - 1
 
     def get_fov_and_dimensions(self) -> tuple[float, float, int, int]:
-        """
-        Calculate the field of view and pixel dimensions from this WCS model.
+        """Calculate the field of view and pixel dimensions from this WCS model.
 
         Returns:
             tuple containing:
@@ -417,6 +418,7 @@ class WCSModel(BaseModel):
                 - field of view height in degrees
                 - pixel width
                 - pixel height
+
         """
         # Get pixel dimensions
         pixel_width = self.NAXIS1

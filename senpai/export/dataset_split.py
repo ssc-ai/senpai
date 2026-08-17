@@ -36,6 +36,7 @@ class DatasetSplitter:
         Args:
             split: Dataset split configuration
             random_seed: Random seed for reproducible splits
+
         """
         self.split = split
         if random_seed is not None:
@@ -71,6 +72,7 @@ class DatasetSplitter:
 
         Returns:
             Dictionary mapping split names to lists of image IDs
+
         """
         # Find all annotation files - look for both point and line annotations
         point_annotation_files = list(input_dir.glob("*_point_sat.json"))
@@ -323,7 +325,6 @@ class DatasetSplitter:
         exclude_sidereal_from_lines: bool,
     ):
         """Create combined annotation files for a split."""
-
         # Create points annotation file (satellites)
         points_data_dir = f"{split_name}/"
 
@@ -428,6 +429,7 @@ def split_coco_dataset(
 
     Returns:
         Dictionary mapping split names to lists of image IDs
+
     """
     split = DatasetSplit(train=train_ratio, val=val_ratio, test=test_ratio)
     splitter = DatasetSplitter(split, random_seed=random_seed)

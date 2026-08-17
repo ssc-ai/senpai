@@ -43,6 +43,7 @@ async def solve_sources(
 
     Returns:
         StarField: A StarField object, which enriches the input StarListImage with astrometry information when solved.
+
     """
     logger.info("POST %s - Solving astrometry for image_id: %s", request.url.path, sources.image_metadata.image_id)
     start_time = time.time()
@@ -78,6 +79,7 @@ async def solve_fits(
 
     Returns:
         StarField: A StarField object containing the astrometry solution
+
     """
     logger.info("POST %s - Solving astrometry for FITS file: %s", request.url.path, fits_file.filename)
 

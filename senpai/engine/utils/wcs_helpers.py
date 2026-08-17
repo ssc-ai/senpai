@@ -38,7 +38,8 @@ def _local_maxima_above_floor(image, half, floor):
     their (2*half+1)^2 window, matching ``maximum_filter(mode='constant')``
     semantics for positive floors (out-of-bounds zeros never beat an
     above-floor pixel). Offsets run nearest-first so almost every
-    non-maximum dies on an immediate neighbor before the wide scans."""
+    non-maximum dies on an immediate neighbor before the wide scans.
+    """
     ys, xs = np.nonzero(image > floor)
     vals = image[ys, xs]
     h, w = image.shape
@@ -61,8 +62,7 @@ def _local_maxima_above_floor(image, half, floor):
 
 
 def find_local_maxima(image, min_distance=30, threshold=None, max_detections=None):
-    """
-    Find local maxima in an image with minimum separation distance.
+    """Find local maxima in an image with minimum separation distance.
 
     Args:
         image: 2D numpy array
@@ -72,6 +72,7 @@ def find_local_maxima(image, min_distance=30, threshold=None, max_detections=Non
 
     Returns:
         Array of (y, x) coordinates of maxima
+
     """
     size = 2 * min_distance + 1
     floor_base = max(0.0, float(threshold) if threshold is not None else 0.0)
@@ -137,8 +138,7 @@ def match_stars_to_detections(
     detected_points: list[tuple[float, float]],
     max_distance: float = 20,
 ):
-    """
-    Match catalog stars to detected points using bipartite matching.
+    """Match catalog stars to detected points using bipartite matching.
 
     Args:
         stars: List of StarInImage objects
@@ -149,6 +149,7 @@ def match_stars_to_detections(
         matched_pairs: List of (star_idx, detection_idx) pairs
         unmatched_stars: List of star indices with no match
         unmatched_detections: List of detection indices with no match
+
     """
     if not stars or len(detected_points) == 0:
         return [], list(range(len(stars))), list(range(len(detected_points)))
@@ -192,8 +193,7 @@ def match_stars_to_detections(
 
 
 def extract_counts_with_rectangular_aperture(image, x, y, streak: StreakMetadata, background_annulus=True):
-    """
-    Extract counts from an image using a rectangular aperture aligned with a streak.
+    """Extract counts from an image using a rectangular aperture aligned with a streak.
 
     Args:
         image: 2D numpy array containing the image data
@@ -205,8 +205,8 @@ def extract_counts_with_rectangular_aperture(image, x, y, streak: StreakMetadata
     Returns:
         counts: Background-subtracted counts within the aperture
         background: Local background level (per pixel)
-    """
 
+    """
     # Create rectangular aperture aligned with the streak
     width = streak.fwhm * 4
     length = streak.pixel_length + streak.fwhm * 2
@@ -265,6 +265,7 @@ def calculate_spatial_coverage(positions, image_shape):
 
     Returns:
         Dictionary of coverage metrics
+
     """
     height, width = image_shape
     metrics = {}
@@ -336,6 +337,7 @@ def determine_optimal_sip_order(world_coords, pixel_coords, image_shape, max_ord
 
     Returns:
         int: Optimal SIP order (1-5)
+
     """
     n_stars = len(world_coords)
 
@@ -396,6 +398,7 @@ def compute_snr_and_filter_stars(
     Returns:
         (filtered_stars, limiting_magnitude) where *filtered_stars* are the
         stars that passed SNR + magnitude gating.
+
     """
     stars_for_photometry = catalog_stars
 
@@ -492,6 +495,7 @@ def reject_outlier_shifts_by_mad(
 
     Returns:
         (world_coords, pixel_coords) lists for inlier shifts.
+
     """
     world_coords: list[tuple] = []
     pixel_coords: list[tuple] = []
@@ -555,8 +559,8 @@ def fit_and_validate_wcs(
         (wcs_model, refit_stats): the refined WCSModel plus a dict with the
         fit's residual statistics (rms_px, rms_arcsec, n_stars), or
         (*fallback_wcs*, None) if validation fails.
-    """
 
+    """
     ra_values = [wc[0] for wc in world_coords]
     dec_values = [wc[1] for wc in world_coords]
     sky_coords = SkyCoord(ra_values, dec_values, unit=u.deg)
@@ -667,6 +671,7 @@ def update_starfield_wcs(
         frame: SiderealFrame or RateTrackFrame.
         new_wcs: The new WCS model to apply.
         limiting_magnitude: Optional limiting magnitude for catalog query.
+
     """
     config = get_config()
 

@@ -46,6 +46,7 @@ def _validate_catalog_coverage(
         max_ra: Maximum RA of query bounds (degrees)
         min_dec: Minimum DEC of query bounds (degrees)
         max_dec: Maximum DEC of query bounds (degrees)
+
     """
     # Check if catalog query returned no stars
     if len(stars_from_catalog) == 0:
@@ -530,7 +531,8 @@ _GAIA_SKY_CACHE_MAX_STARS = 1_000_000
 
 def _trim_sky_cache() -> None:
     """Evict least-recently-used regions until the total star count fits.
-    Callers move the active region to the end of the list first (LRU touch)."""
+    Callers move the active region to the end of the list first (LRU touch).
+    """
     total = sum(len(r["stars"]) for r in _GAIA_SKY_CACHE)
     while len(_GAIA_SKY_CACHE) > 1 and (
         total > _GAIA_SKY_CACHE_MAX_STARS or len(_GAIA_SKY_CACHE) > _GAIA_SKY_CACHE_MAX
@@ -555,7 +557,8 @@ def _box_contains(outer, inner) -> bool:
 
 def _box_difference_strips(C, U):
     """Rectangles tiling U \\ C, given U ⊇ C (disjoint; ≤4, typically 1-2 for a
-    shifted box): left/right full-height strips + top/bottom strips over C's RA."""
+    shifted box): left/right full-height strips + top/bottom strips over C's RA.
+    """
     rmn, rmx, dmn, dmx = U
     crmn, crmx, cdmn, cdmx = C
     eps = 1e-9
@@ -587,7 +590,8 @@ def _query_gaia_sky(
     """Online Gaia query with a growing sky-region cache (see note above).
 
     Only the sky area not already cached is fetched online; the result is the raw
-    star dicts within the requested box. The dicts are never mutated downstream."""
+    star dicts within the requested box. The dicts are never mutated downstream.
+    """
     key_fb = (faint_lim, bright_lim)
     B = (min_ra, max_ra, min_dec, max_dec)
 
@@ -689,7 +693,6 @@ def _query_catalog_gaia_cached(
     max_stars: int | None,
 ) -> tuple[list[dict[str, Any]], ImageMetadata]:
     """Cached Gaia query using a hashable WCS representation."""
-
     # Reconstruct WCS from tuple components
     header = {
         "WCSAXES": 2,
@@ -949,8 +952,8 @@ def examine_catalog():
 
 def _examine_gaia_local_catalog(catalog_path: str) -> bool:
     """Validate the local Gaia mirror: index.json present and every tile it
-    references exists on disk (catches a partial / in-progress download)."""
-
+    references exists on disk (catches a partial / in-progress download).
+    """
     if not catalog_path:
         logger.error("gaia_local catalog path not configured")
         return False

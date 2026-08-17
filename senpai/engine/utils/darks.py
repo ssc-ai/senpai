@@ -1,5 +1,4 @@
-"""
-Dark frame utilities for creating and applying master dark corrections.
+"""Dark frame utilities for creating and applying master dark corrections.
 
 This module provides functions for:
 1. Creating master dark frames from directories of dark frame FITS files
@@ -68,8 +67,7 @@ def create_master_dark(
     maxiters: int = 5,
     required_headers: list[str] | None = None,
 ) -> tuple[np.ndarray, fits.Header]:
-    """
-    Create a master dark from a directory of dark frame FITS files.
+    """Create a master dark from a directory of dark frame FITS files.
 
     Parameters
     ----------
@@ -96,6 +94,7 @@ def create_master_dark(
         The master dark frame
     header : fits.Header
         Header from the first valid dark frame
+
     """
     dark_directory = Path(dark_directory)
 
@@ -200,8 +199,7 @@ def apply_dark_subtraction(
     dark_exposure_time: float | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage | np.ndarray:
-    """
-    Apply dark subtraction to an image.
+    """Apply dark subtraction to an image.
 
     Parameters
     ----------
@@ -218,6 +216,7 @@ def apply_dark_subtraction(
     -------
     corrected_image : ProcessedFitsImage or np.ndarray
         Dark-subtracted image
+
     """
     # Load master dark if provided as file path. float32 throughout: master
     # darks are saved as float32 anyway, and the corrected frame's dtype is
@@ -324,8 +323,7 @@ def find_best_dark_for_exposure(
     matching_headers: list[str] | None = None,
     max_exptime_ratio: float = 10.0,
 ) -> tuple[Path, float] | None:
-    """
-    Find the best dark frame for a given exposure time.
+    """Find the best dark frame for a given exposure time.
 
     Parameters
     ----------
@@ -344,6 +342,7 @@ def find_best_dark_for_exposure(
         Path to best matching dark frame
     dark_exptime : float
         Exposure time of the matching dark frame
+
     """
     if matching_headers is None:
         matching_headers = ["BINNING"]
@@ -394,8 +393,7 @@ def find_best_dark_for_exposure(
 
 
 def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]) -> dict[tuple[str, ...], list[Path]]:
-    """
-    Group FITS files by consistent header values.
+    """Group FITS files by consistent header values.
 
     Parameters
     ----------
@@ -408,6 +406,7 @@ def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]
     -------
     groups : dict
         Dictionary mapping group keys (tuples of header values) to lists of file paths
+
     """
     if not required_headers:
         return {("all_files",): fits_files}
@@ -441,8 +440,7 @@ def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]
 
 
 def load_master_dark(file_path: str | Path) -> tuple[np.ndarray, fits.Header]:
-    """
-    Load a master dark from a FITS file.
+    """Load a master dark from a FITS file.
 
     Parameters
     ----------
@@ -455,6 +453,7 @@ def load_master_dark(file_path: str | Path) -> tuple[np.ndarray, fits.Header]:
         The master dark frame data
     header : fits.Header
         The FITS header
+
     """
     with fits.open(file_path) as hdul:
         return hdul[0].data.astype(np.float64), hdul[0].header
@@ -465,8 +464,7 @@ def _create_descriptive_filename(
     group_key: tuple[str, ...],
     header_names: list[str],
 ) -> Path:
-    """
-    Create a descriptive filename based on group characteristics.
+    """Create a descriptive filename based on group characteristics.
 
     Parameters
     ----------
@@ -481,6 +479,7 @@ def _create_descriptive_filename(
     -------
     Path
         Descriptive filename incorporating group characteristics
+
     """
     base_path = Path(base_output_path)
     output_dir = base_path.parent
@@ -503,7 +502,6 @@ def _create_descriptive_filename(
 
 def main():
     """CLI interface for creating master darks."""
-
     parser = argparse.ArgumentParser(
         description="Create master dark frames from a directory of dark frame FITS files",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -644,9 +642,7 @@ def _create_master_dark_from_files(
     sigma: float,
     maxiters: int,
 ) -> tuple[np.ndarray, fits.Header]:
-    """
-    Helper function to create master dark from a specific list of files.
-    """
+    """Helper function to create master dark from a specific list of files."""
     # Load and validate frames
     valid_frames = []
     valid_headers = []
@@ -790,8 +786,7 @@ def _create_master_dark_chunked(
 
 
 def analyze_header_variations(directory: str | Path) -> None:
-    """
-    Analyze all FITS files in a directory and report which headers vary.
+    """Analyze all FITS files in a directory and report which headers vary.
 
     This helps users determine which headers they should use for grouping.
 
@@ -799,6 +794,7 @@ def analyze_header_variations(directory: str | Path) -> None:
     ----------
     directory : str or Path
         Directory containing FITS files to analyze
+
     """
     directory = Path(directory)
     fits_files = list(directory.glob("*.fits")) + list(directory.glob("*.fit"))

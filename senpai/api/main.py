@@ -1,6 +1,4 @@
-"""
-Main entry point for API server.
-"""
+"""Main entry point for API server."""
 
 import concurrent.futures
 import contextlib
@@ -121,7 +119,6 @@ def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
 )
 def run_server(host: str, port: int, workers: int | None, config: Path | None = None) -> None:
     """Run the API server locally"""
-
     # Load config first
     config_path = config or LOCAL_APP_CONFIG_OVERRIDE
     app_config = initialize_config(config_path)

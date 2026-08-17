@@ -18,8 +18,7 @@ def extract_box_statistics(
     y: float,
     box_size: int = 11,
 ) -> dict:
-    """
-    Extract simple statistics from a box around a position.
+    """Extract simple statistics from a box around a position.
     Much faster than flood-fill for validation purposes.
 
     Args:
@@ -29,6 +28,7 @@ def extract_box_statistics(
 
     Returns:
         dict with 'max', 'sum', 'mean', 'valid' keys
+
     """
     x_int, y_int = int(round(x)), int(round(y))
     half_box = box_size // 2
@@ -64,8 +64,7 @@ def quick_correlation_from_boxes(
     max_stars: int = 50,
     debug_label: str = "",
 ) -> tuple[float, int, list]:
-    """
-    Fast correlation calculation using box statistics instead of flood-fill.
+    """Fast correlation calculation using box statistics instead of flood-fill.
 
     Args:
         target_frame: Target frame data
@@ -78,6 +77,7 @@ def quick_correlation_from_boxes(
 
     Returns:
         tuple: (correlation, n_valid_stars, box_stats_list)
+
     """
     # Sort stars by magnitude (brightest first)
     sorted_stars = sorted(catalog_stars, key=lambda s: s.magnitude if hasattr(s, "magnitude") else 999)
@@ -249,8 +249,7 @@ def validate_shift_lightweight(
     streak_rotation_deg: float | None = None,
     fwhm_exclusion: float | None = None,
 ) -> tuple[bool, float, StreakMeasurement | None, tuple[float, float]]:
-    """
-    Lightweight validation using box statistics and random shift comparison.
+    """Lightweight validation using box statistics and random shift comparison.
 
     Args:
         target: The frame we're shifting to align with the source frame
@@ -265,6 +264,7 @@ def validate_shift_lightweight(
 
     Returns:
         tuple: (valid, correlation, streak_measurement, shift_correction)
+
     """
     config = get_config()
     target_frame = target.frame.data
@@ -875,8 +875,7 @@ def validate_proposed_shift(
     streak_rotation_deg: float | None = None,
     fwhm_exclusion: float | None = None,
 ) -> tuple[bool, float, StreakMeasurement | None, tuple[float, float]]:
-    """
-    Validate proposed shift via lightweight box-based correlation.
+    """Validate proposed shift via lightweight box-based correlation.
 
     Args:
         target: The frame we're shifting to align with the source frame
@@ -890,6 +889,7 @@ def validate_proposed_shift(
 
     Returns:
         tuple: (valid, correlation, streak_measurement, shift_correction)
+
     """
     logger.info(f"Using lightweight box-based validation (trial {trial})")
     return validate_shift_lightweight(

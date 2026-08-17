@@ -61,6 +61,7 @@ class SenpaiCocoExporter:
                 dataset then references the processed FITS, so those must stay in
                 place. No WCS 'answer' extension is added in this mode (the
                 processed frame is single-HDU; starcsp reads hdul[0]).
+
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -134,7 +135,8 @@ class SenpaiCocoExporter:
         run's own ``config.yaml`` (next to the source JSON) so the in-place
         preprocessing matches exactly what the night run did (same flat dir,
         row/col-median settings, etc.). Returns an AppConfig or None if it can't
-        be resolved (then callers fall back to the raw, uncalibrated frame)."""
+        be resolved (then callers fall back to the raw, uncalibrated frame).
+        """
         if getattr(self, "_build_cfg", "unset") != "unset":
             return self._build_cfg
         cfg = None
@@ -945,7 +947,6 @@ class SenpaiCocoExporter:
         correction_frames: dict | None = None,
     ) -> np.ndarray:
         """Apply the same calibration chain that was used during SENPAI processing."""
-
         # Start with the raw frame data
         processed_data = frame_data.copy().astype(np.float64)
 

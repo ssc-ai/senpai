@@ -44,7 +44,8 @@ def query_by_ra_dec_bounds(
 
     Tile selection and reading are delegated to astroeasy's mirror reader
     (astroeasy.catalog.mirror); this wrapper applies senpai's defaults and
-    builds senpai's star dicts (see module docstring)."""
+    builds senpai's star dicts (see module docstring).
+    """
     if faint_lim is None:
         faint_lim = 20.0
     if bright_lim is None:
@@ -65,8 +66,8 @@ def query_by_ra_dec_bounds(
 
 def _to_star(row, primary_filter: str, faint_lim: float) -> dict[str, Any]:
     """Build the same star dict as gaia.query_by_ra_dec_bounds (radians, synthetic
-    Johnson_V / Sloan_r from BP-RP, proper motion in rad/s)."""
-
+    Johnson_V / Sloan_r from BP-RP, proper motion in rad/s).
+    """
     g, bp, rp = float(row["g"]), float(row["bp"]), float(row["rp"])
     magnitudes: dict[str, float] = {}
     if np.isfinite(g) and g < 32:

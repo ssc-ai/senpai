@@ -29,6 +29,7 @@ def query_by_ra_dec_bounds(
 
     Returns:
         A `list`, stars within the bounds of input parameters
+
     """
     # Set default magnitude limits
     if faint_lim is None:
@@ -178,6 +179,7 @@ def query_by_bounds(
 
     Returns:
         A `list`, stars within the bounds of input parameters
+
     """
     # Apply safety margin
     x_fov_with_margin = x_fov * (1 + safety_margin)

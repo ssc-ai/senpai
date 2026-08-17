@@ -39,7 +39,8 @@ def test_first_query_pads_and_caches(_calls):
 
 def test_intra_batch_jitter_is_free(_calls):
     """Sub-pad shift (frame shift ~0.04°) + a refinement nudge land inside the
-    padded coverage → zero extra online queries."""
+    padded coverage → zero extra online queries.
+    """
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     runner._query_gaia_sky(255.04, 257.04, 43.04, 45.04, 21, -32)
     runner._query_gaia_sky(255.001, 256.999, 43.0, 45.0, 21, -32)

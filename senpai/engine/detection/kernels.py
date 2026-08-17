@@ -75,6 +75,7 @@ def rectangle_pyramoid(
 
     Returns:
         np.ndarray: the rotated streak kernel at pixel resolution.
+
     """
     if verbose:
         logger.info("rectangle_pyramoid")
@@ -149,6 +150,7 @@ def streak_matched_kernel(fwhm: float, angle_deg: float, length_fwhm: float = 5.
 
     Returns:
         2D kernel array normalized to sum to 1.
+
     """
     sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
     length = fwhm * length_fwhm
@@ -202,6 +204,7 @@ def build_directional_filter_bank(
 
     Returns:
         Tuple of (list of kernel arrays, array of angles in degrees).
+
     """
     angles = np.linspace(0, 180, n_angles, endpoint=False)
     # Round for lru_cache friendliness
@@ -220,6 +223,7 @@ def sidereal_kernel(fwhm: float) -> np.ndarray:
 
     Returns:
         np.ndarray: 2D Gaussian kernel normalized to sum to 1.
+
     """
     # Convert FWHM to sigma
     sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))

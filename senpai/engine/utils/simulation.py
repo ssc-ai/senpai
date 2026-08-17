@@ -34,8 +34,7 @@ def simulated_sidereal_frame(
     max_stars: int = 20,
     constant_signal: bool = False,
 ) -> np.ndarray:
-    """
-    Generate a simulated sidereal frame from a StarField object.
+    """Generate a simulated sidereal frame from a StarField object.
 
     Args:
         starfield: StarField object containing star information
@@ -45,6 +44,7 @@ def simulated_sidereal_frame(
 
     Returns:
         Simulated image as a numpy array
+
     """
     logger.info("Generating simulated sidereal frame")
 
@@ -136,6 +136,7 @@ def build_star_model_image(
 
     Returns:
         Synthetic star image (same shape as input, float64).
+
     """
     # Determine PSF width
     if fwhm_override is not None:

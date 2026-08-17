@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
     """Save command.txt and config.yaml to output_dir for reproducibility."""
-
     output_dir = Path(output_dir)
 
     # command.txt: sys.argv with module_name replacing argv[0]
@@ -71,8 +70,8 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
 
 def profile_run(func, *args, run_id: str = "profile", **kwargs):
     """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
-    saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result."""
-
+    saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result.
+    """
     pr = cProfile.Profile()
     pr.enable()
 

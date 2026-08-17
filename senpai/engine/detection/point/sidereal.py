@@ -23,9 +23,7 @@ def gaussian_2d(
     theta: float,
     offset: float,
 ) -> np.ndarray:
-    """
-    2D Gaussian function for curve fitting.
-    """
+    """2D Gaussian function for curve fitting."""
     x, y = data
     x0 = float(x0)
     y0 = float(y0)
@@ -48,16 +46,18 @@ def estimate_fwhm(
     fwhm_x_guess: float = 2.0,
     fwhm_y_guess: float = 2.0,
 ) -> float | None:
-    """
-    Estimate the FWHM of a bright star by fitting a 2D Gaussian to the source.
+    """Estimate the FWHM of a bright star by fitting a 2D Gaussian to the source.
 
-    Parameters:
+    Parameters
+    ----------
     - image (numpy.ndarray): 2D array representing the image.
     - x_centroid, y_centroid (float): Coordinates of the star's centroid.
     - box_size (int): Size of the box to extract around the centroid for fitting.
 
-    Returns:
+    Returns
+    -------
     - float: Estimated FWHM.
+
     """
     # Extract a small box around the star
     x0, y0 = int(x_centroid), int(y_centroid)
@@ -176,10 +176,10 @@ def detect_sources_classic(
     sharphi: float = 2.0,
     bg_stats: tuple[float, float, float] | None = None,
 ) -> Table:
-    """
-    Detect point sources in a 2D image.
+    """Detect point sources in a 2D image.
 
-    Parameters:
+    Parameters
+    ----------
     - image (numpy.ndarray): 2D array representing the image.
     - max_sources (int): Maximum number of sources to detect. Defaults to 10.
     - fwhm (float): Full-width half-maximum of the point sources. Defaults to 5.0.
@@ -190,8 +190,10 @@ def detect_sources_classic(
       this when calling repeatedly on the same image so the sigma-clipped
       stats are computed once.
 
-    Returns:
+    Returns
+    -------
     - astropy.table.Table: A table containing the detected sources, sorted by brightness.
+
     """
     # Estimate background statistics with more robust parameters
     if bg_stats is None:
@@ -247,7 +249,8 @@ def sat_level_from_peaks(peaks) -> float:
     """Saturation level from a sample of source core peaks (see
     _estimate_saturation_level for the rationale). Shared with the
     catalog-star FWHM path, whose star sample suffers the same
-    saturated-pile-at-the-bright-end structure."""
+    saturated-pile-at-the-bright-end structure.
+    """
     if len(peaks) < 10:
         return float("inf")  # too few sources to identify a saturated population
     peaks = np.asarray(peaks)
@@ -271,7 +274,6 @@ def _robust_source_fwhm(image: np.ndarray, x: float, y: float, sat_level: float,
     and isolates the source's own component via connected-component labelling so a
     neighbour blend can't inflate the width.
     """
-
     x0, y0 = int(round(x)), int(round(y))
     h = box_size // 2
     y_min, y_max = max(0, y0 - h), min(image.shape[0], y0 + h + 1)

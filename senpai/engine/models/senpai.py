@@ -35,7 +35,8 @@ MAX_SERIALIZED_CATALOG_STARS = 500
 def _starfield_for_output(sf: StarField | None) -> StarField | None:
     """Copy a StarField with catalog_stars trimmed to the brightest
     MAX_SERIALIZED_CATALOG_STARS for serialization; the live frame keeps the
-    full list."""
+    full list.
+    """
     if sf is None or not sf.catalog_stars or len(sf.catalog_stars) <= MAX_SERIALIZED_CATALOG_STARS:
         return sf
     brightest = sorted(sf.catalog_stars, key=lambda s: (s.magnitude is None, s.magnitude or 0.0))[

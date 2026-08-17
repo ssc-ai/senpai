@@ -780,6 +780,7 @@ class _SettingsProxy:
 
         Raises:
             RuntimeError: If the global config has not been initialized.
+
         """
         if _config_instance is None:
             raise RuntimeError("Config not initialized")
@@ -798,6 +799,7 @@ class _SettingsProxy:
 
         Raises:
             RuntimeError: If the global config has not been initialized.
+
         """
         if _config_instance is None:
             raise RuntimeError("Config not initialized")
@@ -820,6 +822,7 @@ def get_config() -> AppConfig:
     Returns:
         AppConfig: The global configuration instance. If not initialized,
         loads the default development configuration.
+
     """
     global _config_instance
 
@@ -837,6 +840,7 @@ def initialize_config(config_path: Path) -> AppConfig:
 
     Returns:
         AppConfig: Configuration instance
+
     """
     global _config_instance
 
@@ -864,6 +868,7 @@ def get_or_initialize_config(config_path: Path | None = None) -> AppConfig:
 
     Returns:
         AppConfig: Configuration instance
+
     """
     try:
         config = get_config()

@@ -73,6 +73,7 @@ def existing_stars_from_wcs(wcs_model: WCSModel, star_list: list[StarInSpace]) -
 
     Returns:
         list[StarInSpace]: Updated list of stars with new pixel coordinates
+
     """
     # Convert WCS model to astropy WCS
     astropy_wcs = wcs_model.to_astropy_wcs()
@@ -117,8 +118,8 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
     Args:
         senpai_run: SenpaiRun containing all frames.
         frame_shift: FrameShift with source/target indices and pixel shifts.
-    """
 
+    """
     # Get the source frame's WCS
     logger.info(f"Shifting WCS from frame {frame_shift.source_index} to {frame_shift.target_index}")
     source_frame = senpai_run.get_frame_by_index(frame_shift.source_index)
@@ -222,6 +223,7 @@ def scale_wcs_solution(wcs_model: WCSModel, scale_factor: float) -> WCSModel:
 
     Returns:
         WCSModel: A new WCS model scaled to the original image dimensions
+
     """
     # Get the original WCS
     astropy_wcs = wcs_model.to_astropy_wcs()
@@ -251,8 +253,7 @@ def scale_wcs_solution(wcs_model: WCSModel, scale_factor: float) -> WCSModel:
 def filter_catalog_stars_by_radius(
     catalog_stars: StarListSpace, image_metadata, radius_factor: float | None
 ) -> StarListSpace:
-    """
-    Filter catalog stars to only include those within a specified radius of the image center.
+    """Filter catalog stars to only include those within a specified radius of the image center.
 
     Args:
         catalog_stars: StarListSpace object containing catalog stars
@@ -261,6 +262,7 @@ def filter_catalog_stars_by_radius(
 
     Returns:
         StarListSpace: Filtered catalog stars
+
     """
     if radius_factor is None:
         return catalog_stars

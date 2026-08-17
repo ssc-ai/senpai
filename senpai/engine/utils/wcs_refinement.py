@@ -53,6 +53,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
     Returns:
         tuple[float, float]: The correction (delta_x, delta_y) in pixels applied during refinement.
                             These are adjustments to the existing WCS, not absolute shifts.
+
     """
     config = get_config()
 
@@ -255,6 +256,7 @@ def get_global_shift_from_astrometric_stars(frame: RateTrackFrame, convolved_ima
 
     Returns:
         tuple[float, float]: The median shifts in x and y.
+
     """
     logger.info("Measuring global shift from astrometric fit stars")
 
@@ -372,6 +374,7 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
 
     Args:
         frame (SiderealFrame): The sidereal frame containing the stars.
+
     """
     config = get_config()
 
@@ -445,6 +448,7 @@ def refine_sidereal_with_catalog_stars(
     Returns:
         tuple[WCSModel, dict | None]: The refined WCS model plus refit residual
         stats, or (shifted WCS, None) if the refit could not be attempted.
+
     """
     config = get_config()
 
@@ -610,6 +614,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
         tuple[WCSModel, dict | None]: The refined WCS model (or the frame's
         existing WCS if refinement failed) plus refit residual stats when a
         refit actually happened.
+
     """
     config = get_config()
     logger.info("Second pass: Refining WCS with catalog stars")

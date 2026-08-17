@@ -72,6 +72,7 @@ class ProcessedFitsImage(BaseModel):
         Args:
             scale_factor: Factor to scale the image by (e.g. 2.0 means downsample by factor of 2)
             method: Scaling method to use, one of ["block_median"]
+
         """
         if scale_factor <= 0:
             raise ValueError(f"Invalid scale factor: {scale_factor}")
@@ -166,6 +167,7 @@ class ProcessedFitsImage(BaseModel):
 
         Returns:
             float: The scale factor used to scale the frame. 1.0 if no scaling was applied.
+
         """
         # First check processing history
         for step in reversed(self.processing_history):

@@ -104,7 +104,6 @@ def _apply_directional_filters_fft(
     filter_length_fwhm: float = 5.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Core FFT-based directional filter bank on an image at native resolution."""
-
     kernels, angles = build_directional_filter_bank(fwhm, n_angles, filter_length_fwhm)
 
     # float32 halves FFT cost; response precision is bounded by image noise,
@@ -182,6 +181,7 @@ def apply_directional_filters(
 
     Returns:
         ``(directional_excess, best_angle_deg, isotropic)`` arrays.
+
     """
     return _apply_directional_filters_fft(image, fwhm, n_angles, filter_length_fwhm)
 
@@ -497,6 +497,7 @@ def _build_adaptive_star_mask(
 
     Returns:
         Boolean mask, True where candidate seeding should be suppressed.
+
     """
     star_mask = np.zeros(shape, dtype=bool)
     if not star_amplitudes or image_noise <= 0:
@@ -581,8 +582,8 @@ def _subtract_catalog_stars(
         measured_peak)`` per subtracted star and ``template_peak`` is the
         peak value of the sum-normalized template (converts fitted
         amplitudes to model peak pixel values).
-    """
 
+    """
     sigma = fwhm / 2.355
     result = image.copy()
     h, w = image.shape
@@ -963,6 +964,7 @@ def detect_streaks_in_sidereal(
 
     Returns:
         ``(candidates, directional_excess_image, best_angle_deg_image)``
+
     """
     # ---- FWHM ----------------------------------------------------------
     if starfield.detection_metadata and starfield.detection_metadata.pixel_fwhm:
@@ -1138,7 +1140,8 @@ def detect_streaks_in_sidereal(
 
     def _is_excluded_star_streak(candidate: StreakCandidate) -> bool:
         """Candidate is a star trail (rate frames): matches the tracking angle
-        and either the approximate trail length or a star on its axis."""
+        and either the approximate trail length or a star on its axis.
+        """
         if exclude_angle_deg is None or not exclude_length_pixels:
             return False
         diff = abs(candidate.angle_deg - exclude_angle_deg) % 180
@@ -1401,7 +1404,6 @@ def measure_streak_candidate_photometry(
 
     Updates each candidate in-place with flux, SNR, and magnitudes.
     """
-
     if exposure_time is None or exposure_time <= 0:
         exposure_time = 1.0
 

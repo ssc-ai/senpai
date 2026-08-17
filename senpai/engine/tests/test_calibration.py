@@ -295,7 +295,8 @@ def test_summarize_limiting_mag_per_filter():
 def test_summarize_limiting_mag_excludes_rate_frames():
     """Rate-track completeness is unreliable, so the night's authoritative
     limiting mag must ignore rate frames (a deep, spurious rate value must not
-    pull the median)."""
+    pull the median).
+    """
     frames = [
         _fp("V", 24.0, lim50=19.0),
         _fp("V", 24.0, lim50=19.2),
@@ -311,7 +312,8 @@ def test_summarize_limiting_mag_excludes_rate_frames():
 class TestExtractFrameTiming:
     """Timing+pointing is kept for EVERY frame (incl. non-photometric ones) via
     the commanded boresight, since slew/settle is mount mechanics independent of
-    photometry — see _extract_frame_timing."""
+    photometry — see _extract_frame_timing.
+    """
 
     def _frame(self, **overrides):
         base = {
@@ -371,7 +373,8 @@ def _timing(t0, secs, exposure, alt, az, fov=None):
 
 class TestEmpiricalOverhead:
     """Fallback overhead when the full two-regime fit can't be constrained:
-    the night's observed cadence, not a flat guess."""
+    the night's observed cadence, not a flat guess.
+    """
 
     def test_no_pairs_returns_none(self):
         # Fewer than two placeable frames → no pairs → caller uses its default.

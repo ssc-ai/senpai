@@ -29,6 +29,7 @@ def shift_wcs_by_pixel_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> 
 
     Raises:
         ValueError: If the source frame has no WCS to shift.
+
     """
     source_frame = senpai_run.get_frame_by_index(frame_shift.source_index)
     if source_frame.starfield.wcs_status == WCSStatus.NO_WCS:

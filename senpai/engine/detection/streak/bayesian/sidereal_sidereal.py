@@ -39,6 +39,7 @@ def solve_sidereal_from_sidereal(
 
     Returns:
         None.
+
     """
     sidereal_source_data, source_is_synthetic = prepare_sidereal_frame(frame_source, allow_synthetic=False)
     sidereal_target_data, target_is_synthetic = prepare_sidereal_frame(frame_target, allow_synthetic=False)

@@ -28,6 +28,7 @@ def query_by_ra_dec_bounds(
 
     Returns:
         A `list`, stars within the bounds of input parameters
+
     """
     from astroquery.gaia import Gaia
 

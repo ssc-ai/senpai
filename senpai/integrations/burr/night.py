@@ -62,8 +62,8 @@ _ORPHAN_CLUSTER_GAP_S: float = 60.0
 def _utc_offset(run_state: RunState) -> timedelta:
     """Best-effort UTC offset for the site, used to label observing nights by
     their evening-local date the way burr does. Prefer the tz baked into
-    ``observation_date``; fall back to longitude/15; default to UTC."""
-
+    ``observation_date``; fall back to longitude/15; default to UTC.
+    """
     od = run_state.observation_date
     if od:
         try:
@@ -95,7 +95,8 @@ _NIGHT_DIR_RE = re.compile(r"^(?P<sensor>[A-Za-z][A-Za-z0-9-]*)_(?P<date>\d{8})$
 @dataclass(slots=True)
 class FrameRecord:
     """One FITS frame located in the sensor data dir, enriched with what we
-    could learn from the filename + run_state command log."""
+    could learn from the filename + run_state command log.
+    """
 
     path: Path
     parsed: ParsedFilename
@@ -122,7 +123,8 @@ class FrameRecord:
 @dataclass(slots=True)
 class FrameBatch:
     """A group of frames that belong to one collection event. Hand the
-    ``paths`` to senpai's collect pipeline as a single SenpaiRun."""
+    ``paths`` to senpai's collect pipeline as a single SenpaiRun.
+    """
 
     batch_id: str
     task: str | None  # "calsats", "coverage", "photometric_standards", ...
@@ -143,7 +145,8 @@ class FrameBatch:
         BURRSEQ) these frames were grouped on, when seq-key batching was used —
         the raw value the frames were combined on. None for command/orphan
         batches. The ``batch_id`` only carries this value's first 8 chars, so
-        this property is the only place the full grouping key survives."""
+        this property is the only place the full grouping key survives.
+        """
         for f in self.frames:
             if f.seq_id:
                 return f.seq_id
@@ -184,7 +187,6 @@ class BurrNight(BaseModel):
         that owns both ``<sensor>/`` and ``burr/<night_id>/``).  ``data_dir``
         defaults to ``<burr_root>/<sensor>``.
         """
-
         night_dir = Path(night_dir).resolve()
         m = _NIGHT_DIR_RE.match(night_dir.name)
         if not m:
@@ -239,7 +241,6 @@ class BurrNight(BaseModel):
         log and lighting window describe a different night and are ignored, so
         every frame batches via the command-less ``(task, target)`` path.
         """
-
         run_state_path = Path(run_state_path).resolve()
         data_dir = Path(data_dir).resolve()
         run_state = RunState.load(run_state_path)
@@ -307,7 +308,6 @@ class BurrNight(BaseModel):
         (night_start/morning_civil_end) when present; failing that fall back to
         a ±18h window around local midnight of the date in the night-dir name.
         """
-
         if self.window_start is not None and self.window_end is not None:
             return self.window_start, self.window_end
 
@@ -340,7 +340,6 @@ class BurrNight(BaseModel):
         ``BURRSEQ``) instead of filename heuristics. This opens each frame's
         header — cheap relative to processing, but not free on a full night.
         """
-
         if not self.data_dir.is_dir():
             logger.warning("burr data dir does not exist: %s", self.data_dir)
             return []
@@ -447,7 +446,6 @@ class BurrNight(BaseModel):
         the run_state command log where available, and otherwise by clustering
         orphan frames per ``(task, pointing)`` and time proximity.
         """
-
         records = self.index_frames(attribution_window_s, seq_key=seq_key)
 
         if seq_key:
@@ -463,8 +461,8 @@ class BurrNight(BaseModel):
         """One batch per distinct ``seq_id`` (e.g. BURRSEQ), ordered by the
         set's earliest frame. Each set is exactly the controller's logical
         collection unit — for coverage/photometric that is a single exposure's
-        sidereal anchor plus its rate sub-frames; for calsats the full sequence."""
-
+        sidereal anchor plus its rate sub-frames; for calsats the full sequence.
+        """
         by_seq: dict[str, list[FrameRecord]] = {}
         for r in records:
             by_seq.setdefault(r.seq_id, []).append(r)
@@ -497,8 +495,8 @@ class BurrNight(BaseModel):
         """Batch frames from the run_state command log where available, and
         otherwise by clustering orphan frames per ``(task, pointing)`` and time
         proximity. UUID-named / unparseable frames emit as singletons so they
-        aren't dropped."""
-
+        aren't dropped.
+        """
         # First pass: group by command identity.
         by_command: dict[int, list[FrameRecord]] = {}
         orphans: list[FrameRecord] = []
@@ -579,8 +577,8 @@ def _cluster_by_time_gap(
     consecutive events fall within ``gap_s``. A None key on either side is
     treated as "no pointing info" and never forces a break, preserving pure
     time-gap clustering for targets that encode tracking mode rather than
-    pointing identity (AltAzTarget/RateTarget)."""
-
+    pointing identity (AltAzTarget/RateTarget).
+    """
     if not records:
         return
     current: list[FrameRecord] = [records[0]]
@@ -615,8 +613,8 @@ def _infer_intended_modes(frames: list[FrameRecord]) -> None:
 
     Only fills ``None`` — an explicit command-log / target-token mode is never
     overridden (so Hornet, which logs the modes, is unaffected). Mutates in
-    place; callers pass a single collection set."""
-
+    place; callers pass a single collection set.
+    """
     calsats = [f for f in frames if f.parsed.task == "calsats"]
     if len(calsats) < 2:
         return
@@ -631,8 +629,8 @@ def _pointing_key(record: FrameRecord) -> str | None:
     batching. A target that is a tracking-mode token (AltAzTarget/RateTarget/
     ICRSTarget) names the *mode* of a sub-exposure, not the pointing, so it
     carries no pointing identity (None). A target like a NORAD id, coverage
-    pixel id, or standard-field id *is* the pointing."""
-
+    pixel id, or standard-field id *is* the pointing.
+    """
     target = record.parsed.target
     if target is None or _tracking_mode_from_target(target) is not None:
         return None
@@ -660,7 +658,6 @@ def _attribute_command(
       command logs the start of the collection).
     * Among candidates, take the most recent — the closest preceding command.
     """
-
     if parsed.command_verb is None or parsed.timestamp is None:
         return None
 

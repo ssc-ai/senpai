@@ -35,7 +35,8 @@ RNG = np.random.default_rng(20260603)
 @pytest.fixture(scope="module", autouse=True)
 def _config():
     """The global AppConfig singleton is process-wide; initialize from a
-    bundled YAML so get_config() does not raise for modules under test."""
+    bundled YAML so get_config() does not raise for modules under test.
+    """
     initialize_config(CONFIG_DIR / "burr.yaml")
     get_config().plotting.debug = False
 

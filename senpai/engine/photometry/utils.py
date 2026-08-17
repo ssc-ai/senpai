@@ -1,5 +1,4 @@
-"""
-Simple photometry utilities for extracting basic photometric information from astronomical images.
+"""Simple photometry utilities for extracting basic photometric information from astronomical images.
 
 This module provides basic photometry tools for:
 - Simple aperture photometry with fixed aperture size
@@ -41,7 +40,6 @@ def _normalize_photometry_config(
     config: PhotometryConfig | None = None,
 ) -> PhotometryConfig:
     """Return the given PhotometryConfig, or a default one if None."""
-
     if isinstance(config, PhotometryConfig):
         return config
     return PhotometryConfig()
@@ -177,8 +175,7 @@ def measure_simple_star_photometry(
     fwhm: float,
     config: SimplePhotometryConfig | None = None,
 ) -> SimplePhotometryResult | None:
-    """
-    Perform simple photometry on a single star.
+    """Perform simple photometry on a single star.
 
     Parameters
     ----------
@@ -195,6 +192,7 @@ def measure_simple_star_photometry(
     -------
     SimplePhotometryResult or None
         Photometry results if successful, None if failed
+
     """
     config = _normalize_photometry_config(config)
 
@@ -334,6 +332,7 @@ def _guard_aperture_mask_footprint(n_apertures: int, mask_side_px: float, detail
 
     Raises:
         ValueError: If the cached masks would exceed ``MAX_APERTURE_MASK_ELEMENTS``.
+
     """
     cached_masks = min(n_apertures, _APERTURE_MASK_CACHE_LIMIT)
     total = cached_masks * mask_side_px * mask_side_px
@@ -416,8 +415,7 @@ def measure_simple_starfield_photometry(
     config: SimplePhotometryConfig | None = None,
     frame_index: int | None = None,
 ) -> tuple[list[SimplePhotometryResult], SimplePhotometrySummary]:
-    """
-    Perform simple photometry on all stars in a starfield.
+    """Perform simple photometry on all stars in a starfield.
 
     Parameters
     ----------
@@ -432,6 +430,7 @@ def measure_simple_starfield_photometry(
     -------
     tuple
         (photometry_results, summary_statistics)
+
     """
     config = _normalize_photometry_config(config)
 
@@ -720,8 +719,8 @@ def _save_simple_limiting_mag_plot(
     output_path,
 ) -> None:
     """Sidereal counterpart to the rate-track limiting-mag diagnostic.
-    Same axes (mag vs log10 SNR) + threshold and limit reference lines."""
-
+    Same axes (mag vs log10 SNR) + threshold and limit reference lines.
+    """
     import matplotlib.pyplot as plt
 
     mags_arr = np.asarray(mags, dtype=float)
@@ -754,8 +753,7 @@ def measure_rate_starfield_photometry(
     config: SimplePhotometryConfig | None = None,
     frame_index: int | None = None,
 ) -> tuple[list[SimplePhotometryResult], SimplePhotometrySummary]:
-    """
-    Perform photometry on rate-track starfield using rectangular apertures.
+    """Perform photometry on rate-track starfield using rectangular apertures.
 
     Uses rectangular apertures aligned with the streak orientation to properly
     measure flux from streaked stars.
@@ -775,8 +773,8 @@ def measure_rate_starfield_photometry(
     -------
     tuple
         (photometry_results, summary_statistics)
-    """
 
+    """
     if not isinstance(streak, StreakMetadata):
         raise TypeError(f"streak must be StreakMetadata, got {type(streak)}")
 
@@ -1063,8 +1061,7 @@ def measure_detection_photometry(
     multiband_calibration: "MultiBandCalibration | None" = None,
     observation_filter: str | None = None,
 ) -> None:
-    """
-    Perform aperture photometry on satellite/object detections and assign calibrated magnitudes.
+    """Perform aperture photometry on satellite/object detections and assign calibrated magnitudes.
 
     Uses the zero point derived from streaked catalog star photometry to calibrate
     instrumental magnitudes into the catalog system. Updates detection fields in-place.
@@ -1090,6 +1087,7 @@ def measure_detection_photometry(
         Multi-band calibration with per-band ZPs and color terms
     observation_filter : str, optional
         Observation filter name (e.g. "Clear", "V")
+
     """
     config = _normalize_photometry_config(config)
 
@@ -1228,7 +1226,6 @@ def _calculate_simple_crowding(
     radius: float,
 ) -> float:
     """Calculate simple crowding factor."""
-
     # Check a region 3x the aperture radius
     check_radius = radius * 3
 
@@ -1265,7 +1262,6 @@ def _assess_simple_quality(
     config: SimplePhotometryConfig,
 ) -> bool:
     """Assess simple quality of photometric measurement."""
-
     # Reject negative flux
     if flux <= 0:
         return False
@@ -1293,8 +1289,7 @@ def _has_bright_neighbor(
     mag_cache: dict[int, float | None] | None = None,
     kdtree: tuple[cKDTree, list[int]] | None = None,
 ) -> bool:
-    """
-    Check if a star has a significantly brighter neighbor within a given radius.
+    """Check if a star has a significantly brighter neighbor within a given radius.
 
     This is used to avoid using severely blended stars (e.g., a faint catalog
     star nearly coincident with a much brighter star) for zero-point and
@@ -1404,8 +1399,7 @@ def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] = None) 
 
 
 def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: list[str] = None) -> str | None:
-    """
-    Find the best magnitude system with the most star coverage.
+    """Find the best magnitude system with the most star coverage.
 
     Tries each preferred filter in order and picks the first one that covers
     at least 50% of stars.  Among filters that meet the threshold, the
@@ -1526,7 +1520,8 @@ def _isotonic_completeness(comp_mag, comp_pct):
     regression de-spikes the (often noisy) binned curve without imposing a
     parametric shape — unlike a logistic, whose forced 0/1 asymptotes bias the
     50% point when a contaminated faint tail flattens above 0. Returns
-    (x_sorted, y_isotonic)."""
+    (x_sorted, y_isotonic).
+    """
     x = np.asarray(comp_mag, dtype=float)
     y = np.asarray(comp_pct, dtype=float) / 100.0
     order = np.argsort(x)
@@ -1621,7 +1616,8 @@ def _isolated_result_mask(
 
 def _save_completeness_plot(comp_mag, comp_pct, m_target, m50, m90, output_path) -> None:
     """Plot the completeness curve, its isotonic smooth, and the limiting-mag
-    crossings — the diagnostic for what the limiting-mag readout is doing."""
+    crossings — the diagnostic for what the limiting-mag readout is doing.
+    """
     import matplotlib.pyplot as plt
 
     try:
@@ -1678,6 +1674,7 @@ def compute_completeness_curve(
         (completeness_mag, completeness_pct) — parallel arrays sorted bright
         to faint. completeness_pct[i] is the detection percentage at magnitude
         completeness_mag[i].
+
     """
     config = _normalize_photometry_config(config)
     snr_threshold = float(config.limiting_snr)
@@ -1755,7 +1752,6 @@ def _calculate_simple_photometry_summary(
     frame_index: int | None = None,
 ) -> SimplePhotometrySummary:
     """Calculate summary statistics from simple photometry results."""
-
     config = _normalize_photometry_config(config)
 
     if not results:
@@ -1886,12 +1882,12 @@ def _estimate_simple_limiting_magnitude(
     zero_point: float | None = None,
     config: SimplePhotometryConfig | None = None,
 ) -> tuple[float, float | None, float | None]:
-    """
-    Estimate limiting magnitude at multiple completeness levels.
+    """Estimate limiting magnitude at multiple completeness levels.
 
     Returns:
         Tuple of (limiting_magnitude, limiting_magnitude_50, limiting_magnitude_90)
         where limiting_magnitude is at the configured completeness target.
+
     """
     """
     Estimate limiting magnitude from simple photometry results.
@@ -2396,7 +2392,6 @@ def _calculate_simple_zero_point(
     config: SimplePhotometryConfig | None = None,
 ) -> tuple[float | None, float | None]:
     """Calculate simple photometric zero point."""
-
     # Normalize config so we always have SimplePhotometryConfig
     config = _normalize_photometry_config(config)
 
@@ -2443,7 +2438,8 @@ def _calculate_simple_zero_point(
 
     def _select(min_snr: float) -> list[tuple[float, float]]:
         """Catalog (mag, flux) pairs from clean, well-measured stars at/above
-        ``min_snr``, excluding crowded and bright-neighbour-blended sources."""
+        ``min_snr``, excluding crowded and bright-neighbour-blended sources.
+        """
         sel: list[tuple[float, float]] = []
         for r in results:
             if not r.quality_flag or r.flux <= 0 or r.snr < min_snr:
@@ -2511,7 +2507,6 @@ def calculate_star_snrs_with_aperture_photometry(
     This is a shared photometry utility used by both sidereal and rate-track
     pipelines as well as WCS refinement code.
     """
-
     # Determine frame type
     is_sidereal = isinstance(frame, SiderealFrame)
 
@@ -2700,7 +2695,6 @@ def estimate_limiting_magnitude_from_photometry(
     and is used by WCS refinement code. The default SNR threshold is 3σ,
     configurable via the min_snr parameter.
     """
-
     # Determine frame type
     is_rate_track = isinstance(frame, RateTrackFrame)
 

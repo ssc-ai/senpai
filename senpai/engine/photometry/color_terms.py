@@ -93,6 +93,7 @@ def fit_color_term(
     -------
     ColorTermFit or None
         Fit result, or None if insufficient stars
+
     """
     if len(instrumental_mags) < min_stars:
         return None
@@ -189,6 +190,7 @@ def calculate_multiband_calibration(
     -------
     MultiBandCalibration or None
         Multi-band calibration results, or None if no bands could be calibrated
+
     """
     if not results or not target_bands:
         return None

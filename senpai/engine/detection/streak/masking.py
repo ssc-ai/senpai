@@ -66,8 +66,7 @@ def map_cluster(image, start_point, flux_threshold, pad_size=0):
 
 
 def map_cluster_bounded(image, start_point, flux_threshold, max_radius=500, max_pixels=10000, pad_size=0):
-    """
-    Map a cluster with hard limits on radius and pixel count to prevent runaway flood fills.
+    """Map a cluster with hard limits on radius and pixel count to prevent runaway flood fills.
 
     Args:
         image: The image data
@@ -79,6 +78,7 @@ def map_cluster_bounded(image, start_point, flux_threshold, max_radius=500, max_
 
     Returns:
         Boolean mask of the cluster
+
     """
     # Create a binary mask where true values are below the flux threshold
     threshold_mask = image <= flux_threshold
@@ -141,8 +141,7 @@ def analyze_source_shape_fwhm(
     x_coords: np.ndarray,
     weights: np.ndarray = None,
 ) -> dict:
-    """
-    Analyze the shape of a source using FWHM-based thresholding for robust measurements.
+    """Analyze the shape of a source using FWHM-based thresholding for robust measurements.
 
     Args:
         image: The image data
@@ -160,8 +159,8 @@ def analyze_source_shape_fwhm(
             - fwhm_threshold: Threshold used for FWHM calculation
             - fwhm_pixels: Number of pixels used in FWHM analysis
             - total_pixels: Total number of input pixels
-    """
 
+    """
     if len(y_coords) == 0:
         return {
             "center": (0, 0),
@@ -308,8 +307,7 @@ def remove_streak_at_point_robust(
     pad_size: int = 2,
     logger=None,
 ) -> tuple[np.ndarray, dict]:
-    """
-    Remove a streak using robust connected component analysis.
+    """Remove a streak using robust connected component analysis.
 
     This approach is more robust than threshold-based flood fill when dealing with
     high signal or high variance regions, as it:
@@ -330,6 +328,7 @@ def remove_streak_at_point_robust(
 
     Returns:
         tuple: (modified image, info dict with removal statistics)
+
     """
     if thresholds is None:
         thresholds = [
@@ -553,8 +552,7 @@ def remove_n_brightest_streaks(image: np.ndarray, n: int) -> tuple[np.ndarray, i
 
 
 def remove_near_saturation_streaks(image: np.ndarray, data_type: str) -> tuple[np.ndarray, int]:
-    """
-    Remove streaks near saturation.
+    """Remove streaks near saturation.
 
     Vectorized: label every connected blob above ``fill_min`` once, then fill
     the blobs that contain a near-saturated pixel — all in a single pass. The
@@ -567,6 +565,7 @@ def remove_near_saturation_streaks(image: np.ndarray, data_type: str) -> tuple[n
     Returns:
         image: The image with streaks removed.
         removed_streak: The number of streaks removed.
+
     """
     # Use rate_frame's data type instead of hardcoded uint16
     max_val = 2 ** (np.dtype(data_type).itemsize * 8) - 1
@@ -673,8 +672,8 @@ def remove_border_crossing_streaks_pairwise(
 
     Returns:
         (image_a, image_b, filled_px_a, filled_px_b)
-    """
 
+    """
     mask_a = _border_crossing_mask(image_a)
     mask_b = _border_crossing_mask(image_b)
 
@@ -701,12 +700,12 @@ def remove_border_crossing_streaks_pairwise(
 
 
 def map_cluster_with_peaks(image, start_point, flux_threshold, pad_size=0, min_separation=5):
-    """
-    Map a cluster and identify multiple peaks within it.
+    """Map a cluster and identify multiple peaks within it.
 
     Returns:
         cluster_mask: Boolean mask of the cluster
         peaks: List of (y, x) coordinates of peaks within the cluster
+
     """
     # First map the cluster as before
     cluster_mask = map_cluster(image, start_point, flux_threshold, pad_size)

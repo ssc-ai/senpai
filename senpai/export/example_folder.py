@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Example script for exporting SENPAI runs from a folder structure to COCO format.
+"""Example script for exporting SENPAI runs from a folder structure to COCO format.
 
 This script demonstrates how to use the SENPAI export functionality to convert
 SENPAI run data into individual COCO format files for each image.

@@ -73,6 +73,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> bool:
 
     Raises:
         ValueError: If the frame's WCS status is not PIXEL_SHIFTED_WCS.
+
     """
     if frame.starfield.wcs_status != WCSStatus.PIXEL_SHIFTED_WCS:
         logger.error(
@@ -178,6 +179,7 @@ def get_global_shift_from_astrometric_stars(frame: RateTrackFrame, convolved_ima
 
     Returns:
         tuple[float, float]: The median shifts in x and y.
+
     """
     logger.info("First pass: Getting global shift from astrometric fit stars")
 
@@ -275,6 +277,7 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
 
     Args:
         frame (SiderealFrame): The sidereal frame containing the stars.
+
     """
     # Same contract as the anchor registration: the refinement kernel is sized from the
     # frame's measured PSF scale. Guarding here also covers the plotting-branch reads further
@@ -322,6 +325,7 @@ def refine_sidereal_with_catalog_stars(frame: SiderealFrame, convolved_image: np
 
     Returns:
         WCSModel: The refined WCS model, or None if refinement failed.
+
     """
     # First pass: Get global shift using astrometric fit stars
     global_shift_x, global_shift_y = get_global_shift_from_astrometric_stars(frame, convolved_image)
@@ -558,6 +562,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
 
     Returns:
         WCSModel: The refined WCS model, or None if refinement failed.
+
     """
     logger.info("Second pass: Refining WCS with catalog stars")
 
@@ -808,6 +813,7 @@ def ensure_star_counts(frame: RateTrackFrame) -> None:
 
     Args:
         frame (RateTrackFrame): The frame containing stars to check.
+
     """
     # Collect all stars that need counts
     stars_needing_counts = []

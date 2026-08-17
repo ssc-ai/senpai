@@ -30,8 +30,7 @@ def process_image_photometry(
     save_apertures: bool = False,
     verbose: bool = False,
 ) -> dict:
-    """
-    Process photometry on a single FITS image.
+    """Process photometry on a single FITS image.
 
     Parameters
     ----------
@@ -52,6 +51,7 @@ def process_image_photometry(
     -------
     dict
         Photometry results and summary
+
     """
     enforce_catalog()
 

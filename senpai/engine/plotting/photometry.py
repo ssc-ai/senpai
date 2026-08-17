@@ -1,5 +1,4 @@
-"""
-Photometry plotting utilities for visualizing photometric results.
+"""Photometry plotting utilities for visualizing photometric results.
 
 This module provides plotting functions for:
 - Magnitude vs SNR scatter plots with completeness analysis
@@ -30,8 +29,7 @@ def plot_magnitude_vs_snr(
     output_file: Path | None = None,
     figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a magnitude vs SNR scatter plot.
+    """Create a magnitude vs SNR scatter plot.
 
     Parameters
     ----------
@@ -48,6 +46,7 @@ def plot_magnitude_vs_snr(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -276,8 +275,7 @@ def plot_spatial_background_distribution(
     output_file: Path | None = None,
     figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of background level distribution.
+    """Create a spatial map of background level distribution.
 
     Parameters
     ----------
@@ -294,6 +292,7 @@ def plot_spatial_background_distribution(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -347,8 +346,7 @@ def plot_spatial_background_quality(
     output_file: Path | None = None,
     figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of background levels with quality coding.
+    """Create a spatial map of background levels with quality coding.
 
     Parameters
     ----------
@@ -365,6 +363,7 @@ def plot_spatial_background_quality(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -468,8 +467,7 @@ def plot_background_contours_on_image(
     results: list[SimplePhotometryResult],
     output_file: Path | None = None,
 ) -> plt.Figure:
-    """
-    Create contour lines on the original image showing background distribution.
+    """Create contour lines on the original image showing background distribution.
 
     Parameters
     ----------
@@ -484,8 +482,8 @@ def plot_background_contours_on_image(
     -------
     plt.Figure
         The created figure
-    """
 
+    """
     # Use plot_single_frame to get the base image with proper axis
     fig, ax = plot_single_frame(image.data, output_file=None)
 
@@ -560,8 +558,7 @@ def plot_spatial_instrumental_magnitude(
     output_file: Path | None = None,
     figsize: tuple[int, int] = (12, 10),
 ) -> plt.Figure:
-    """
-    Create a spatial map of instrumental magnitudes.
+    """Create a spatial map of instrumental magnitudes.
 
     Parameters
     ----------
@@ -578,6 +575,7 @@ def plot_spatial_instrumental_magnitude(
     -------
     plt.Figure
         The created figure
+
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
 
@@ -696,8 +694,7 @@ def plot_spatial_snr(
     output_file: Path | None = None,
     figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of SNR values.
+    """Create a spatial map of SNR values.
 
     Parameters
     ----------
@@ -714,6 +711,7 @@ def plot_spatial_snr(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -789,8 +787,7 @@ def plot_photometry_summary(
     image: ProcessedFitsImage | None = None,
     output_file: Path | None = None,
 ) -> None:
-    """
-    Create photometry magnitude vs SNR plot.
+    """Create photometry magnitude vs SNR plot.
 
     Parameters
     ----------
@@ -806,6 +803,7 @@ def plot_photometry_summary(
         Original image for contour plots (not used)
     output_file : Path, optional
         Custom output file path. If None, uses default filename in output_dir
+
     """
     logger.info("Creating photometry summary plots...")
 

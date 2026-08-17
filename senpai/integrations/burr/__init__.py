@@ -1,5 +1,6 @@
 """Burr observatory integration: read run_state.json + per-sensor FITS dirs into
-frame batches the senpai collect pipeline can consume."""
+frame batches the senpai collect pipeline can consume.
+"""
 
 from senpai.integrations.burr.filenames import (
     ParsedFilename,

@@ -70,7 +70,8 @@ def _batch_output_dir(night_root: Path, batch: FrameBatch) -> Path:
 
 def _batch_already_done(batch_dir: Path, batch_id: str) -> bool:
     """We consider a batch complete if both the full result and the summary
-    JSON exist. Anything less means we re-run — partial state is unsafe."""
+    JSON exist. Anything less means we re-run — partial state is unsafe.
+    """
     return (batch_dir / f"senpai_{batch_id}.json").is_file() and (
         batch_dir / f"senpai_{batch_id}_summary.json"
     ).is_file()
@@ -82,8 +83,8 @@ def _tee_logs(log_path: Path):
     so each batch's full senpai processing log is saved beside its outputs
     (WCS solve, frame-to-frame shift solves, photometry — the record needed to
     diagnose per-frame failures). Captures whatever level the root logger is
-    set to; set ``config.logging.level: DEBUG`` for the most detail."""
-
+    set to; set ``config.logging.level: DEBUG`` for the most detail.
+    """
     root = logging.getLogger()
     handler = logging.FileHandler(log_path, mode="w")
     handler.setLevel(logging.NOTSET)
@@ -102,7 +103,6 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
 
     Returns a small manifest entry (paths + timing) for the night's manifest.
     """
-
     batch_dir.mkdir(parents=True, exist_ok=True)
     config = get_config()
     config.runtime.output_dir = batch_dir
@@ -173,7 +173,6 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
     batches (e.g. by TASKID), so the hint mislabels real rate frames as sidereal.
     We keep it only as a last resort for a frame with no TRKMODE at all.
     """
-
     mode_keys = get_config().headers.tracking.track_mode_keys or ["TRKMODE"]
     path_to_intent: dict[str, str | None] = {str(r.path): r.intended_tracking_mode for r in batch.frames}
     filled: dict[str, str] = {}
@@ -212,7 +211,6 @@ def _write_manifest(night_root: Path, night: BurrNight, entries: list[dict]) -> 
     accumulates batches rather than clobbering the prior run's. New entries
     replace same-id old ones; the union is written back in batch-id order.
     """
-
     path = night_root / "manifest.json"
     merged: dict[str, dict] = {}
     if path.is_file():
@@ -289,8 +287,8 @@ def _iter_filtered_batches(
 def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
     """One or more BurrNights to process. ``--auto-nights`` splits a flat,
     multi-night data dir (burr's "didn't split per night" bug) into one night
-    per observing session; otherwise it's the single run_state-delimited night."""
-
+    per observing session; otherwise it's the single run_state-delimited night.
+    """
     if not args.auto_nights:
         return [BurrNight.from_night_dir(args.night_dir, burr_root=args.burr_root, data_dir=args.data_dir)]
 
@@ -316,7 +314,8 @@ def _worker_init(
     no initialized config singleton, so each must load it; BLAS is already pinned
     to 1 thread via the env set before the pool was created (inherited at import).
     CLI overrides applied to the parent config must be re-applied here — workers
-    re-read the YAML and would otherwise silently drop them."""
+    re-read the YAML and would otherwise silently drop them.
+    """
     config = initialize_config(Path(config_path))
     set_log_level(log_level)
     config.detection.detect = detect
@@ -338,8 +337,8 @@ def _failed_entry(batch: FrameBatch, exc: Exception) -> dict:
 def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path) -> int:
     """Run every selected batch of one night; write its manifest. Returns 0 on
     full success, 2 if any batch failed. With --jobs N>1, independent batches run
-    in parallel across N worker processes."""
-
+    in parallel across N worker processes.
+    """
     batches = list(_iter_filtered_batches(night, args.task, args.limit, args.max_frames, seq_key=args.seq_key))
     night_root = output_root / night.night_id
     night_root.mkdir(parents=True, exist_ok=True)
@@ -487,7 +486,6 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
 
 def cmd_night(args: argparse.Namespace) -> int:
     """Process one (or, with --auto-nights, several) collected burr nights."""
-
     nights = _resolve_nights(args)
 
     if args.dry_run:
@@ -545,7 +543,6 @@ def cmd_flats(args: argparse.Namespace) -> int:
     BINNING-matched apply path (``app.calibrations.master_flats_dir`` +
     ``auto_apply_flats``) can pick it up.
     """
-
     output_dir = Path(args.output_dir)
     rc = 0
     for night in _resolve_nights(args):
@@ -593,7 +590,6 @@ def cmd_flats(args: argparse.Namespace) -> int:
 
 def cmd_nights_summary(args: argparse.Namespace) -> int:
     """Cross-night conditions table (PSF / sky / extinction vs Moon & weather)."""
-
     table = summarize_nights(args.root, csv_path=args.csv)
     print(table)
     return 0
@@ -605,7 +601,6 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     Thin alias for the standalone ``senpai.cli.calibrate`` (calibration is not
     burr-specific); kept so ``senpai-burr calibrate`` keeps working.
     """
-
     argv = [str(args.processed_night_dir)]
     if args.output_dir:
         argv += ["-o", str(args.output_dir)]
@@ -626,7 +621,6 @@ def cmd_live(args: argparse.Namespace) -> int:
     becomes complete (matched command + expected frame count, or timeout
     after the last frame's arrival).
     """
-
     raise NotImplementedError(
         "senpai-burr live is not yet implemented. Use `night` against a "
         "completed night for now; live mode lands in a follow-up commit "
@@ -644,7 +638,6 @@ def cmd_plots(args: argparse.Namespace) -> int:
     re-processing), so plotting is decoupled from the slow night pipeline and
     iterating on a plot never costs a re-run.
     """
-
     config = initialize_config(Path(args.config))
     set_log_level(config.logging.level)
 
@@ -665,15 +658,16 @@ def cmd_plots(args: argparse.Namespace) -> int:
 def _export_worker_init(config_path: str) -> None:
     """Per-worker config init for parallel dataset export — spawned workers start
     with no config singleton, so each loads it (the exporter may consult config
-    when rebuilding a processed frame in place from raw)."""
+    when rebuilding a processed frame in place from raw).
+    """
     initialize_config(Path(config_path))
 
 
 def _export_one_batch(task: tuple) -> tuple:
     """Export one batch's SenpaiRunResult into the shared pool dir. Each call
     writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json``
-    + FITS), so concurrent workers never collide. Returns (batch_id, ok, error)."""
-
+    + FITS), so concurrent workers never collide. Returns (batch_id, ok, error).
+    """
     (result_path, batch_id, pool_dir, snr_cut, max_streak_length, process_sidereal, link_source) = task
     exporter = SenpaiCocoExporter(
         output_dir=Path(pool_dir),
@@ -711,7 +705,6 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
     it can be split repeatedly later (``split-dataset``) — e.g. data-scaling
     ablations against a fixed val/test — without re-exporting.
     """
-
     output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_dataset")
     # With --export-only the output dir IS the ready-data pool (a flat dir of FITS
     # + per-frame JSONs). Otherwise export into a _staging subdir and split into
@@ -836,8 +829,8 @@ def cmd_split_dataset(args: argparse.Namespace) -> int:
 
     val/test are pinned to the end of the global temporal order (the held-out
     "future"); ``--train-cap N`` varies only the train size, leaving the val/test
-    boundary fixed."""
-
+    boundary fixed.
+    """
     pool_dir = Path(args.pool_dir)
     if not pool_dir.is_dir():
         raise SystemExit(f"pool dir not found: {pool_dir}")

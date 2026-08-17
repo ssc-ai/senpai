@@ -408,7 +408,6 @@ def _centroid_rms(detected, truth, tol=1.5):
 
 def _track_refiner_calls(monkeypatch):
     """Record invocations of the full-res centroid refiner (binned path only)."""
-
     calls = []
     original = sid._refine_centroid_full_res
 
@@ -484,7 +483,6 @@ def test_satellite_threshold_search_matches_daostarfinder():
     private-API reimplementation (_StarFinderKernel/_DAOStarFinderCatalog):
     if a photutils upgrade moves those internals, this fails loudly.
     """
-
     sigma = 2.2
     rng = np.random.default_rng(12)
     data = rng.normal(0.0, 5.0, (512, 512))

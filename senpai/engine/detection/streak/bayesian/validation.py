@@ -40,6 +40,7 @@ def validate_proposed_shift(
     Returns:
         The Pearson correlation between source and shifted-target box fluxes, or 0.0
         when there are too few valid stars to compute a correlation.
+
     """
     target_frame = target.frame.data
     source_frame = source.frame.data
@@ -185,6 +186,7 @@ def extract_box_statistics(
 
     Returns:
         dict with 'max', 'sum', 'mean', 'valid' keys
+
     """
     x_int, y_int = round(x), round(y)
     half_box = box_size // 2
@@ -234,6 +236,7 @@ def quick_correlation_from_boxes(
 
     Returns:
         tuple: (correlation, n_valid_stars, box_stats_list)
+
     """
     # Sort stars by magnitude (brightest first)
     sorted_stars = sorted(catalog_stars, key=lambda s: s.magnitude if hasattr(s, "magnitude") else 999)
@@ -420,6 +423,7 @@ def validate_shift_lightweight(
 
     Returns:
         tuple: (valid, correlation, streak_measurement, shift_correction)
+
     """
     target_frame = target.frame.data
     source_frame = source.frame.data
@@ -1039,6 +1043,7 @@ def validate_proposed_shift_v26(
 
     Returns:
         tuple: (valid, correlation, streak_measurement, shift_correction)
+
     """
     logger.info(f"Using lightweight box-based validation (trial {trial})")
     return validate_shift_lightweight(

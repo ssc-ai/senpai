@@ -131,8 +131,7 @@ def extract_id_from_file(file_path, header_id_key):
 def discover_datasets(
     base_dir: Path, header_id_key: str, max_datasets: int | None = None, n_proc: int = 1
 ) -> list[dict[str, Any]]:
-    """
-    Discover all datasets across date directories or in a flat directory structure.
+    """Discover all datasets across date directories or in a flat directory structure.
     Returns a list of dataset information dictionaries.
     Uses parallel processing to speed up header extraction.
     """
@@ -213,9 +212,7 @@ def batch_process(
     skip_existing: bool = True,
     timeout: int | None = None,
 ) -> None:
-    """
-    Process multiple datasets in parallel.
-    """
+    """Process multiple datasets in parallel."""
     start_time = time.time()
 
     # Discover all datasets

@@ -53,8 +53,8 @@ def detect_streaks_in_sidereal_frames(
     Returns:
         Dictionary mapping frame index to ``(directional_excess_map, noise_std, best_angle_deg)``
         for use in multi-frame DE-based confirmation.
-    """
 
+    """
     config = get_config()
     de_data: dict[int, tuple[np.ndarray, float, np.ndarray]] = {}
 
@@ -131,7 +131,6 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
     2. Filters out candidates matching the star streak angle+length (smeared stars)
     3. Stores remaining candidates on frame.streak_candidates
     """
-
     config = get_config()
     angle_tol = config.detection.streak_angle_tolerance_deg
 

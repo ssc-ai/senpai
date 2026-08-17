@@ -99,6 +99,7 @@ def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> No
     Args:
         level: The default logging level for all loggers
         disabled_loggers: List of logger names to disable or set to a higher level
+
     """
     # Check if logging is already configured with our settings
     root_logger = logging.getLogger()
@@ -142,6 +143,7 @@ def set_log_level(level: LogLevel) -> None:
 
     Args:
         level: The new logging level to set
+
     """
     root_logger = logging.getLogger()
     if not hasattr(root_logger, "senpai_logging_configured"):

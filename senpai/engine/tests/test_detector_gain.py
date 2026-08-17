@@ -52,7 +52,8 @@ class TestPtcPoint:
 
     def test_patch_clean_ignores_localized_stars(self):
         """Bright stars that do NOT cancel (rate tracking) only spoil the patches
-        they fall in; the clean-patch sky variance is unaffected."""
+        they fall in; the clean-patch sky variance is unaffected.
+        """
         rng = np.random.default_rng(3)
         f1, f2 = _sky_pair(1500.0, 2.0, shape=(1280, 1280))
         ys, xs = rng.integers(0, 1280, 60), rng.integers(0, 1280, 60)
@@ -78,7 +79,8 @@ class TestFitGain:
 
     def test_theilsen_rejects_bad_pairs(self):
         """A few whole-bad pairs (slew, total cloud) sit far above the line; the
-        Theil-Sen slope shrugs them off."""
+        Theil-Sen slope shrugs them off.
+        """
         gain = 1.6
         pts = self._ptc(gain, np.linspace(500, 3000, 12))
         pts += [(800.0, 60000.0), (1500.0, 90000.0)]  # outlier pairs

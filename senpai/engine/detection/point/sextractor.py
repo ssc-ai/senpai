@@ -51,6 +51,7 @@ def _detect_sources_sextractor(
     Returns:
         Table: detected sources (xcentroid, ycentroid, flux), flux-descending,
             truncated to ``max_sources``; empty if none found.
+
     """
     data = np.ascontiguousarray(image, dtype=np.float64)
     bkg = sep.Background(data, bw=64, bh=64, fw=3, fh=3)
@@ -83,6 +84,7 @@ def extract_sextractor_sources(image: ProcessedFitsImage, max_detections: int = 
     Returns:
         StarListImage: detected sources with pixel coordinates and fluxes,
             carrying the frame's image metadata.
+
     """
     table = _detect_sources_sextractor(image.data, max_sources=max_detections)
     stars = [StarInImage(x=float(r["xcentroid"]), y=float(r["ycentroid"]), counts=float(r["flux"])) for r in table]

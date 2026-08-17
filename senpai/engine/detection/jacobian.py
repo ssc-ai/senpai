@@ -7,8 +7,7 @@ from senpai.engine.detection.kernels import rectangle_pyramoid
 
 
 def local_jacobian(wcs, x, y, dsky=1 * u.arcsec):
-    """
-    Compute local Jacobian matrix J = d(pixel)/d(sky) at a pixel (x, y).
+    """Compute local Jacobian matrix J = d(pixel)/d(sky) at a pixel (x, y).
     dsky determines the finite-difference step (1 arcsec default).
     Returns a 2x2 numpy array:
         [[dx/dRA, dx/dDec],
@@ -41,8 +40,7 @@ def local_jacobian(wcs, x, y, dsky=1 * u.arcsec):
 
 
 def streak_vector(J, rate_ra, rate_dec):
-    """
-    Compute pixel streak vector from Jacobian.
+    """Compute pixel streak vector from Jacobian.
     rate_ra, rate_dec in arcsec/s.
     Returns pixel vector [vx, vy] per second.
     """
@@ -51,8 +49,7 @@ def streak_vector(J, rate_ra, rate_dec):
 
 
 def wcs_distortion_metrics(wcs, rate_ra, rate_dec, nx=3, ny=3):
-    """
-    Computes distortion metrics over a grid of points.
+    """Computes distortion metrics over a grid of points.
     rate_ra, rate_dec: sidereal rates for the tracked object (arcsec/s).
     nx, ny: grid resolution for evaluating J.
 
@@ -62,7 +59,6 @@ def wcs_distortion_metrics(wcs, rate_ra, rate_dec, nx=3, ny=3):
         - max_length_variation (fraction)
         - all_jacobians, all_vectors
     """
-
     # Detector size
     ny_pix, nx_pix = wcs.array_shape
     xs = np.linspace(0, nx_pix - 1, nx)
@@ -102,8 +98,7 @@ def wcs_distortion_metrics(wcs, rate_ra, rate_dec, nx=3, ny=3):
 
 
 def compute_effective_sky_motion_vector(wcs, x_ref, y_ref, angle_rad, dsky=1 * u.arcsec):
-    """
-    Derive an effective sky-motion direction vector from a central streak orientation.
+    """Derive an effective sky-motion direction vector from a central streak orientation.
 
     The result is a unit vector in sky-coordinate space (RA/Dec) such that
     J_ref @ rate_hat points along the observed pixel streak direction at (x_ref, y_ref),
@@ -143,14 +138,14 @@ def compute_local_streak_vector_from_jacobian(
     y: float,
     dsky=1 * u.arcsec,
 ) -> tuple[np.ndarray, float, float]:
-    """
-    Compute the local pixel streak vector at (x, y) from WCS Jacobians.
+    """Compute the local pixel streak vector at (x, y) from WCS Jacobians.
 
     Returns:
         (v_local, length_local, angle_local)
             v_local: 2-element numpy array in pixel units
             length_local: scalar pixel length
             angle_local: scalar angle in radians (atan2(vy, vx))
+
     """
     # Central unit pixel vector implied by the sky rate
     v0_unit = J_ref @ rate_hat
@@ -182,8 +177,7 @@ def compute_local_streak_width_from_jacobian(
     y: float,
     dsky=1 * u.arcsec,
 ) -> float:
-    """
-    Compute the local effective streak width at (x, y) from WCS Jacobians.
+    """Compute the local effective streak width at (x, y) from WCS Jacobians.
 
     The width is scaled relative to the reference pixel so that at (x_ref, y_ref)
     it equals base_fwhm, and elsewhere it expands or contracts according to the
@@ -216,8 +210,7 @@ def get_local_streak_kernel(
     dsky=1 * u.arcsec,
     verbose: bool = False,
 ):
-    """
-    Generate a local streak kernel at (x, y) that follows the WCS distortion.
+    """Generate a local streak kernel at (x, y) that follows the WCS distortion.
 
     Args:
         wcs: Astropy WCS object (with SIP/distortion applied).
@@ -232,6 +225,7 @@ def get_local_streak_kernel(
 
     Returns:
         2D numpy array representing the local streak kernel.
+
     """
     # Determine reference pixel (roughly image center) if not provided
     if ref_xy is None:

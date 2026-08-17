@@ -165,7 +165,6 @@ def test_priority_ladder_requires_an_initialized_config(monkeypatch) -> None:
     A silent fallback would score a frame against a different band ladder than the one
     configured, which is indistinguishable from correct output.
     """
-
     monkeypatch.setattr(config_module, "_config_instance", None)
     with pytest.raises(RuntimeError, match="not initialized"):
         sstrc7_source._priority_ladder(_fake_field(Gaia_G=9.0, Johnson_V=11.0))

@@ -6,8 +6,7 @@ import numpy as np
 
 
 def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
-    """
-    Apply an astronomical zscale stretch.
+    """Apply an astronomical zscale stretch.
 
     Notes:
         This function is used for *plotting*. Real-world FITS processing often
@@ -18,6 +17,7 @@ def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
 
         To avoid plot artifacts, we replace non-finite values with the median of
         the finite pixels before applying zscale.
+
     """
     arr = np.asarray(data, dtype=np.float32)
     finite = np.isfinite(arr)

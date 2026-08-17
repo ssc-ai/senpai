@@ -58,6 +58,7 @@ def solve_rate_from_sidereal(
     Raises:
         WcsPropagationError: if the frame timing is degenerate (overlapping exposures) or the
             cross-correlation has no measurable streak -- no WCS can be propagated either way.
+
     """
     rate_exposure_time = float(rate_frame.frame.header.get("EXPTIME", 1))
     sidereal_exposure_time = float(sidereal_frame.frame.header.get("EXPTIME", 1))

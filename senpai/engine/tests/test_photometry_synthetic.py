@@ -256,7 +256,8 @@ def test_starfield_summary_counts_and_snr():
 
 def test_starfield_records_circular_aperture_geometry():
     """The summary carries the literal circular aperture/annulus pixel dims:
-    radius/inner/outer = factor × FWHM, so a reader needn't re-derive them."""
+    radius/inner/outer = factor × FWHM, so a reader needn't re-derive them.
+    """
     img, sf = _field_image_and_starfield()
     _, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     geo = summary.aperture_geometry
@@ -270,8 +271,8 @@ def test_starfield_records_circular_aperture_geometry():
 def test_run_result_records_aperture_policy():
     """to_result() emits a run-level `photometry` block carrying the PSF-factor
     policy when the run measured photometry, so the output JSON documents how
-    apertures were sized without the original config.yaml."""
-
+    apertures were sized without the original config.yaml.
+    """
     frame = SiderealFrame(
         frame=_image(np.zeros((50, 50))),
         index=0,
@@ -294,7 +295,6 @@ def test_run_result_records_aperture_policy():
 
 def test_run_result_omits_photometry_block_without_photometry():
     """A run that measured no photometry omits the run-level block entirely."""
-
     frame = SiderealFrame(frame=_image(np.zeros((50, 50))), index=0, photometry_summary=None)
     run = SenpaiRun(
         id="t",
@@ -392,7 +392,6 @@ def test_has_bright_neighbor_ignores_distant_or_faint():
 
 def test_has_bright_neighbor_kdtree_matches_bruteforce():
     """KD-tree path and the O(n) fallback must agree."""
-
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     bright = StarInSpace(ra=0, dec=0, x=104.0, y=100.0, magnitude=12.0)
     stars = [faint, bright]
@@ -480,7 +479,8 @@ def test_completeness_limits_none_when_never_crosses():
 
 def test_compute_completeness_curve_rolls_over():
     """Build results spanning bright->faint with SNR decreasing; the curve
-    should be ~100% at the bright end and drop toward 0 at the faint end."""
+    should be ~100% at the bright end and drop toward 0 at the faint end.
+    """
     results = []
     rng = np.random.default_rng(21)
     for mag in np.arange(10.0, 18.0, 0.25):
