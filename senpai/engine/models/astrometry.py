@@ -1,4 +1,5 @@
 import logging
+import warnings
 from enum import Enum
 
 import astropy.units as u
@@ -493,6 +494,21 @@ class WCSMetadata(BaseModel):
             wcs.pixel_to_world(center_x, center_y).dec.deg,
         )
 
+        # astropy 8.0.1 / numpy 2.4.6 run Angle.to_string()'s formatter through np.vectorize,
+        # which reports "invalid value encountered in do_format" for VALID angles -- a NaN
+        # angle formats silently as 'nan', so the warning is not about the data at all. It
+        # fires twice per call and accounts for ~2,725 lines in a 134-collect run, a quarter
+        # of all warning output. Suppressed here, at the only place angles are formatted for
+        # display, rather than with a global filter that would hide real numeric warnings.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="invalid value encountered in do_format",
+                category=RuntimeWarning,
+            )
+            ra_hms = Angle(ra_center, unit=u.deg).to_string(unit=u.hour, sep=":")
+            dec_dms = Angle(dec_center, unit=u.deg).to_string(unit=u.deg, sep=":")
+
         return cls(
             x_ifov_arcsec=x_ifov.to(u.arcsec).value,
             y_ifov_arcsec=y_ifov.to(u.arcsec).value,
@@ -500,8 +516,8 @@ class WCSMetadata(BaseModel):
             y_fov_degrees=y_fov_deg,
             RA_center_deg=ra_center,
             Dec_center_deg=dec_center,
-            RA_center_HMS=Angle(ra_center, unit=u.deg).to_string(unit=u.hour, sep=":"),
-            Dec_center_DMS=Angle(dec_center, unit=u.deg).to_string(unit=u.deg, sep=":"),
+            RA_center_HMS=ra_hms,
+            Dec_center_DMS=dec_dms,
         )
 
     @classmethod
