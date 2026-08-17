@@ -1,3 +1,15 @@
+"""Star-catalog queries, and the caching that keeps a run from re-reading the same sky.
+
+Each backend (SSTRC7, Gaia, SDSS) answers the same question -- which catalog stars fall on
+this frame -- but they differ in how expensive that is, so the Gaia path keeps an
+LRU region cache and answers a shifted field from the strips it has not seen yet rather than
+re-querying the whole box.
+
+The region queries are bounded twice over: an implausible field of view is rejected before any
+read, and the star count is capped after the in-frame cut, so one corrupt WCS cannot turn a
+frame into an out-of-memory kill.
+"""
+
 import json
 import logging
 import math
@@ -153,7 +165,7 @@ def _query_catalog_sstr7_cached(
     proper_motion_date_timestamp: float | None,
     max_stars: int | None,
 ) -> tuple:
-    """Cached version of query_catalog_sstr7 that takes hashable arguments."""
+    """Answer a SSTRC7 region query from cache, keyed on hashable arguments."""
     # Reconstruct WCS from tuple components
     header = {
         "WCSAXES": 2,
@@ -374,7 +386,7 @@ def query_catalog_sdss(
     proper_motion_date: datetime | None = None,
     max_stars: int | None = None,
 ) -> StarListSpace:
-
+    """Query SDSS for the stars on a frame, within the given magnitude limits."""
     astropy_wcs = wcs.to_astropy_wcs()
 
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
@@ -531,7 +543,8 @@ _GAIA_SKY_CACHE_MAX_STARS = 1_000_000
 
 def _trim_sky_cache() -> None:
     """Evict least-recently-used regions until the total star count fits.
-    Callers move the active region to the end of the list first (LRU touch).
+
+    Callers move the active region to the end of the list first, which is the LRU touch.
     """
     total = sum(len(r["stars"]) for r in _GAIA_SKY_CACHE)
     while len(_GAIA_SKY_CACHE) > 1 and (
@@ -547,17 +560,23 @@ def _trim_sky_cache() -> None:
         )
 
 
-def _box_overlap(a, b) -> bool:
+def _box_overlap(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
+    """Whether two sky boxes intersect."""
     return not (b[0] >= a[1] or b[1] <= a[0] or b[2] >= a[3] or b[3] <= a[2])
 
 
-def _box_contains(outer, inner) -> bool:
+def _box_contains(outer: tuple[float, ...], inner: tuple[float, ...]) -> bool:
+    """Whether `outer` fully encloses `inner`."""
     return outer[0] <= inner[0] and outer[1] >= inner[1] and outer[2] <= inner[2] and outer[3] >= inner[3]
 
 
-def _box_difference_strips(C, U):
-    """Rectangles tiling U \\ C, given U ⊇ C (disjoint; ≤4, typically 1-2 for a
-    shifted box): left/right full-height strips + top/bottom strips over C's RA.
+def _box_difference_strips(C: tuple[float, ...], U: tuple[float, ...]) -> list[tuple[float, float, float, float]]:
+    r"""Tile U \ C with disjoint rectangles, given U contains C.
+
+    At most four strips, and typically one or two for a box that has merely shifted:
+    full-height strips to the left and right of C, then strips above and below it over C's
+    RA span. This is what lets a moved field reuse the cached region and query only the
+    sky it has not seen.
     """
     rmn, rmx, dmn, dmx = U
     crmn, crmx, cdmn, cdmx = C
@@ -574,7 +593,8 @@ def _box_difference_strips(C, U):
     return strips
 
 
-def _sky_dedup_key(s):
+def _sky_dedup_key(s: dict) -> object:
+    """Identity for a cached star: its catalog id, or its rounded position if it has none."""
     sid = s.get("source_id")
     return sid if sid is not None else (round(s["ra"], 8), round(s["dec"], 8))
 
@@ -595,7 +615,8 @@ def _query_gaia_sky(
     key_fb = (faint_lim, bright_lim)
     B = (min_ra, max_ra, min_dec, max_dec)
 
-    def _online(box):
+    def _online(box: tuple[float, ...]) -> list[dict]:
+        """Query one sky box, from the local mirror when configured."""
         # Swap online TAP for the local mirror when configured (gaia_local). The
         # sliver cache above still wraps this, so local reads get deduped too.
         sc = get_or_initialize_config().star_catalog
@@ -620,7 +641,8 @@ def _query_gaia_sky(
             bright_lim=bright_lim,
         )
 
-    def _within_B(stars):
+    def _within_B(stars: list[dict]) -> list[dict]:
+        """Trim to the requested box, so a cached answer matches a fresh query exactly."""
         # Trim to the requested box so callers get exactly what a fresh query of B
         # would return (radians stored on each star).
         lo_ra, hi_ra = np.deg2rad(min_ra), np.deg2rad(max_ra)
@@ -692,7 +714,7 @@ def _query_catalog_gaia_cached(
     proper_motion_date_timestamp: float | None,
     max_stars: int | None,
 ) -> tuple[list[dict[str, Any]], ImageMetadata]:
-    """Cached Gaia query using a hashable WCS representation."""
+    """Answer a Gaia query from cache, keyed on a hashable WCS representation."""
     # Reconstruct WCS from tuple components
     header = {
         "WCSAXES": 2,
@@ -818,7 +840,7 @@ def query_catalog_gaia(
     proper_motion_date: datetime | None = None,
     max_stars: int | None = None,
 ) -> StarListSpace:
-
+    """Query Gaia for the stars on a frame, reusing cached sky regions where possible."""
     cfg = get_config()
 
     # Apply default faint limit from config if not provided
@@ -925,7 +947,7 @@ def query_catalog_gaia(
     )
 
 
-def examine_catalog():
+def examine_catalog() -> bool:
     """Examine the configured catalog and return True if valid."""
     config = get_or_initialize_config()
     catalog_type = config.star_catalog.type
@@ -951,8 +973,10 @@ def examine_catalog():
 
 
 def _examine_gaia_local_catalog(catalog_path: str) -> bool:
-    """Validate the local Gaia mirror: index.json present and every tile it
-    references exists on disk (catches a partial / in-progress download).
+    """Validate the local Gaia mirror.
+
+    Checks that index.json is present and that every tile it references exists on disk,
+    which is what catches a partial or in-progress download.
     """
     if not catalog_path:
         logger.error("gaia_local catalog path not configured")
@@ -1028,7 +1052,7 @@ def _examine_gaia_catalog() -> bool:
         return False
 
 
-def enforce_catalog():
+def enforce_catalog() -> None:
     """Enforce catalog validation - raises RuntimeError if catalog is invalid."""
     if not examine_catalog():
         config = get_or_initialize_config()
