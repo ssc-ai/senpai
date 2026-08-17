@@ -15,7 +15,9 @@ import pytest
 
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import CONFIG_DIR
-from senpai.engine.detection.streak.extraction import refine_robust_streak
+from senpai.engine.detection.streak.extraction import _estimate_streak_seed, refine_robust_streak
+from senpai.engine.detection.streak.rate_extraction import extract_streak_centers_as_sources
+from senpai.engine.models.metadata import StreakMetadata
 from senpai.engine.models.streak_measurement import StreakMeasurement
 
 
@@ -95,7 +97,6 @@ def _streak_field(length: int, rot: float, n: int = 30, size: int = 900) -> np.n
 
 class TestSeedEstimate:
     def test_recovers_ballpark_seed_not_frame_fraction(self):
-        from senpai.engine.detection.streak.extraction import _estimate_streak_seed
 
         # Old default would be size*0.05 = 45 here regardless of the streak;
         # the estimator must track the actual streak instead.
@@ -119,7 +120,6 @@ class TestStreakCenterExtraction:
     """
 
     def _streak_grid(self, length=40, rot=30.0, size=1200, seed=3):
-        from senpai.engine.models.metadata import StreakMetadata
 
         rng = np.random.default_rng(seed)
         one = _streak(length, rot=rot)  # patch with the streak at its center
@@ -141,9 +141,6 @@ class TestStreakCenterExtraction:
         return img, centers, streak
 
     def test_one_centroid_per_streak_at_known_centers(self):
-        from senpai.engine.detection.streak.rate_extraction import (
-            extract_streak_centers_as_sources,
-        )
 
         img, centers, streak = self._streak_grid()
         sources = extract_streak_centers_as_sources(img, streak=streak, max_sources=100)
@@ -161,10 +158,6 @@ class TestStreakCenterExtraction:
         # Pure noise legitimately yields 3-sigma matched-filter maxima (by
         # design — astrometry rejects them); what must hold is the contract:
         # bounded count and pairwise minimum separation.
-        from senpai.engine.detection.streak.rate_extraction import (
-            extract_streak_centers_as_sources,
-        )
-        from senpai.engine.models.metadata import StreakMetadata
 
         rng = np.random.default_rng(9)
         img = rng.normal(0.0, 5.0, (800, 800))

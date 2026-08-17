@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import senpai.api.main as main_mod
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 
@@ -52,7 +53,6 @@ class _InlineExecutor:
 @pytest.fixture
 def patched_app_env(monkeypatch):
     """Neutralize all host-touching startup work in senpai.api.main."""
-    import senpai.api.main as main_mod
 
     monkeypatch.setattr(main_mod, "test_astrometry_install", lambda *a, **k: True)
     monkeypatch.setattr(main_mod, "examine_indices", lambda *a, **k: True)

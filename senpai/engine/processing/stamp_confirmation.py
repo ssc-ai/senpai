@@ -27,6 +27,7 @@ from scipy.signal import correlate
 
 from senpai.core.config import get_config
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
+from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
 logger = logging.getLogger(__name__)
 
@@ -1307,7 +1308,6 @@ def _propagate_to_frame_candidates(
 
     # For each frame, compute the streak position and add to frame.detections
     # with photometry measured from the actual frame image.
-    from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
     for frame in frames_with_streaks:
         if frame.index == ref_fidx:

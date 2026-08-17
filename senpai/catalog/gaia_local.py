@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 from astroeasy.catalog.mirror import query_mirror_box
 
+from senpai.catalog.gaia_transforms import gaia_bp_rp_to_johnson_v, gaia_bp_rp_to_sloan_r
+
 logger = logging.getLogger(__name__)
 
 # Bound dict-building on ultra-dense (galactic-plane) fields: a single frame
@@ -64,10 +66,6 @@ def query_by_ra_dec_bounds(
 def _to_star(row, primary_filter: str, faint_lim: float) -> dict[str, Any]:
     """Build the same star dict as gaia.query_by_ra_dec_bounds (radians, synthetic
     Johnson_V / Sloan_r from BP-RP, proper motion in rad/s)."""
-    from senpai.catalog.gaia_transforms import (
-        gaia_bp_rp_to_johnson_v,
-        gaia_bp_rp_to_sloan_r,
-    )
 
     g, bp, rp = float(row["g"]), float(row["bp"]), float(row["rp"])
     magnitudes: dict[str, float] = {}

@@ -16,6 +16,9 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
+from senpai.engine.models.metadata import CollectionMetadata, ImageMetadata, StreakMetadata
+from senpai.engine.models.senpai import RateTrackFrameSerializable, SenpaiRunResult, SiderealFrameSerializable
+from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage, StarField, StarInImage, StarInSpace
 from senpai.export.coco import SenpaiCocoExporter
 from senpai.export.dataset_split import (
     DatasetSplit,
@@ -40,13 +43,11 @@ def _write_fits(path, width=64, height=48):
 
 
 def _image_metadata(width, height):
-    from senpai.engine.models.metadata import ImageMetadata
 
     return ImageMetadata(image_id="img", width=width, height=height)
 
 
 def _starfield(width, height, *, fit=True, detections=None, catalog=None):
-    from senpai.engine.models.starfield import StarField, StarInImage, StarInSpace
 
     return StarField(
         detections=[StarInImage(**d) for d in (detections or [])],
@@ -58,7 +59,6 @@ def _starfield(width, height, *, fit=True, detections=None, catalog=None):
 
 
 def _sidereal_frame(fits_path, width, height, *, index=0, detections=None, catalog=None, fit=True):
-    from senpai.engine.models.senpai import SiderealFrameSerializable
 
     return SiderealFrameSerializable(
         starfield=_starfield(width, height, fit=fit, detections=detections, catalog=catalog),
@@ -69,7 +69,6 @@ def _sidereal_frame(fits_path, width, height, *, index=0, detections=None, catal
 
 
 def _streak(length=20.0, angle_deg=0.0, fwhm=3.0):
-    from senpai.engine.models.metadata import StreakMetadata
 
     rad = np.deg2rad(angle_deg)
     return StreakMetadata(
@@ -81,14 +80,11 @@ def _streak(length=20.0, angle_deg=0.0, fwhm=3.0):
 
 
 def _satellite(x, y, snr=12.0):
-    from senpai.engine.models.starfield import SatelliteInImage
 
     return SatelliteInImage(x=x, y=y, snr=snr)
 
 
 def _rate_frame(fits_path, width, height, *, index=0, satellites=None, detections=None, streak=None, fit=True):
-    from senpai.engine.models.senpai import RateTrackFrameSerializable
-    from senpai.engine.models.starfield import SatelliteListImage
 
     sat_list = None
     if satellites is not None:
@@ -108,8 +104,6 @@ def _rate_frame(fits_path, width, height, *, index=0, satellites=None, detection
 
 
 def _run(sidereal=None, rate=None, scale_factor=None):
-    from senpai.engine.models.metadata import CollectionMetadata
-    from senpai.engine.models.senpai import SenpaiRunResult
 
     return SenpaiRunResult(
         id="run-1",

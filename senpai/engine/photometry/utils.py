@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 from astropy.stats import mad_std, sigma_clip
 
+from senpai.engine.models.metadata import StreakMetadata
+
 if TYPE_CHECKING:
     from senpai.engine.models.metadata import StreakMetadata
     from senpai.engine.photometry.color_terms import MultiBandCalibration
@@ -774,7 +776,6 @@ def measure_rate_starfield_photometry(
     tuple
         (photometry_results, summary_statistics)
     """
-    from senpai.engine.models.metadata import StreakMetadata
 
     if not isinstance(streak, StreakMetadata):
         raise TypeError(f"streak must be StreakMetadata, got {type(streak)}")
@@ -2699,7 +2700,6 @@ def estimate_limiting_magnitude_from_photometry(
     and is used by WCS refinement code. The default SNR threshold is 3σ,
     configurable via the min_snr parameter.
     """
-    from senpai.engine.models.senpai import RateTrackFrame
 
     # Determine frame type
     is_rate_track = isinstance(frame, RateTrackFrame)

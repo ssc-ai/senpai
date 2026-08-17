@@ -26,7 +26,8 @@ from scipy.spatial import cKDTree
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.images import ProcessedFitsImage
-from senpai.engine.models.metadata import FWHMMetadata, ImageMetadata
+from senpai.engine.models.metadata import CollectionMetadata, FWHMMetadata, ImageMetadata
+from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
 from senpai.engine.models.starfield import StarField, StarInSpace
 from senpai.engine.photometry.utils import (
     SimplePhotometryConfig,
@@ -36,6 +37,7 @@ from senpai.engine.photometry.utils import (
     _completeness_limits,
     _find_common_magnitude_system,
     _get_best_magnitude,
+    _guard_aperture_mask_footprint,
     _has_bright_neighbor,
     _isotonic_completeness,
     _precompute_star_magnitudes,
@@ -269,8 +271,6 @@ def test_run_result_records_aperture_policy():
     """to_result() emits a run-level `photometry` block carrying the PSF-factor
     policy when the run measured photometry, so the output JSON documents how
     apertures were sized without the original config.yaml."""
-    from senpai.engine.models.metadata import CollectionMetadata
-    from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
 
     frame = SiderealFrame(
         frame=_image(np.zeros((50, 50))),
@@ -294,8 +294,6 @@ def test_run_result_records_aperture_policy():
 
 def test_run_result_omits_photometry_block_without_photometry():
     """A run that measured no photometry omits the run-level block entirely."""
-    from senpai.engine.models.metadata import CollectionMetadata
-    from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
 
     frame = SiderealFrame(frame=_image(np.zeros((50, 50))), index=0, photometry_summary=None)
     run = SenpaiRun(
@@ -535,15 +533,12 @@ def test_compute_completeness_curve_empty_when_too_few():
 # Degenerate FWHM / streak fits must fail the frame, not the worker.
 # --------------------------------------------------------------------------- #
 def test_aperture_mask_footprint_guard_allows_real_apertures() -> None:
-    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
 
     # 50k stars with a 12 px FWHM: a ~100 px background annulus, well inside the cap.
     _guard_aperture_mask_footprint(50_000, 100.0, "normal frame")
 
 
 def test_aperture_mask_footprint_guard_rejects_a_degenerate_fwhm() -> None:
-
-    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
 
     # The production case: a 252 px median FWHM sizes a ~2000 px annulus, and a worse
     # fit scales quadratically from there.
@@ -552,7 +547,6 @@ def test_aperture_mask_footprint_guard_rejects_a_degenerate_fwhm() -> None:
 
 
 def test_aperture_mask_footprint_guard_bounds_by_the_mask_cache_not_the_star_count() -> None:
-    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
 
     # Masks are cached per sub-pixel offset, so a huge star count with sane apertures
     # costs no more than 64 masks. 1e6 stars must not trip the cap on its own.

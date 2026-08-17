@@ -22,10 +22,15 @@ import json
 import pytest
 from pydantic import ValidationError
 
+import senpai.api.routes.astrometry as astro_mod
+import senpai.api.routes.senpai as route_mod
+from senpai.api.models.examples import StarListImageExample
 from senpai.api.models.returns import DetectResponse, FrameResult
-from senpai.api.routes.senpai import FilePayloadItem
+from senpai.api.routes.senpai import FilePayloadItem, detect, detect_upload, index
+from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.engine.models.metadata import CollectionMetadata
 from senpai.engine.models.senpai import SenpaiRun
+from senpai.engine.models.starfield import ImageMetadata, StarField, StarInImage, StarListImage
 
 from .conftest import make_request
 
@@ -63,7 +68,6 @@ def test_create_app_openapi_schema(patched_app_env, _init_config):
 
 
 def test_create_app_accepts_config_path(patched_app_env):
-    from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 
     app = patched_app_env.create_app(LOCAL_APP_CONFIG_OVERRIDE)
     assert app.version is not None
@@ -91,7 +95,6 @@ def test_lifespan_runs_hermetically(patched_app_env, _init_config):
 
 
 def test_senpai_index_returns_version(_init_config):
-    from senpai.api.routes.senpai import index
 
     result = asyncio.run(index(make_request("/senpai/")))
     assert result["version"] == _init_config.version
@@ -146,7 +149,6 @@ def _canned_run() -> SenpaiRun:
 @pytest.fixture
 def mocked_pipeline(monkeypatch):
     """Patch the collect route's I/O and processing to canned outputs."""
-    import senpai.api.routes.senpai as route_mod
 
     calls = {"loaded": [], "processed": 0}
 
@@ -172,7 +174,6 @@ def mocked_pipeline(monkeypatch):
     ],
 )
 def test_collect_endpoints_happy_path(mocked_pipeline, handler_name, path):
-    import senpai.api.routes.senpai as route_mod
 
     handler = getattr(route_mod, handler_name)
     payload = [FilePayloadItem(file="ZmFrZQ==", sequence_id=0, sequence_count=1)]
@@ -186,7 +187,6 @@ def test_collect_endpoints_happy_path(mocked_pipeline, handler_name, path):
 
 
 def test_detect_upload_alias(mocked_pipeline):
-    from senpai.api.routes.senpai import detect_upload
 
     payload = [FilePayloadItem(file="ZmFrZQ==")]
     result = asyncio.run(detect_upload(make_request("/senpai/detect/upload"), payload))
@@ -195,7 +195,6 @@ def test_detect_upload_alias(mocked_pipeline):
 
 
 def test_detect_passes_all_files_to_loader(mocked_pipeline):
-    from senpai.api.routes.senpai import detect
 
     payload = [FilePayloadItem(file=f) for f in ("QQ==", "Qg==", "Qw==")]
     asyncio.run(detect(make_request("/senpai/detect"), payload))
@@ -208,7 +207,6 @@ def test_detect_passes_all_files_to_loader(mocked_pipeline):
 
 
 def _starfield(fit: bool):
-    from senpai.engine.models.starfield import ImageMetadata, StarField
 
     return StarField(
         detections=[],
@@ -219,7 +217,6 @@ def _starfield(fit: bool):
 
 
 def _starlist_image():
-    from senpai.engine.models.starfield import ImageMetadata, StarInImage, StarListImage
 
     return StarListImage(
         detections=[StarInImage(x=1.0, y=2.0, counts=100.0)],
@@ -228,7 +225,6 @@ def _starlist_image():
 
 
 def test_solve_sources_solved_returns_200(monkeypatch):
-    import senpai.api.routes.astrometry as astro_mod
 
     monkeypatch.setattr(astro_mod, "solve_field", lambda sources: _starfield(True))
     response = asyncio.run(astro_mod.solve_sources(make_request("/astrometry/solve/sources"), _starlist_image()))
@@ -237,7 +233,6 @@ def test_solve_sources_solved_returns_200(monkeypatch):
 
 
 def test_solve_sources_unsolved_returns_422(monkeypatch):
-    import senpai.api.routes.astrometry as astro_mod
 
     monkeypatch.setattr(astro_mod, "solve_field", lambda sources: _starfield(False))
     response = asyncio.run(astro_mod.solve_sources(make_request("/astrometry/solve/sources"), _starlist_image()))
@@ -245,7 +240,6 @@ def test_solve_sources_unsolved_returns_422(monkeypatch):
 
 
 def test_solve_sources_passes_sources_through(monkeypatch):
-    import senpai.api.routes.astrometry as astro_mod
 
     seen = {}
 
@@ -286,7 +280,6 @@ def test_detect_response_roundtrip():
 def test_star_list_image_example_constructs():
     # examples.py used to pass ``stars=`` (a nonexistent field); the OpenAPI
     # example payload for /solve/sources must build a valid StarListImage.
-    from senpai.api.models.examples import StarListImageExample
 
     example = StarListImageExample().value
     assert len(example.detections) > 0

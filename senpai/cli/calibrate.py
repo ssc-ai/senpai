@@ -21,17 +21,12 @@ import argparse
 import logging
 from pathlib import Path
 
+from senpai.engine.observability.calibration import analyze_night, load_plot_data, plot_calibration, save_calibration
+
 logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-
-    from senpai.engine.observability.calibration import (
-        analyze_night,
-        load_plot_data,
-        plot_calibration,
-        save_calibration,
-    )
 
     parser = argparse.ArgumentParser(
         description="Build a per-night calibration (JSON + plots) from processed batches.",

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from senpai.catalog import sstrc7_source
+from senpai.core import config as config_module
 
 RA, DEC, FOV = 245.45, 41.8, 0.5
 
@@ -129,8 +130,6 @@ def _fake_field(**bands: float) -> _FakeField:
 
 def _set_priority(monkeypatch, priority: str) -> None:
 
-    from senpai.core import config as config_module
-
     fake = types.SimpleNamespace(star_catalog=types.SimpleNamespace(magnitude_band_priority=priority))
     monkeypatch.setattr(config_module, "_config_instance", fake)
 
@@ -166,7 +165,6 @@ def test_priority_ladder_requires_an_initialized_config(monkeypatch) -> None:
     A silent fallback would score a frame against a different band ladder than the one
     configured, which is indistinguishable from correct output.
     """
-    from senpai.core import config as config_module
 
     monkeypatch.setattr(config_module, "_config_instance", None)
     with pytest.raises(RuntimeError, match="not initialized"):

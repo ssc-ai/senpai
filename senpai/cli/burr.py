@@ -30,10 +30,22 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
+from senpai.astrometry import enforce_indices, require_astrometry_install
+from senpai.catalog.runner import enforce_catalog
+from senpai.cli.calibrate import main as calibrate_main
 from senpai.cli.common import ensure_output_dir, save_run_metadata
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import CONFIG_DIR
 from senpai.core.logging import set_log_level
+from senpai.engine.models.senpai import SenpaiRunResult
+from senpai.engine.observability.calibration import summarize_nights
+from senpai.engine.plotting.replot import ALL_KINDS, replot
+from senpai.engine.processing.collect import final_plots, process_senpai_collect
+from senpai.engine.utils.file_io import load_fits_files
+from senpai.engine.utils.fits_io import extract_header_value
+from senpai.engine.utils.flats import _create_master_flat_from_files
+from senpai.export.coco import SenpaiCocoExporter
+from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
 from senpai.integrations.burr import BurrNight, FrameBatch
 
 # Default senpai config tuned to burr's FITS header conventions
@@ -90,9 +102,6 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
 
     Returns a small manifest entry (paths + timing) for the night's manifest.
     """
-
-    from senpai.engine.processing.collect import final_plots, process_senpai_collect
-    from senpai.engine.utils.file_io import load_fits_files
 
     batch_dir.mkdir(parents=True, exist_ok=True)
     config = get_config()
@@ -164,7 +173,6 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
     batches (e.g. by TASKID), so the hint mislabels real rate frames as sidereal.
     We keep it only as a last resort for a frame with no TRKMODE at all.
     """
-    from senpai.engine.utils.fits_io import extract_header_value
 
     mode_keys = get_config().headers.tracking.track_mode_keys or ["TRKMODE"]
     path_to_intent: dict[str, str | None] = {str(r.path): r.intended_tracking_mode for r in batch.frames}
@@ -502,9 +510,6 @@ def cmd_night(args: argparse.Namespace) -> int:
                 print(f"  ... and {len(batches) - 5} more")
         return 0
 
-    from senpai.astrometry import enforce_indices, require_astrometry_install
-    from senpai.catalog.runner import enforce_catalog
-
     output_root = ensure_output_dir(Path(args.output_dir), default_stem="burr_runs")
 
     config = initialize_config(Path(args.config))
@@ -540,7 +545,6 @@ def cmd_flats(args: argparse.Namespace) -> int:
     BINNING-matched apply path (``app.calibrations.master_flats_dir`` +
     ``auto_apply_flats``) can pick it up.
     """
-    from senpai.engine.utils.flats import _create_master_flat_from_files
 
     output_dir = Path(args.output_dir)
     rc = 0
@@ -589,7 +593,6 @@ def cmd_flats(args: argparse.Namespace) -> int:
 
 def cmd_nights_summary(args: argparse.Namespace) -> int:
     """Cross-night conditions table (PSF / sky / extinction vs Moon & weather)."""
-    from senpai.engine.observability.calibration import summarize_nights
 
     table = summarize_nights(args.root, csv_path=args.csv)
     print(table)
@@ -602,7 +605,6 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     Thin alias for the standalone ``senpai.cli.calibrate`` (calibration is not
     burr-specific); kept so ``senpai-burr calibrate`` keeps working.
     """
-    from senpai.cli.calibrate import main as calibrate_main
 
     argv = [str(args.processed_night_dir)]
     if args.output_dir:
@@ -642,7 +644,6 @@ def cmd_plots(args: argparse.Namespace) -> int:
     re-processing), so plotting is decoupled from the slow night pipeline and
     iterating on a plot never costs a re-run.
     """
-    from senpai.engine.plotting.replot import ALL_KINDS, replot
 
     config = initialize_config(Path(args.config))
     set_log_level(config.logging.level)
@@ -672,8 +673,6 @@ def _export_one_batch(task: tuple) -> tuple:
     """Export one batch's SenpaiRunResult into the shared pool dir. Each call
     writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json``
     + FITS), so concurrent workers never collide. Returns (batch_id, ok, error)."""
-    from senpai.engine.models.senpai import SenpaiRunResult
-    from senpai.export.coco import SenpaiCocoExporter
 
     (result_path, batch_id, pool_dir, snr_cut, max_streak_length, process_sidereal, link_source) = task
     exporter = SenpaiCocoExporter(
@@ -712,7 +711,6 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
     it can be split repeatedly later (``split-dataset``) — e.g. data-scaling
     ablations against a fixed val/test — without re-exporting.
     """
-    from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
 
     output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_dataset")
     # With --export-only the output dir IS the ready-data pool (a flat dir of FITS
@@ -839,7 +837,6 @@ def cmd_split_dataset(args: argparse.Namespace) -> int:
     val/test are pinned to the end of the global temporal order (the held-out
     "future"); ``--train-cap N`` varies only the train size, leaving the val/test
     boundary fixed."""
-    from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
 
     pool_dir = Path(args.pool_dir)
     if not pool_dir.is_dir():

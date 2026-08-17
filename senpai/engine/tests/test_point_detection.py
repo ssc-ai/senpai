@@ -19,6 +19,9 @@ from photutils.detection import DAOStarFinder
 from photutils.detection.daofinder import _StarFinderKernel
 from scipy.signal import fftconvolve
 
+import senpai.engine.detection.point.sidereal as sid
+from senpai.engine.detection.point.satellite import _dao_sources_at_threshold, _local_maxima_above
+
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 from datetime import UTC, datetime
@@ -405,7 +408,6 @@ def _centroid_rms(detected, truth, tol=1.5):
 
 def _track_refiner_calls(monkeypatch):
     """Record invocations of the full-res centroid refiner (binned path only)."""
-    import senpai.engine.detection.point.sidereal as sid
 
     calls = []
     original = sid._refine_centroid_full_res
@@ -482,11 +484,6 @@ def test_satellite_threshold_search_matches_daostarfinder():
     private-API reimplementation (_StarFinderKernel/_DAOStarFinderCatalog):
     if a photutils upgrade moves those internals, this fails loudly.
     """
-
-    from senpai.engine.detection.point.satellite import (
-        _dao_sources_at_threshold,
-        _local_maxima_above,
-    )
 
     sigma = 2.2
     rng = np.random.default_rng(12)

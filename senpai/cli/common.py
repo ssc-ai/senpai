@@ -12,6 +12,8 @@ from pstats import SortKey
 
 import yaml
 
+from senpai.core.config import get_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,8 +72,6 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
 def profile_run(func, *args, run_id: str = "profile", **kwargs):
     """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
     saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result."""
-
-    from senpai.core.config import get_config
 
     pr = cProfile.Profile()
     pr.enable()

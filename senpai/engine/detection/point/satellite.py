@@ -15,6 +15,7 @@ from scipy.ndimage import median_filter
 from scipy.signal import fftconvolve
 
 from senpai.core.config import get_config, settings
+from senpai.engine.detection.point.sidereal import validate_point_detection
 from senpai.engine.detection.streak.masking import percent_difference
 from senpai.engine.models.senpai import RateTrackFrame
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
@@ -849,7 +850,6 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
         logger.info(f"After deduplication, {len(deduplicated_detections)} detections remain")
 
     # Convert to StarInImage objects
-    from senpai.engine.detection.point.sidereal import validate_point_detection
 
     stars = []
     for x, y, pixel_fwhm in deduplicated_detections:

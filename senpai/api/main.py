@@ -13,6 +13,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from senpai.api.routes import astrometry, senpai
 from senpai.astrometry import examine_indices, test_astrometry_install
 from senpai.core.config import AppConfig, initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
@@ -27,7 +28,6 @@ def setup_routes(app: FastAPI) -> None:
     """Configure application routes"""
     logger.info("Setting up routes...")
     # Import routes here to avoid circular imports
-    from senpai.api.routes import astrometry, senpai
 
     app.include_router(senpai.router, tags=["SENPAI"], prefix="/senpai")
     app.include_router(astrometry.router, tags=["Astrometry"], prefix="/astrometry")
@@ -53,7 +53,6 @@ async def lifespan(app: FastAPI):
 
 
 def _init_pool_worker():
-    from senpai.core.config import initialize_config
 
     cfg_path = os.getenv("SENPAI_CONFIG")
     if cfg_path:

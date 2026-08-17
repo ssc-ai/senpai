@@ -33,6 +33,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from senpai.core.config import get_config
+from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+from senpai.engine.photometry.utils import (
+    _completeness_limits,
+    _save_completeness_plot,
+    _save_simple_limiting_mag_plot,
+    calculate_star_snrs_with_aperture_photometry,
+)
+from senpai.engine.plotting import psf as P
+from senpai.engine.plotting.images import plot_single_frame
+from senpai.engine.processing.collect import _write_sequence_gif
 from senpai.engine.utils.file_io import load_fits_file, load_senpai_run
 
 logger = logging.getLogger(__name__)
@@ -90,7 +100,6 @@ def _streak_candidate_objs(candidates):
 
 def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
     """final_<idx>.png (overlays) + raw_<idx>.png for one frame."""
-    from senpai.engine.plotting.images import plot_single_frame
 
     written: list[Path] = []
     final_path = out_dir / f"final_{frame.index}.png"
@@ -114,11 +123,6 @@ def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
 
 def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
     """Completeness + limiting-mag diagnostics from the stored summary arrays."""
-    from senpai.engine.photometry.utils import (
-        _completeness_limits,
-        _save_completeness_plot,
-        _save_simple_limiting_mag_plot,
-    )
 
     ps = frame.photometry_summary or {}
     written: list[Path] = []
@@ -158,10 +162,6 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     ``plotting.photometry`` is on) — the same routine the WCS-refinement path uses
     inline. No astrometry/catalog/WCS recompute: the solved StarField is reused.
     """
-    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
-    from senpai.engine.photometry.utils import (
-        calculate_star_snrs_with_aperture_photometry,
-    )
 
     ap_path = out_dir / f"frame_{frame.index}_aperture_photometry_stars.png"
     if not force and ap_path.exists():
@@ -217,7 +217,6 @@ def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
     """Per-frame empirical PSF panel. Prefers the saved .npy stamp (cheap, no FITS
     reload); falls back to reloading the processed FITS and re-stacking (which
     also re-writes the .npy), so panels regenerate even if psfs was off at run."""
-    from senpai.engine.plotting import psf as P
 
     suffix = "psf" if mode == "sidereal" else "streak"
     png = out_dir / f"frame_{frame.index}_{suffix}.png"
@@ -286,7 +285,6 @@ def replot_batch_dir(
 
     Returns a per-kind count of files written.
     """
-    from senpai.engine.processing.collect import _write_sequence_gif
 
     batch_dir = Path(batch_dir)
     result_json = _find_result_json(batch_dir)

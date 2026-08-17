@@ -15,6 +15,9 @@ import numpy as np
 import pytest
 
 from senpai.catalog import gaia, runner, sdss
+from senpai.core import config as config_module
+from senpai.engine.models.astrometry import WCSModel
+from senpai.exceptions import SiderealSolveError
 
 
 # --------------------------------------------------------------------------- #
@@ -304,7 +307,6 @@ def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch) -> No
 # Helper: build a tiny TAN WCSModel for runner tests.
 # --------------------------------------------------------------------------- #
 def _wcs_model() -> runner.WCSModel:
-    from senpai.engine.models.astrometry import WCSModel
 
     return WCSModel(
         WCSAXES=2,
@@ -400,7 +402,6 @@ def _off_center_wcs() -> runner.WCSModel:
     10-degree rotation keeps the PC matrix off the identity, as a real plate
     solution's is.
     """
-    from senpai.engine.models.astrometry import WCSModel
 
     theta = np.deg2rad(10.0)
     return WCSModel(
@@ -433,7 +434,6 @@ def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict, max
         return list(stars)
 
     monkeypatch.setattr(runner.sstr7, "query_by_los_radec_with_rotation", _query)
-    from senpai.core import config as config_module
 
     monkeypatch.setattr(
         config_module,
@@ -505,7 +505,6 @@ def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
 
 def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch) -> None:
     """A corrupted WCS must fail typed, not read a huge slice of the catalog."""
-    from senpai.exceptions import SiderealSolveError
 
     # 0.1 deg/px over 100 px is a 10-degree field; a 1-degree configured maximum
     # puts it past the 2x sanity margin.

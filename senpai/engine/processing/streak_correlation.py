@@ -15,6 +15,10 @@ import numpy as np
 from astropy.stats import sigma_clipped_stats
 
 from senpai.core.config import get_config
+from senpai.engine.detection.streak.sidereal_streak import (
+    detect_streaks_in_sidereal,
+    measure_streak_candidate_photometry,
+)
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
 
 logger = logging.getLogger(__name__)
@@ -50,11 +54,6 @@ def detect_streaks_in_sidereal_frames(
         Dictionary mapping frame index to ``(directional_excess_map, noise_std, best_angle_deg)``
         for use in multi-frame DE-based confirmation.
     """
-
-    from senpai.engine.detection.streak.sidereal_streak import (
-        detect_streaks_in_sidereal,
-        measure_streak_candidate_photometry,
-    )
 
     config = get_config()
     de_data: dict[int, tuple[np.ndarray, float, np.ndarray]] = {}
@@ -132,10 +131,6 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
     2. Filters out candidates matching the star streak angle+length (smeared stars)
     3. Stores remaining candidates on frame.streak_candidates
     """
-    from senpai.engine.detection.streak.sidereal_streak import (
-        detect_streaks_in_sidereal,
-        measure_streak_candidate_photometry,
-    )
 
     config = get_config()
     angle_tol = config.detection.streak_angle_tolerance_deg

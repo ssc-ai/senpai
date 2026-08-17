@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from senpai.core.config import settings
+from senpai.engine.models.images import ProcessingMetadata
 
 logger = logging.getLogger(__name__)
 from astropy.io import fits
@@ -120,7 +121,6 @@ def remove_column_and_row_medians(
     Returns:
         The image with column and row medians subtracted.
     """
-    from senpai.engine.models.images import ProcessingMetadata
 
     array = image.data
 
@@ -181,7 +181,6 @@ def remove_background(
     store_intermediates: bool = False,
     mask_sources: bool = False,
 ) -> ProcessedFitsImage:
-    from senpai.engine.models.images import ProcessingMetadata
 
     background = measure_background(
         image.data, box_size, filter_size, exclude_percentile, sigma, maxiters, mask_sources
@@ -1088,7 +1087,6 @@ def scale_image_block_median(image: ProcessedFitsImage, scale_factor: float) -> 
     ProcessedFitsImage
         Scaled image
     """
-    from senpai.engine.models.images import ProcessingMetadata
 
     # Calculate block size first
     block_size = int(np.ceil(scale_factor))
@@ -1165,7 +1163,6 @@ def scale_image_blur_decimate(image: ProcessedFitsImage, scale_factor: float) ->
     ProcessedFitsImage
         Scaled image
     """
-    from senpai.engine.models.images import ProcessingMetadata
 
     # Calculate target dimensions first
     target_height = int(image.data.shape[0] / scale_factor)

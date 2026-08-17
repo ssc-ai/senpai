@@ -4,9 +4,10 @@ import logging
 import math
 
 from senpai.catalog.runner import query_catalog
+from senpai.core.config import get_config
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
-from senpai.engine.models.astrometry import WCSModel
-from senpai.engine.models.starfield import StarInSpace, StarListSpace
+from senpai.engine.models.astrometry import WCSMetadata, WCSModel, WCSStatus
+from senpai.engine.models.starfield import StarField, StarInSpace, StarListSpace
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +118,6 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
         senpai_run: SenpaiRun containing all frames.
         frame_shift: FrameShift with source/target indices and pixel shifts.
     """
-    from senpai.core.config import get_config
-    from senpai.engine.models.astrometry import WCSMetadata, WCSStatus
-    from senpai.engine.models.starfield import StarField
 
     # Get the source frame's WCS
     logger.info(f"Shifting WCS from frame {frame_shift.source_index} to {frame_shift.target_index}")

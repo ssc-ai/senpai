@@ -60,6 +60,7 @@ from astropy.io import fits
 from astropy.stats import SigmaClip
 
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
+from senpai.engine.utils.darks import find_best_dark_for_exposure
 
 
 @dataclass
@@ -373,7 +374,6 @@ def _find_dark_for_flat(
     max_exptime_ratio: float = 10.0,
 ) -> tuple[Path, float] | None:
     """Find the best-matching dark for a flat exposure. Returns (path, dark_exptime)."""
-    from senpai.engine.utils.darks import find_best_dark_for_exposure
 
     return find_best_dark_for_exposure(
         dark_directory=dark_directory,

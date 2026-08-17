@@ -30,7 +30,10 @@ import numpy as np
 from astropy.io import fits
 from scipy import ndimage
 
+from senpai.core.config import get_config, initialize_config
+from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.engine.models.metadata import TrackMode
+from senpai.engine.utils.fits_io import extract_header_value, extract_track_rates_from_header
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +170,6 @@ def infer_track_mode_from_image(data: np.ndarray, max_sources: int = _MAX_SOURCE
 
 def _header_trkmode(header, mode_keys) -> TrackMode | None:
     """Explicit, unambiguous TRKMODE from the header, or None."""
-    from senpai.engine.utils.fits_io import extract_header_value
 
     for k in mode_keys:
         v = extract_header_value(header, k)
@@ -188,7 +190,6 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
     """Classify a frame sidereal vs rate, cheapest evidence first (see module
     docstring). ``data`` (the 2-D image) enables the pixel arbiter; omit it to
     stay metadata-only."""
-    from senpai.engine.utils.fits_io import extract_track_rates_from_header
 
     if config is None:
         from senpai.core.config import get_config
@@ -242,10 +243,6 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
 #   python -m senpai.engine.detection.track_mode <fits...> [--from-data] [--raw]
 # --------------------------------------------------------------------------
 def _main(argv=None) -> int:
-
-    from senpai.core.config import get_config, initialize_config
-    from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
-    from senpai.engine.utils.fits_io import extract_track_rates_from_header
 
     p = argparse.ArgumentParser(
         description="Classify a frame sidereal-vs-rate and show every tier's "

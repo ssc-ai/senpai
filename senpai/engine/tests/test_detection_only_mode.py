@@ -16,6 +16,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from senpai.engine.models.metadata import FWHMMetadata
+
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
@@ -137,7 +139,6 @@ def stubbed_stages(monkeypatch):
 
     def fake_catalog_fwhm(*args, **kwargs):
         calls["catalog_fwhm"] += 1
-        from senpai.engine.models.metadata import FWHMMetadata
 
         return FWHMMetadata(
             n_measurements=25,

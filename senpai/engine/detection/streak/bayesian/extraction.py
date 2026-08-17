@@ -32,6 +32,7 @@ from senpai.engine.models.metadata import FrameMetadata
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.streak_measurement import StreakMeasurement
 from senpai.engine.utils.simulation import simulated_sidereal_frame
+from senpai.engine.utils.stats import fft_workers
 
 logger = logging.getLogger(__name__)
 
@@ -2260,7 +2261,6 @@ def extract_streak_dims_robust_v26(
     )
 
     # Step 3: Apply matched filter
-    from senpai.engine.utils.stats import fft_workers
 
     with fft_workers():
         filtered_data = convolve(working_data, kernel, mode="same")

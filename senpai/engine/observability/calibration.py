@@ -36,6 +36,8 @@ from scipy import ndimage
 from scipy.ndimage import map_coordinates
 from scipy.spatial import cKDTree
 
+from senpai.engine.plotting.psf import clean_copy_path, paper_ready_enabled, strip_titles
+
 logger = logging.getLogger(__name__)
 
 
@@ -1210,12 +1212,6 @@ def plot_calibration(source, output_dir: str | Path, *, save_data: bool = True) 
 
 def _save(fig, path: Path) -> Path:
     import matplotlib.pyplot as plt
-
-    from senpai.engine.plotting.psf import (
-        clean_copy_path,
-        paper_ready_enabled,
-        strip_titles,
-    )
 
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")

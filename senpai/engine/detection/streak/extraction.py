@@ -22,6 +22,7 @@ from senpai.engine.detection.streak.masking import (
 from senpai.engine.models.astrometry import WCSModel
 from senpai.engine.models.metadata import FrameMetadata
 from senpai.engine.models.streak_measurement import StreakMeasurement
+from senpai.engine.utils.stats import fft_workers
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +266,6 @@ def refine_robust_streak(
     wing_threshold = 0.15
 
     # Import flood fill function from masking module
-    from senpai.engine.detection.streak.masking import map_cluster
 
     # Use flood fill to get connected region starting from the brightest point
     full_mask = map_cluster(rotated_psf, (center_y, center_x), wing_threshold, pad_size=0)
@@ -1235,7 +1235,6 @@ def extract_streak_dims_robust(
     )
 
     # Step 3: Apply matched filter
-    from senpai.engine.utils.stats import fft_workers
 
     with fft_workers():
         filtered_data = convolve(working_data, kernel, mode="same")

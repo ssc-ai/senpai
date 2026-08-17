@@ -20,13 +20,12 @@ from pathlib import Path
 from senpai.core.config import initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.core.logging import set_log_level
+from senpai.engine.plotting.replot import ALL_KINDS, replot
 
 logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-
-    from senpai.engine.plotting.replot import ALL_KINDS, replot
 
     parser = argparse.ArgumentParser(
         description="Regenerate per-frame diagnostic plots from processed batch "

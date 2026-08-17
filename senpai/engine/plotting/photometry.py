@@ -19,6 +19,7 @@ from senpai.engine.photometry.utils import (
     SimplePhotometrySummary,
     _find_common_magnitude_system,
 )
+from senpai.engine.plotting.images import plot_single_frame
 
 logger = logging.getLogger(__name__)
 
@@ -484,7 +485,6 @@ def plot_background_contours_on_image(
     plt.Figure
         The created figure
     """
-    from senpai.engine.plotting.images import plot_single_frame
 
     # Use plot_single_frame to get the base image with proper axis
     fig, ax = plot_single_frame(image.data, output_file=None)

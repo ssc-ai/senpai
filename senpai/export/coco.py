@@ -10,8 +10,15 @@ import numpy as np
 import png
 from astropy.io import fits
 
+from senpai.engine.models.images import ProcessingStep
 from senpai.engine.models.senpai import SenpaiRun, SenpaiRunResult
+from senpai.engine.utils.darks import apply_dark_subtraction
 from senpai.engine.utils.file_io import load_fits_file
+from senpai.engine.utils.preprocessing import (
+    remove_column_and_row_medians,
+    unscale_starfield_coordinates,
+    unscale_streak_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -938,9 +945,6 @@ class SenpaiCocoExporter:
         correction_frames: dict | None = None,
     ) -> np.ndarray:
         """Apply the same calibration chain that was used during SENPAI processing."""
-        from senpai.engine.models.images import ProcessingStep
-        from senpai.engine.utils.darks import apply_dark_subtraction
-        from senpai.engine.utils.preprocessing import remove_column_and_row_medians
 
         # Start with the raw frame data
         processed_data = frame_data.copy().astype(np.float64)
@@ -1067,7 +1071,6 @@ class SenpaiCocoExporter:
         scaling_method = self._get_scaling_method(frame) if frame else "block_median"
 
         # Use the proper unscaling function
-        from senpai.engine.utils.preprocessing import unscale_starfield_coordinates
 
         return unscale_starfield_coordinates(starfield, scale_factor, scaling_method)
 
@@ -1080,7 +1083,6 @@ class SenpaiCocoExporter:
         scaling_method = self._get_scaling_method(frame) if frame else "block_median"
 
         # Use the proper unscaling function
-        from senpai.engine.utils.preprocessing import unscale_streak_metadata
 
         return unscale_streak_metadata(streak, scale_factor, scaling_method)
 

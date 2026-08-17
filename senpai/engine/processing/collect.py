@@ -11,6 +11,7 @@ import numpy as np
 from senpai.core.config import get_config
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
 from senpai.engine.detection.point.satellite import extract_point_sources
+from senpai.engine.detection.point.sidereal import validate_point_detection
 from senpai.engine.detection.streak.frame_shift import (
     enforce_chain_consistency,
     solve_shift,
@@ -18,10 +19,17 @@ from senpai.engine.detection.streak.frame_shift import (
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import SeeingModel, TrackMode
 from senpai.engine.models.senpai import RateTrackFrame, SenpaiRun, SiderealFrame
+from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
+from senpai.engine.photometry.utils import (
+    measure_detection_photometry,
+    measure_rate_starfield_photometry,
+    measure_simple_starfield_photometry,
+)
 from senpai.engine.plotting.images import plot_single_frame
 from senpai.engine.processing.sidereal import process_astrometry_fits_sidereal
 from senpai.engine.utils.memory import reclaim_process_memory
 from senpai.engine.utils.preprocessing import (
+    preprocess_image,
     scale_starfield_coordinates,
 )
 from senpai.engine.utils.propagate_wcs import (
@@ -67,7 +75,6 @@ def _process_senpai_collect(
     pipeline_mode = pipeline_mode or config.astrometry.pipeline_mode
 
     # Apply preprocessing to all frames before organizing
-    from senpai.engine.utils.preprocessing import preprocess_image
 
     logger.info("Applying preprocessing to all frames...")
     for frame in file_list:
@@ -545,12 +552,6 @@ def _process_senpai_collect(
 
     # --- Photometry ---
 
-    from senpai.engine.photometry.utils import (
-        measure_detection_photometry,
-        measure_rate_starfield_photometry,
-        measure_simple_starfield_photometry,
-    )
-
     # Sidereal frames: simple circular aperture photometry
     for image_frame in senpai_run.sidereal_frames:
         if image_frame.starfield is None or not image_frame.starfield.fit:
@@ -577,7 +578,6 @@ def _process_senpai_collect(
     # --- Catalog-filtered point source detections in sidereal frames ---
     # Match starfield.detections against catalog_stars; non-matched sources that
     # are bright enough to reliably be in the catalog are potential satellites/asteroids.
-    from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
     for image_frame in senpai_run.sidereal_frames:
         if image_frame.starfield is None or not image_frame.starfield.fit:
@@ -631,7 +631,6 @@ def _process_senpai_collect(
         # wiggles on an elevated background.  Require each flagged detection
         # to be a significant point source at its LOCAL scale.
         n_before_validation = len(non_catalog)
-        from senpai.engine.detection.point.sidereal import validate_point_detection
 
         frame_data = image_frame.frame.data
         non_catalog = [det for det in non_catalog if validate_point_detection(frame_data, det.x, det.y, fwhm)]

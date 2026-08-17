@@ -22,6 +22,7 @@ import uuid
 import numpy as np
 
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
+from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
 logger = logging.getLogger(__name__)
 
@@ -847,8 +848,6 @@ def _propagate_to_frames(
         dir_rad = np.radians(angle)
     cos_d = np.cos(dir_rad)
     sin_d = np.sin(dir_rad)
-
-    from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
     for frame in all_frames:
         if frame.index == ref_fidx:

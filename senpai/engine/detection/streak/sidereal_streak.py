@@ -34,7 +34,7 @@ from scipy.fft import irfft2, next_fast_len, rfft2
 from scipy.ndimage import label, map_coordinates, maximum_filter
 from scipy.optimize import curve_fit
 
-from senpai.engine.detection.kernels import build_directional_filter_bank
+from senpai.engine.detection.kernels import build_directional_filter_bank, streak_matched_kernel
 from senpai.engine.detection.streak.masking import analyze_source_shape_fwhm
 from senpai.engine.models.starfield import StarField
 
@@ -582,7 +582,6 @@ def _subtract_catalog_stars(
         peak value of the sum-normalized template (converts fitted
         amplitudes to model peak pixel values).
     """
-    from senpai.engine.detection.kernels import streak_matched_kernel
 
     sigma = fwhm / 2.355
     result = image.copy()
