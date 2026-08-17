@@ -11,6 +11,7 @@ that would otherwise fall below the astrometry source floor still solve.
 """
 
 import numpy as np
+import sep
 from astropy.table import Table
 
 from senpai.engine.models.images import ProcessedFitsImage
@@ -51,8 +52,6 @@ def _detect_sources_sextractor(
         Table: detected sources (xcentroid, ycentroid, flux), flux-descending,
             truncated to ``max_sources``; empty if none found.
     """
-    import sep
-
     data = np.ascontiguousarray(image, dtype=np.float64)
     bkg = sep.Background(data, bw=64, bh=64, fw=3, fh=3)
     objects = sep.extract(
@@ -74,9 +73,7 @@ def _detect_sources_sextractor(
     return t[:max_sources]
 
 
-def extract_sextractor_sources(
-    image: ProcessedFitsImage, max_detections: int = 100
-) -> StarListImage:
+def extract_sextractor_sources(image: ProcessedFitsImage, max_detections: int = 100) -> StarListImage:
     """SExtractor-based extraction returning a senpai StarListImage.
 
     Args:
@@ -88,8 +85,5 @@ def extract_sextractor_sources(
             carrying the frame's image metadata.
     """
     table = _detect_sources_sextractor(image.data, max_sources=max_detections)
-    stars = [
-        StarInImage(x=float(r["xcentroid"]), y=float(r["ycentroid"]), counts=float(r["flux"]))
-        for r in table
-    ]
+    stars = [StarInImage(x=float(r["xcentroid"]), y=float(r["ycentroid"]), counts=float(r["flux"])) for r in table]
     return StarListImage(detections=stars, image_metadata=image.metadata)

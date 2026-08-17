@@ -64,9 +64,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`point_detector` default | `sextractor`). Under `sextractor` the sidereal
   anchor solve extracts its source list with SExtractor/SEP, measures the catalog
   FWHM on the un-refined WCS, and refines through the Bayesian engine's
-  `refine_sidereal_frame`. Adds `detection/point/sextractor.py` (verified to
-  produce identical positions to the SExtractor binary on 66/66 sources of a test
-  frame) and a vendored DAOStarFinder sidereal extractor supplying the FWHM seed.
+  `refine_sidereal_frame`. Adds `detection/point/sextractor.py` (parameters
+  taken from astrometry.net's own SExtractor invocation -- `solver/augment-xylist.c`
+  plus SExtractor's `default.sex` -- and reproduced in-process with `sep`, so no
+  external binary is required) and a vendored DAOStarFinder sidereal extractor supplying the FWHM seed.
 
 ### Fixed
 

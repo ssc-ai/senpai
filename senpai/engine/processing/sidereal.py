@@ -106,9 +106,19 @@ def process_astrometry_fits_sidereal(
         # frame's image metadata (boresight, set below) is preserved.
         from senpai.engine.detection.point.sextractor import extract_sextractor_sources
 
-        sources.detections = extract_sextractor_sources(
+        sextractor_detections = extract_sextractor_sources(
             fits_image, max_detections=config.astrometry.max_sources
         ).detections
+        # Only replace the source list if SExtractor actually found something. It returns an
+        # empty table when background estimation misbehaves, and assigning that unconditionally
+        # would hand the solve zero sources on a frame where the point detector had some --
+        # strictly worse than the default path. Unlikely at 1.5 sigma, but not impossible.
+        if sextractor_detections:
+            sources.detections = sextractor_detections
+        else:
+            logger.warning(
+                "SExtractor found no sources; keeping the point detector's source list for the solve"
+            )
 
         # Fork-faithful FWHM-measurement inputs. The Bayesian engine extracts sidereal
         # sources with daofind (fwhm_guess=1.0) and feeds THAT raw FWHM as the seed to the

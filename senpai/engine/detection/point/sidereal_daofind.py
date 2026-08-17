@@ -89,7 +89,7 @@ def estimate_fwhm(
 
     # Check if the box is too small for a meaningful fit
     if (y_max - y_min) < 5 or (x_max - x_min) < 5:
-        logger.warning(f"Box too small for star at ({x0}, {y0})")
+        logger.debug(f"Box too small for star at ({x0}, {y0})")
         return None
 
     cutout = image[y_min:y_max, x_min:x_max]
@@ -159,7 +159,7 @@ def _detect_sources_daofind(
         sources = None
 
     # filter any with flux < threshold_sigma * std
-    logger.info("Filtering sources with flux less than %.2f", threshold_sigma * std)
+    logger.debug("Filtering sources with flux less than %.2f", threshold_sigma * std)
     if sources is not None:
         sources = sources[sources["flux"] > (threshold_sigma * std)]
 
@@ -206,7 +206,7 @@ def extract_point_sources_daofind(
         if fwhm is not None:
             fwhms.append(math.fabs(fwhm))
 
-    logger.info("Estimated FWHMs for detected sources: %s", fwhms)
+    logger.debug("Estimated FWHMs for detected sources: %s", fwhms)
     if not fwhms:
         logger.warning("No valid FWHM estimates; falling back to fwhm_guess=%s", fwhm_guess)
         fwhm_pixel = fwhm_guess
@@ -220,7 +220,7 @@ def extract_point_sources_daofind(
     stars_rejected = []
     min_fwhm = fwhm_pixel * 0.5
     max_fwhm = fwhm_pixel * 3.0
-    logger.info("FWHM filter: min %s, max %s, source FWHM %s", min_fwhm, max_fwhm, fwhm)
+    logger.debug("FWHM filter: min %s, max %s, source FWHM %s", min_fwhm, max_fwhm, fwhm)
     for star_index, source in enumerate(sources):
         if len(stars) >= max_detections:
             break
@@ -237,12 +237,12 @@ def extract_point_sources_daofind(
             )
         except Exception:
             # probably border source, can be important for astrometry
-            logger.warning("Failed to estimate FWHM for source at (%s, %s)", x_centroid, y_centroid)
+            logger.debug("Failed to estimate FWHM for source at (%s, %s)", x_centroid, y_centroid)
             fwhm = fwhm_pixel
 
         if fwhm is not None and fwhm > min_fwhm and fwhm < max_fwhm:
             if not np.isnan(source["xcentroid"]) and not np.isnan(source["ycentroid"]):
-                logger.info(
+                logger.debug(
                     "Accepting source %d at (%s, %s) with counts %s, FWHM %s",
                     star_index,
                     source["xcentroid"],
@@ -260,7 +260,7 @@ def extract_point_sources_daofind(
                 )
         else:
             if not np.isnan(source["xcentroid"]) and not np.isnan(source["ycentroid"]):
-                logger.info(
+                logger.debug(
                     "Rejected source %d at (%s, %s) with counts %s, FWHM %s",
                     star_index,
                     source["xcentroid"],
