@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -31,6 +32,11 @@ from matplotlib.figure import Figure
 from scipy import ndimage
 from scipy.ndimage import map_coordinates
 from scipy.spatial import cKDTree
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from astropy.wcs import WCS
+
+    from senpai.engine.models.starfield import StarField
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +52,7 @@ _GAUSS_W25_OVER_W50 = math.sqrt(math.log(4) / math.log(2))  # = sqrt(2)
 # --------------------------------------------------------------------------
 # profile primitives (shared with observability.calibration)
 # --------------------------------------------------------------------------
-def cut_width(profile, level: float = 0.5) -> float:
+def cut_width(profile: np.ndarray, level: float = 0.5) -> float:
     """Full width at ``level`` x peak from the outermost interpolated crossings."""
     profile = np.asarray(profile, dtype=float)
     thr = profile.max() * level
@@ -67,10 +73,11 @@ def cut_width(profile, level: float = 0.5) -> float:
     return float(right - left)
 
 
-def profile_shape(profile) -> dict:
-    """Multi-level widths + Gaussianity ``spike_index`` of a 1D cut.
-    ~1 Gaussian, >>1 a narrow core on a broad halo (FWHM then spurious), <1
-    flat-top / donut.
+def profile_shape(profile: np.ndarray) -> dict:
+    """Measure multi-level widths and the Gaussianity ``spike_index`` of a 1D cut.
+
+    A spike index near 1 is Gaussian; much greater than 1 is a narrow core on a broad halo,
+    which makes the FWHM spurious; below 1 is flat-topped or a donut.
     """
     w50 = cut_width(profile, 0.5)
     w25 = cut_width(profile, 0.25)
@@ -80,7 +87,7 @@ def profile_shape(profile) -> dict:
     return {"fwhm": w50, "fwqm": w25, "fw3qm": w75, "spike_index": idx}
 
 
-def radial_profile(stamp, half, rstep: float = 0.5):
+def radial_profile(stamp: np.ndarray, half: int, rstep: float = 0.5) -> tuple[np.ndarray, np.ndarray]:
     """Azimuthally-averaged (ring-median) radial profile, peak-normalized."""
     n = stamp.shape[0]
     yy, xx = np.mgrid[0:n, 0:n]
@@ -98,9 +105,10 @@ def radial_profile(stamp, half, rstep: float = 0.5):
     return np.array(r), prof
 
 
-def sky_axes(astropy_wcs):
-    """Pixel-space (x, y) unit vectors pointing East(+RA) and North(+Dec) at the
-    frame center. Returns (east, north) or None.
+def sky_axes(astropy_wcs: WCS) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return pixel-space unit vectors pointing East (+RA) and North (+Dec).
+
+    Evaluated at the frame centre. Returns ``(east, north)``, or None without a WCS.
     """
     if astropy_wcs is None:
         return None
@@ -121,7 +129,7 @@ def sky_axes(astropy_wcs):
         return None
 
 
-def _sample_line(stamp, half, unit):
+def _sample_line(stamp: np.ndarray, half: int, unit: np.ndarray) -> np.ndarray:
 
     t = np.arange(-half, half + 1.0)
     return map_coordinates(stamp, [half + t * unit[1], half + t * unit[0]], order=1, mode="constant", cval=0.0)
@@ -130,7 +138,7 @@ def _sample_line(stamp, half, unit):
 # --------------------------------------------------------------------------
 # stacking
 # --------------------------------------------------------------------------
-def _ring_noise(ring) -> float:
+def _ring_noise(ring: np.ndarray) -> float:
     """MAD-based sky scatter for a stamp's border ring.
 
     ``np.std`` is the wrong tool here: a bright star's own diffraction wings or a
@@ -146,9 +154,11 @@ def _ring_noise(ring) -> float:
     return 1.4826 * mad if mad > 0 else float(np.std(ring))
 
 
-def _isolated_order(xy, mags, iso_radius):
-    """Brightest-first indices of stars with no brighter-or-comparable neighbor
-    within ``iso_radius``.
+def _isolated_order(xy: np.ndarray, mags: np.ndarray, iso_radius: float) -> list[int]:
+    """Order stars brightest-first, keeping only isolated ones.
+
+    A star is isolated when no brighter-or-comparable neighbour lies within ``iso_radius``,
+    which is what keeps a blended pair out of the stack.
     """
     tree = cKDTree(xy)
     for i in np.argsort(mags):
@@ -157,7 +167,13 @@ def _isolated_order(xy, mags, iso_radius):
             yield int(i)
 
 
-def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
+def stack_stars(
+    data: np.ndarray,
+    stars: list[tuple[float, float, float]],
+    fwhm: float,
+    half: int | None = None,
+    max_stars: int = MAX_STARS,
+) -> tuple[np.ndarray | None, int]:
     """Median-stacked, peak-normalized point-source PSF (sidereal).
 
     ``stars`` is a list of (x, y, mag). Returns (stamp, n) or (None, 0).
@@ -228,9 +244,19 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
     return stamp, len(chosen)
 
 
-def _oriented_stamp(data, x, y, cos_a, sin_a, half_a, half_p):
-    """Sample a streak-aligned stamp (rows = perpendicular, cols = along) at
-    (x, y). Returns the float stamp or None if out of bounds.
+def _oriented_stamp(
+    data: np.ndarray,
+    x: float,
+    y: float,
+    cos_a: float,
+    sin_a: float,
+    half_a: int,
+    half_p: int,
+) -> np.ndarray | None:
+    """Sample a streak-aligned stamp at (x, y).
+
+    Rows run perpendicular to the streak and columns along it. Returns the stamp, or None
+    when the requested box falls outside the frame.
     """
     ta = np.arange(-half_a, half_a + 1.0)
     tp = np.arange(-half_p, half_p + 1.0)
@@ -243,7 +269,14 @@ def _oriented_stamp(data, x, y, cos_a, sin_a, half_a, half_p):
     return map_coordinates(data, [sy.ravel(), sx.ravel()], order=1).reshape(TA.shape)
 
 
-def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
+def stack_streaks(
+    data: np.ndarray,
+    stars: list[tuple[float, float, float]],
+    fwhm: float,
+    length: float,
+    angle_deg: float,
+    max_stars: int = MAX_STARS,
+) -> tuple[np.ndarray | None, int, int, int]:
     """Median-stacked, peak-normalized streak PSF in streak-aligned coords.
 
     Each catalog star is a streak; stack oriented stamps centered on the bright
@@ -309,7 +342,7 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
 # renderers
 # --------------------------------------------------------------------------
 def paper_ready_enabled() -> bool:
-    """True when ``config.plotting.paper_ready`` is set — emit title-less copies."""
+    """Report whether ``config.plotting.paper_ready`` asks for title-less copies."""
     try:
         from senpai.core.config import get_config
 
@@ -318,9 +351,10 @@ def paper_ready_enabled() -> bool:
         return False
 
 
-def strip_titles(fig) -> None:
-    """Blank the figure suptitle and every axes title for a caption-ready copy
-    (the figure caption replaces the on-figure title in a paper).
+def strip_titles(fig: Figure) -> None:
+    """Blank the suptitle and every axes title, for a caption-ready copy.
+
+    In a paper the figure caption replaces the on-figure title.
     """
     st = getattr(fig, "_suptitle", None)
     if st is not None:
@@ -330,13 +364,13 @@ def strip_titles(fig) -> None:
             ax.set_title("")
 
 
-def clean_copy_path(path):
+def clean_copy_path(path: str | Path) -> Path:
     """``foo.png`` -> ``foo_clean.png`` (the title-less paper copy)."""
     path = Path(path)
     return path.with_name(f"{path.stem}_clean{path.suffix}")
 
 
-def _save(fig, png_path):
+def _save(fig: Figure, png_path: str | Path) -> None:
     FigureCanvasAgg(fig)
     fig.savefig(str(png_path), dpi=130)
     if paper_ready_enabled():
@@ -344,7 +378,13 @@ def _save(fig, png_path):
         fig.savefig(str(clean_copy_path(png_path)), dpi=130, bbox_inches="tight")
 
 
-def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
+def render_sidereal_psf(
+    stamp: np.ndarray,
+    n_stars: int,
+    axes: tuple[np.ndarray, np.ndarray] | None,
+    meta: dict,
+    png_path: str | Path,
+) -> None:
     """Sidereal per-frame PSF panel: 2D heatmap (+contour, N/E) + radial + cuts."""
     half = stamp.shape[0] // 2
     psc = meta.get("pixel_scale_arcsec")
@@ -425,8 +465,20 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
     _save(fig, png_path)
 
 
-def render_streak_psf(stamp, half_a, half_p, n_stars, length, fwhm, sky_in_streak, meta, png_path):
-    """Rate per-frame streak panel: oriented 2D stamp (+box, contour, N/E) +
+def render_streak_psf(
+    stamp: np.ndarray,
+    half_a: int,
+    half_p: int,
+    n_stars: int,
+    length: float,
+    fwhm: float,
+    sky_in_streak: float | None,
+    meta: dict,
+    png_path: str | Path,
+) -> None:
+    """Render the rate-frame streak panel.
+
+    An oriented 2D stamp with the fitted box, a contour and the N/E axes, beside the
     along-streak and across-streak profiles.
     """
     psc = meta.get("pixel_scale_arcsec")
@@ -491,7 +543,16 @@ def render_streak_psf(stamp, half_a, half_p, n_stars, length, fwhm, sky_in_strea
 # --------------------------------------------------------------------------
 # high-level entry points (data in -> npy + png out)
 # --------------------------------------------------------------------------
-def make_sidereal_psf(data, stars, astropy_wcs, fwhm, meta, png_path, npy_path=None):
+def make_sidereal_psf(
+    data: np.ndarray,
+    stars: list[tuple[float, float, float]],
+    astropy_wcs: WCS,
+    fwhm: float,
+    meta: dict,
+    png_path: str | Path,
+    npy_path: str | Path | None = None,
+) -> bool:
+    """Stack, render and save the sidereal PSF panel for one frame."""
     stamp, n = stack_stars(data, stars, fwhm)
     if stamp is None:
         logger.info("psf: frame %s too few stars for sidereal PSF", meta.get("index"))
@@ -502,7 +563,18 @@ def make_sidereal_psf(data, stars, astropy_wcs, fwhm, meta, png_path, npy_path=N
     return True
 
 
-def make_streak_psf(data, stars, astropy_wcs, fwhm, length, angle_deg, meta, png_path, npy_path=None):
+def make_streak_psf(
+    data: np.ndarray,
+    stars: list[tuple[float, float, float]],
+    astropy_wcs: WCS,
+    fwhm: float,
+    length: float,
+    angle_deg: float,
+    meta: dict,
+    png_path: str | Path,
+    npy_path: str | Path | None = None,
+) -> bool:
+    """Stack, render and save the rate-frame streak panel for one frame."""
     stamp, half_a, half_p, n = stack_streaks(data, stars, fwhm, length, angle_deg)
     if stamp is None:
         logger.info("psf: frame %s too few streaks for streak PSF", meta.get("index"))
@@ -523,18 +595,18 @@ def make_streak_psf(data, stars, astropy_wcs, fwhm, length, angle_deg, meta, png
 # --------------------------------------------------------------------------
 # in-memory frame adapters (duck-typed: SiderealFrame / RateTrackFrame)
 # --------------------------------------------------------------------------
-def _stars(sf):
+def _stars(sf: StarField) -> list[tuple[float, float, float]]:
     return [(s.x, s.y, s.magnitude) for s in (sf.catalog_stars or [])]
 
 
-def _astropy_wcs(sf):
+def _astropy_wcs(sf: StarField) -> WCS | None:
     try:
         return sf.wcs.to_astropy_wcs() if sf.wcs is not None else None
     except Exception:
         return None
 
 
-def _plate_scale(astropy_wcs):
+def _plate_scale(astropy_wcs: WCS) -> float | None:
     if astropy_wcs is None:
         return None
     try:
@@ -545,12 +617,13 @@ def _plate_scale(astropy_wcs):
         return None
 
 
-def _exposure(frame):
+def _exposure(frame: object) -> float | None:
     fm = getattr(frame, "frame_metadata", None)
     return getattr(fm, "exposure_time_seconds", None) if fm else None
 
 
-def plot_sidereal_frame(frame, png_path, npy_path=None) -> bool:
+def plot_sidereal_frame(frame: object, png_path: str | Path, npy_path: str | Path | None = None) -> bool:
+    """Render the sidereal PSF panel for a frame, reporting whether one was produced."""
     sf = getattr(frame, "starfield", None)
     if sf is None or not sf.catalog_stars:
         return False
@@ -564,7 +637,8 @@ def plot_sidereal_frame(frame, png_path, npy_path=None) -> bool:
     return make_sidereal_psf(frame.frame.data, _stars(sf), wcs, float(fwhm), meta, png_path, npy_path)
 
 
-def plot_rate_frame(frame, png_path, npy_path=None) -> bool:
+def plot_rate_frame(frame: object, png_path: str | Path, npy_path: str | Path | None = None) -> bool:
+    """Render the streak panel for a rate frame, reporting whether one was produced."""
     sf = getattr(frame, "starfield", None)
     st = getattr(frame, "streak", None)
     if sf is None or not sf.catalog_stars or st is None or not st.pixel_length:
@@ -587,11 +661,21 @@ def plot_rate_frame(frame, png_path, npy_path=None) -> bool:
 # --------------------------------------------------------------------------
 # regenerate a panel from a saved .npy stamp (no raw FITS needed)
 # --------------------------------------------------------------------------
-def sidereal_from_stamp(stamp, astropy_wcs, meta, png_path):
+def sidereal_from_stamp(stamp: np.ndarray, astropy_wcs: WCS, meta: dict, png_path: str | Path) -> None:
+    """Re-render a sidereal panel from a previously saved stamp."""
     render_sidereal_psf(stamp, None, sky_axes(astropy_wcs), meta, png_path)
 
 
-def streak_from_stamp(stamp, astropy_wcs, fwhm, length, angle_deg, meta, png_path):
+def streak_from_stamp(
+    stamp: np.ndarray,
+    astropy_wcs: WCS,
+    fwhm: float,
+    length: float,
+    angle_deg: float,
+    meta: dict,
+    png_path: str | Path,
+) -> None:
+    """Re-render a streak panel from a previously saved stamp."""
     half_p = stamp.shape[0] // 2
     half_a = stamp.shape[1] // 2
     sis = None
