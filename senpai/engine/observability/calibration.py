@@ -28,6 +28,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta
 from datetime import datetime as _dt
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import numpy as np
@@ -1234,7 +1235,7 @@ def _save(fig, path: Path) -> Path:
 # Registered in _PLOT_BUILDERS at the bottom of this section.
 
 
-def _data_limiting_magnitude_hist(calib: NightCalibration):
+def _data_limiting_magnitude_hist(calib: NightCalibration) -> dict | None:
     by_filter: dict[str, list] = {}
     for f in _zp_frames(calib.frames):
         if f.limiting_magnitude_50 is not None:
@@ -1242,7 +1243,9 @@ def _data_limiting_magnitude_hist(calib: NightCalibration):
     return {"by_filter": by_filter} if by_filter else None
 
 
-def _render_limiting_magnitude_hist(d, meta, output_dir, plt, np) -> Path:
+def _render_limiting_magnitude_hist(
+    d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType
+) -> Path:
     fig, ax = plt.subplots(figsize=(8, 5))
     for filt in sorted(d["by_filter"]):
         xs = d["by_filter"][filt]
@@ -1255,7 +1258,7 @@ def _render_limiting_magnitude_hist(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "limiting_magnitude_hist.png")
 
 
-def _data_extinction_curve(calib: NightCalibration):
+def _data_extinction_curve(calib: NightCalibration) -> dict | None:
     # Frame ZP vs airmass, fit cloud-robustly by the upper envelope (same
     # _extinction_envelope_fit that feeds night_calibration.json, so the plot's
     # red line == the reported k). Cloud drops points below the clear-sky line;
@@ -1289,7 +1292,7 @@ def _data_extinction_curve(calib: NightCalibration):
     return {"series": series} if series else None
 
 
-def _render_extinction_curve(d, meta, output_dir, plt, np) -> Path:
+def _render_extinction_curve(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
     series = d["series"]
     multi = len(series) > 1
@@ -1354,7 +1357,7 @@ def _render_extinction_curve(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "extinction_curve.png")
 
 
-def _data_alt_az_coverage(calib: NightCalibration):
+def _data_alt_az_coverage(calib: NightCalibration) -> dict | None:
     aa = [
         (f.azimuth_deg, f.altitude_deg, f.timestamp)
         for f in calib.frames
@@ -1374,7 +1377,7 @@ def _data_alt_az_coverage(calib: NightCalibration):
     }
 
 
-def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
+def _render_alt_az_coverage(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig = plt.figure(figsize=(7, 7))
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
@@ -1390,7 +1393,7 @@ def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "alt_az_coverage.png")
 
 
-def _data_zp_drift(calib: NightCalibration):
+def _data_zp_drift(calib: NightCalibration) -> dict | None:
 
     drift = [
         (f.timestamp, f.zero_point, f.filter_name or "unknown")
@@ -1429,7 +1432,7 @@ def _data_zp_drift(calib: NightCalibration):
     return {"per_filter": per_filter, "n_filters": len(per_filter)}
 
 
-def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
+def _render_zp_drift(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
 
     fig, ax = plt.subplots(figsize=(10, 5))
     for filt in sorted(d["per_filter"]):
@@ -1473,7 +1476,7 @@ def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
 # to electrons) is drawn with its ±1σ spread.
 
 
-def _data_gain(calib: NightCalibration):
+def _data_gain(calib: NightCalibration) -> dict | None:
     pts = [
         (f.sky_adu, f.gain_e_per_adu) for f in calib.frames if f.gain_e_per_adu is not None and f.sky_adu is not None
     ]
@@ -1490,7 +1493,7 @@ def _data_gain(calib: NightCalibration):
     }
 
 
-def _render_gain(d, meta, output_dir, plt, np) -> Path:
+def _render_gain(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.scatter(d["sky_adu"], d["gain"], s=12, alpha=0.5, color="tab:blue", label=f"per-frame (n={d['n']})")
     med, std = d["median"], d["std"]
@@ -1657,7 +1660,7 @@ def _fit_slew_model(timings) -> dict | None:
     }
 
 
-def _data_search_rate(calib: NightCalibration):
+def _data_search_rate(calib: NightCalibration) -> dict | None:
 
     # Search rate = sky area/hour surveyable while still reaching a TARGET-σ (3σ)
     # detection per field. A star measured at SNR s in a known exposure pins its
@@ -1780,7 +1783,7 @@ def _data_search_rate(calib: NightCalibration):
     }
 
 
-def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
+def _render_search_rate(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.scatter(d["mags"], d["rates"], alpha=0.3, s=10, color="lightgray", label="Individual stars")
     b = d["binned"]
@@ -1845,11 +1848,11 @@ def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "search_rate.png")
 
 
-def _data_slew_model(calib: NightCalibration):
+def _data_slew_model(calib: NightCalibration) -> dict | None:
     return _fit_slew_model(calib.frame_timings or calib.frames)
 
 
-def _render_slew_model(d, meta, output_dir, plt, np) -> Path:
+def _render_slew_model(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     dist = np.clip(np.asarray(d["dist"], float), 0.01, None)  # log axis: >0
     over = np.asarray(d["overhead"], float)
     readout, settle = d["readout_s"], d["settle_s"]
@@ -2125,7 +2128,7 @@ def _sample_line(stamp, half, unit, np):
     return map_coordinates(stamp, [ys, xs], order=1, mode="constant", cval=0.0)
 
 
-def _data_psf_profile(calib: NightCalibration):
+def _data_psf_profile(calib: NightCalibration) -> dict | None:
 
     if not calib.source_dir:
         return None
@@ -2238,7 +2241,7 @@ def _data_psf_profile(calib: NightCalibration):
     return {"half": half, "bands": bands, "pixel_scale_arcsec": psc}
 
 
-def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
+def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     bands = d["bands"]
     half = d["half"]
     psc = d.get("pixel_scale_arcsec")
@@ -2335,7 +2338,7 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "psf_profile.png")
 
 
-def _data_ccd_temperature(calib: NightCalibration):
+def _data_ccd_temperature(calib: NightCalibration) -> dict | None:
 
     pts = [
         (f.timestamp, f.ccd_temp_c, bool(f.ccd_warm))
@@ -2360,7 +2363,7 @@ def _data_ccd_temperature(calib: NightCalibration):
     }
 
 
-def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
+def _render_ccd_temperature(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     m = np.array(d["minutes"])
     t = np.array(d["temp"])
     warm = np.array(d["warm"], dtype=bool)
@@ -2382,7 +2385,7 @@ def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "ccd_temperature.png")
 
 
-def _data_psf_concentration(calib: NightCalibration):
+def _data_psf_concentration(calib: NightCalibration) -> dict | None:
 
     if not calib.source_dir:
         return None
@@ -2467,7 +2470,7 @@ def _data_psf_concentration(calib: NightCalibration):
     }
 
 
-def _render_psf_concentration(d, meta, output_dir, plt, np) -> Path:
+def _render_psf_concentration(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     show = d["showcase"]
     half = d["half"]
     thr = d["defocus_c"]
@@ -2547,7 +2550,7 @@ _PLOT_BUILDERS.update(
 )
 
 
-def _data_snr_vs_exposure(calib: NightCalibration):
+def _data_snr_vs_exposure(calib: NightCalibration) -> dict | None:
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None:
@@ -2686,7 +2689,7 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
     return paths
 
 
-def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
+def _data_snr_vs_mag_weathermasked(calib: NightCalibration) -> dict | None:
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None:
@@ -2763,7 +2766,9 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
     }
 
 
-def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_mag_weathermasked(
+    d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType
+) -> Path:
     std_exps = d["std_exps"]
     fig, ax = plt.subplots(figsize=(10, 7))
     cmap = plt.cm.viridis(np.linspace(0, 0.9, max(len(std_exps), 1)))
@@ -2804,7 +2809,7 @@ _PLOT_BUILDERS.update(
 )
 
 
-def _data_moon_az_el(calib: NightCalibration):
+def _data_moon_az_el(calib: NightCalibration) -> dict | None:
 
     moon_frames = [
         f
@@ -2841,7 +2846,7 @@ def _data_moon_az_el(calib: NightCalibration):
     }
 
 
-def _render_moon_az_el(d, meta, output_dir, plt, np) -> Path:
+def _render_moon_az_el(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig = plt.figure(figsize=(8, 8))
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
@@ -2860,7 +2865,7 @@ def _render_moon_az_el(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "moon_az_el.png")
 
 
-def _data_snr_vs_moon_distance(calib: NightCalibration):
+def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict | None:
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None or not any(f.moon_sep_deg is not None for f in calib.frames):
@@ -2952,7 +2957,7 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
     return {"series": series}
 
 
-def _render_snr_vs_moon_distance(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_moon_distance(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
     for s in d["series"]:
         ax.scatter(s["sep"], s["dmag"], s=6, alpha=s["dot_alpha"], color=s["dot_color"], zorder=1)
@@ -3111,7 +3116,7 @@ def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "snr_vs_exposure_6s_explained.png")
 
 
-def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
+def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict | None:
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None or not any(f.moon_sep_deg is not None for f in calib.frames):
@@ -3172,7 +3177,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
     }
 
 
-def _render_snr_vs_moon_fixedmag(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_moon_fixedmag(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.scatter(d["sep"], d["snrt"], s=6, alpha=0.10, color="lightgray", label="individual stars")
     b = d["binned"]
@@ -3212,7 +3217,7 @@ _PLOT_BUILDERS.update(
 )
 
 
-def _data_fwhm(calib: NightCalibration):
+def _data_fwhm(calib: NightCalibration) -> dict | None:
 
     pts = [
         (f.timestamp, f.fwhm_px, f.airmass) for f in calib.frames if f.fwhm_px is not None and f.timestamp is not None
@@ -3230,7 +3235,7 @@ def _data_fwhm(calib: NightCalibration):
     }
 
 
-def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
+def _render_fwhm(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
 
     fig, ax = plt.subplots(figsize=(10, 5))
     xs = [_dt.fromisoformat(t) for t in d["t"]]
@@ -3257,7 +3262,7 @@ def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "fwhm_vs_time.png")
 
 
-def _data_sky_background(calib: NightCalibration):
+def _data_sky_background(calib: NightCalibration) -> dict | None:
 
     rows = []  # (moon_sep, sky_adu, mu_or_nan, altitude)
     for f in calib.frames:
@@ -3303,7 +3308,7 @@ def _data_sky_background(calib: NightCalibration):
     }
 
 
-def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
+def _render_sky_background(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     fig, ax = plt.subplots(figsize=(10, 6))
     sep = np.array(d["sep"])
     alt = np.array(d["alt"])
@@ -3349,7 +3354,7 @@ def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
     return _save(fig, output_dir / "sky_background_vs_moon.png")
 
 
-def _data_sky_background_altaz(calib: NightCalibration):
+def _data_sky_background_altaz(calib: NightCalibration) -> dict | None:
     """Sky brightness as a function of where the telescope was pointed (alt/az)
     rather than Moon separation — the diagnostic that still works on a new-Moon
     night, where the Moon-separation plot is uninformative.
@@ -3416,7 +3421,7 @@ def _data_sky_background_altaz(calib: NightCalibration):
     }
 
 
-def _render_sky_background_altaz(d, meta, output_dir, plt, np) -> Path:
+def _render_sky_background_altaz(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> Path:
     has_mu = d["has_mu"]
     alt = np.array(d["alt"])
     az = np.array(d["az"])
