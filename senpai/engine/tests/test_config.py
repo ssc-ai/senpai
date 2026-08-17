@@ -208,3 +208,41 @@ def test_all_shipped_configs_load(yaml_path: Path) -> None:
     data = load_yaml(yaml_path)
     config = AppConfig(**data)
     assert config.version  # version is required and present in every shipped config
+
+
+# --------------------------------------------------------------------------- #
+# settings proxy
+# --------------------------------------------------------------------------- #
+def test_settings_proxy_reads_the_initialized_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = AppConfig(**_min_app(version="proxy-read"))
+    monkeypatch.setattr(cfg_mod, "_config_instance", cfg)
+    assert cfg_mod.settings.version == "proxy-read"
+    assert cfg_mod.settings.astrometry.max_sources == cfg.astrometry.max_sources
+
+
+def test_settings_proxy_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cfg_mod, "_config_instance", None)
+    with pytest.raises(RuntimeError, match="not initialized"):
+        _ = cfg_mod.settings.detection
+
+
+def test_settings_proxy_follows_reinitialization(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A later initialize_config swaps what an already-imported proxy resolves to.
+
+    This is the property that lets a top-level invocation replace the config for every
+    module that imported ``settings`` at import time.
+    """
+    monkeypatch.setattr(cfg_mod, "_config_instance", AppConfig(**_min_app(version="first")))
+    assert cfg_mod.settings.version == "first"
+
+    p = tmp_path / "second.yaml"
+    p.write_text(yaml.safe_dump({"app": _min_app(version="second")}))
+    initialize_config(p)
+    assert cfg_mod.settings.version == "second"
+
+
+def test_settings_proxy_does_not_shadow_a_frozen_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Assignment forwards to the frozen config rather than silently landing on the proxy."""
+    monkeypatch.setattr(cfg_mod, "_config_instance", AppConfig(**_min_app()))
+    with pytest.raises(ValidationError):
+        cfg_mod.settings.debug = True

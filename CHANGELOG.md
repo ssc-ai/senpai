@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A `settings` singleton for reading configuration.** `from senpai.core.config import
+  settings` at import time, then read `settings.detection.snr_threshold` at call time,
+  instead of repeating `get_config()` at each use or threading an `AppConfig` through
+  signatures that do not otherwise need one. Attribute access resolves against whatever
+  `initialize_config` most recently loaded, so a top-level invocation that loads a
+  different YAML swaps what every module already holding the import sees. `get_config()`
+  is unchanged and remains the accessor everywhere else in the tree for now.
+- **Environment-variable overrides for every configuration field.** `AppConfig`
+  is now a pydantic-settings `BaseSettings`, so any field can be set with
+  `SENPAI_<SECTION>__<FIELD>` — `SENPAI_ASTROMETRY__CPULIMIT_SECONDS=3600`,
+  `SENPAI_HEADERS__POINTING__RA_UNITS=degrees` — including nested sections, via
+  the `__` delimiter. Environment variables take precedence over the config
+  file, so containerized and CI runs can override a single setting without
+  templating a YAML. Existing config files, `initialize_config`, `get_config`
+  and the immutability of the loaded config are all unchanged.
+
+- **`senpai/resources/config/mdp.yaml`** -- the configuration behind the benchmark
+  figures reported across this stack, so a reviewer can reproduce them from the tree. It is
+  written out in full, including fields left at their default, so a change to an upstream
+  default shows up in review rather than silently altering a run. Covered by
+  `test_all_shipped_configs_load`.
+
 ## [2.8.0] - 2026-08-14
 
 ### Added
