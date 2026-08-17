@@ -37,6 +37,7 @@ class PlottingConfig(BaseModel):
     debug: bool = Field(description="Debug Plots")
     review: bool = Field(description="Review Plots")
     photometry: bool = Field(default=False, description="Photometry Plots")
+    output_dir: str = Field(default=".", description="Directory debug plots are written to.")
     psfs: bool = Field(
         default=False,
         description="Per-frame empirical PSF plots: a stacked-star PSF panel for "
@@ -268,6 +269,18 @@ class VariableKernelConfig(BaseModel):
 class StreakDetectionConfig(BaseModel):
     """Configuration for streak-specific detection options."""
 
+    registration_engine: Literal["direct", "bayesian"] = Field(
+        default="direct",
+        description=(
+            "Rate-track registration engine. 'direct' (default) = upstream's pairwise shift-solve + "
+            "WCS-refinement path. 'bayesian' = a Bayesian rate-solver + WCS-refinement path "
+            "(opt-in; MDP-validated on rate-track imagery). Both paths are retained and share the "
+            "extraction/masking/WCS utilities they have in common."
+        ),
+    )
+    max_fwhm_for_streak_extraction: float = Field(
+        default=10.0, description="Maximum FWHM allowed by extract_streak_dims_robust() (Bayesian engine)."
+    )
     variable_kernel: VariableKernelConfig = Field(
         default_factory=VariableKernelConfig,
         description="Variable-kernel configuration for streak WCS refinement",

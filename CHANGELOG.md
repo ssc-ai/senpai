@@ -48,6 +48,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   package's own `visual` ladder, returned unchanged -- or `open_first`, which
   leads with Gaia G for open-filter sensors), and
   `calibrations.preprocess_float_dtype` (`float32` | `float64`).
+- **Opt-in Bayesian rate-track registration engine** --
+  `streak.registration_engine` (`direct` default | `bayesian`). The alternative is a
+  Bayesian shift solver whose proposals are scored by a flux-correlation
+  objective, vendored as a self-contained `senpai/engine/detection/streak/bayesian/`
+  subpackage that is imported only when selected. On our rate-track benchmark
+  (134 collects, 1286 targets) it trades precision for recall: 1075 TP / 191 FP /
+  1032 true correlations at 1.492" RMS, against 951 / 95 / 899 at 1.083" for the
+  default. Recall is what a rate-track survey needs; a calsat-photometry workload
+  would likely prefer the tighter default, which is why this is opt-in. Also adds
+  `streak.max_fwhm_for_streak_extraction`, `plotting.output_dir`, `FrameShift.correlation`, `senpai/exceptions.py` and a
+  `scikit-optimize` dependency.
+
 ### Fixed
 
 - **Point-source re-detection ran on frames whose registration had failed.** The
@@ -79,6 +91,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   aggregate mask footprint before allocating any of it. Since both call sites
   already treat a photometry exception as "no photometry for this frame", one
   degenerate frame now degrades to a warning instead of ending the run.
+- **An implausible field of view no longer triggers an enormous catalog read.** A
+  corrupted WCS can report a field of view orders of magnitude larger than the
+  sensor's, and the region query then reads a correspondingly enormous slice of
+  the catalog -- turning one bad solve into an out-of-memory kill of the worker
+  rather than a failed collect. The query now raises `SiderealSolveError` when the
+  derived field of view exceeds twice `astrometry.max_width_degrees`, which a
+  valid solve at the configured boundary cannot reach.
+- **The vendored Bayesian validator's control draws are seeded**, matching the fix
+  applied to `streak/validation.py` in 2.7.0 and using the same derivation (frame
+  pair, trial number, proposed shift), so the two validators stay consistent.
+  Verified MDP-neutral: reverting the seeding reproduces the same benchmark result
+  exactly.
 
 ## [2.8.0] - 2026-08-14
 
