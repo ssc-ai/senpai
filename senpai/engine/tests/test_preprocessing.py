@@ -281,9 +281,7 @@ class TestScaleBlurDecimate:
 class TestScaleToTargetFWHM:
     def test_no_scaling_when_under_threshold(self):
         img = _make_image(RNG.normal(100, 5, (50, 50)))
-        out, factor = scale_image_to_target_fwhm(
-            img, _fwhm_stats(3.0), target_fwhm=3.0, oversample_threshold=4.0
-        )
+        out, factor = scale_image_to_target_fwhm(img, _fwhm_stats(3.0), target_fwhm=3.0, oversample_threshold=4.0)
         assert factor == 1.0
         assert out.data.shape == (50, 50)
 
@@ -307,9 +305,7 @@ class TestScaleToTargetFWHM:
     def test_unknown_method_raises(self):
         img = _make_image(RNG.normal(100, 5, (50, 50)))
         with pytest.raises(ValueError):
-            scale_image_to_target_fwhm(
-                img, _fwhm_stats(9.0), target_fwhm=3.0, method="nope", oversample_threshold=4.0
-            )
+            scale_image_to_target_fwhm(img, _fwhm_stats(9.0), target_fwhm=3.0, method="nope", oversample_threshold=4.0)
 
 
 # --- full preprocess_image pipeline ------------------------------------------
@@ -400,7 +396,7 @@ class TestEstimateGainFromSky:
         adu = _poisson_sky(1200.0, gain)
         # Smooth gradient (adjacent-column differencing should cancel it) and
         # bright stars (MAD should reject them).
-        yy, xx = np.mgrid[0:adu.shape[0], 0:adu.shape[1]]
+        yy, xx = np.mgrid[0 : adu.shape[0], 0 : adu.shape[1]]
         adu = adu + 0.003 * 1200.0 * (xx / adu.shape[1])
         adu[::150, ::150] += 40000.0
         est = estimate_gain_from_sky(adu, float(np.median(adu)))
@@ -415,7 +411,6 @@ class TestEstimateGainFromSky:
         """remove_column_and_row_medians records the measured gain alongside sky."""
         img = _make_image(_poisson_sky(1200.0, 2.0))
         out = remove_column_and_row_medians(img)
-        col_step = next(m for m in out.processing_history
-                        if m.step_type == ProcessingStep.COLUMN_MEDIAN_SUBTRACT)
+        col_step = next(m for m in out.processing_history if m.step_type == ProcessingStep.COLUMN_MEDIAN_SUBTRACT)
         g = col_step.parameters["gain_e_per_adu"]
         assert g == pytest.approx(2.0, rel=0.10)

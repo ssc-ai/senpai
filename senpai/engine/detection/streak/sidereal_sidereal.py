@@ -16,21 +16,15 @@ from senpai.engine.models.senpai import FrameShift, SiderealFrame
 logger = logging.getLogger(__name__)
 
 
-def solve_sidereal_from_sidereal(
-    frame_source: SiderealFrame, frame_target: SiderealFrame, frame_shift: FrameShift
-):
+def solve_sidereal_from_sidereal(frame_source: SiderealFrame, frame_target: SiderealFrame, frame_shift: FrameShift):
     sidereal_source_data, source_is_synthetic = prepare_sidereal_frame(frame_source)
     sidereal_target_data, target_is_synthetic = prepare_sidereal_frame(frame_target)
 
     if not source_is_synthetic:
-        sidereal_source_data, _ = remove_near_saturation_streaks(
-            sidereal_source_data, frame_source.frame.data_type
-        )
+        sidereal_source_data, _ = remove_near_saturation_streaks(sidereal_source_data, frame_source.frame.data_type)
 
     if not target_is_synthetic:
-        sidereal_target_data, _ = remove_near_saturation_streaks(
-            sidereal_target_data, frame_target.frame.data_type
-        )
+        sidereal_target_data, _ = remove_near_saturation_streaks(sidereal_target_data, frame_target.frame.data_type)
 
     sidereal_source_data = remove_border_crossing_streaks(sidereal_source_data)
     sidereal_target_data = remove_border_crossing_streaks(sidereal_target_data)
@@ -43,9 +37,7 @@ def solve_sidereal_from_sidereal(
 
     pixel_shift_magnitude = np.linalg.norm(shift_yx)
 
-    logger.info(
-        f"Pixel shift sidereal to sidereal: {pixel_shift_magnitude:.1f} pixels."
-    )
+    logger.info(f"Pixel shift sidereal to sidereal: {pixel_shift_magnitude:.1f} pixels.")
 
     frame_shift.x_shift = shift_yx[1]  # col offset = x
     frame_shift.y_shift = shift_yx[0]  # row offset = y

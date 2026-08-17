@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 import png
@@ -21,7 +21,7 @@ class SenpaiCocoExporter:
 
     def __init__(
         self,
-        output_dir: Union[str, Path],
+        output_dir: str | Path,
         write_png: bool = False,
         write_fits: bool = True,
         save_annotated_images: bool = False,
@@ -29,8 +29,8 @@ class SenpaiCocoExporter:
         snr_cut: float = 0.5,
         box_size: int = 4,
         streak_box_size: int = 10,
-        mask_radius: Optional[float] = None,
-        max_streak_length: Optional[float] = None,
+        mask_radius: float | None = None,
+        max_streak_length: float | None = None,
         process_sidereal: bool = True,  # Add parameter to control sidereal processing
         link_source: bool = False,  # Symlink the source *_processed.fits instead of rewriting
     ):
@@ -72,7 +72,7 @@ class SenpaiCocoExporter:
 
     def export_senpai_run(
         self,
-        senpai_run: Union[SenpaiRun, SenpaiRunResult],
+        senpai_run: SenpaiRun | SenpaiRunResult,
         collect_id: str,
         apply_calibrations: bool = True,
         source_path=None,
@@ -141,11 +141,14 @@ class SenpaiCocoExporter:
                     cfg = AppConfig(**load_yaml(cfg_path))  # load_yaml unwraps "app"
             if cfg is None:
                 from senpai.core.config import get_config
+
                 cfg = get_config()  # raises if no run config + none initialized
         except Exception as e:
             logger.warning(
                 "No config for in-place processed-frame rebuild (%s); COCO will "
-                "use raw uncalibrated frames where *_processed.fits is missing", e)
+                "use raw uncalibrated frames where *_processed.fits is missing",
+                e,
+            )
             cfg = None
         self._build_cfg = cfg
         return cfg
@@ -168,13 +171,14 @@ class SenpaiCocoExporter:
                 cfg = self._build_config()
                 if cfg is not None:
                     from senpai.engine.utils.preprocessing import preprocess_image
+
                     try:
                         preprocess_image(img, cfg)
-                        logger.info("Built processed frame in place from raw for "
-                                    "%s (no *_processed.fits on disk)", label)
+                        logger.info(
+                            "Built processed frame in place from raw for %s (no *_processed.fits on disk)", label
+                        )
                     except Exception as e:
-                        logger.warning("In-place preprocess failed for %s (%s); "
-                                       "using raw frame", label, e)
+                        logger.warning("In-place preprocess failed for %s (%s); using raw frame", label, e)
             return img.data, img.header, frame.original_frame_path
         return None, None, None
 
@@ -186,7 +190,7 @@ class SenpaiCocoExporter:
     ) -> None:
         """Process a serializable sidereal frame for COCO export."""
         logger.info(f"Processing serializable sidereal frame {frame.index}")
-        
+
         # Check if frame has WCS (starfield with fit=True)
         if not frame.starfield or not frame.starfield.fit:
             logger.info(f"Skipping sidereal frame {frame.index} - no valid WCS solution")
@@ -194,7 +198,8 @@ class SenpaiCocoExporter:
 
         # Load frame data - prefer processed FITS files if available
         frame_data, header, file_path = self._load_frame_image(
-            frame, apply_calibrations, f"sidereal frame {frame.index}")
+            frame, apply_calibrations, f"sidereal frame {frame.index}"
+        )
         if frame_data is None:
             logger.warning(f"No frame data available for sidereal frame {frame.index}")
             return
@@ -262,7 +267,7 @@ class SenpaiCocoExporter:
     ) -> None:
         """Process a serializable rate track frame for COCO export."""
         logger.info(f"Processing serializable rate frame {frame.index}")
-        
+
         # Check if frame has WCS (starfield with fit=True)
         if not frame.starfield or not frame.starfield.fit:
             logger.info(f"Skipping rate frame {frame.index} - no valid WCS solution")
@@ -273,13 +278,14 @@ class SenpaiCocoExporter:
             scale_factor = self._get_scale_factor(frame.starfield, self.senpai_run)
             scaled_length = frame.streak.pixel_length * scale_factor
             if scaled_length > self.max_streak_length:
-                logger.info(f"Skipping rate frame {frame.index} - streak length {scaled_length:.1f} > {self.max_streak_length}")
+                logger.info(
+                    f"Skipping rate frame {frame.index} - streak length {scaled_length:.1f} > {self.max_streak_length}"
+                )
                 return
 
         # Load frame data - prefer the written *_processed.fits; rebuild in
         # place from raw when absent (see _load_frame_image).
-        frame_data, header, file_path = self._load_frame_image(
-            frame, apply_calibrations, f"rate frame {frame.index}")
+        frame_data, header, file_path = self._load_frame_image(frame, apply_calibrations, f"rate frame {frame.index}")
         if frame_data is None:
             logger.warning(f"No frame data available for rate frame {frame.index}")
             return
@@ -337,8 +343,7 @@ class SenpaiCocoExporter:
         wcs_unvalidated = getattr(wcs_status, "value", wcs_status) == "REFINED_UNVALIDATED_WCS"
         if wcs_unvalidated:
             logger.info(
-                "Skipping star line annotations for frame %s: WCS failed "
-                "absolute validation (REFINED_UNVALIDATED_WCS)",
+                "Skipping star line annotations for frame %s: WCS failed absolute validation (REFINED_UNVALIDATED_WCS)",
                 frame.index,
             )
 
@@ -352,14 +357,16 @@ class SenpaiCocoExporter:
                 logger.debug(f"Using {len(stars_to_process)} catalog stars for streak annotations")
             elif frame.starfield.detections:
                 stars_to_process = frame.starfield.detections
-                logger.debug(f"Using {len(stars_to_process)} detected stars for streak annotations (no catalog stars available)")
+                logger.debug(
+                    f"Using {len(stars_to_process)} detected stars for streak annotations (no catalog stars available)"
+                )
             else:
                 logger.debug("No stars available for streak annotations")
 
             for star in stars_to_process:
                 # Scale coordinates back up if needed
                 x, y = self._scale_coordinates(star.x, star.y, scale_factor)
-                
+
                 # Estimate SNR from magnitude if available, otherwise from counts
                 if hasattr(star, "magnitude") and star.magnitude is not None:
                     snr_value = self._estimate_snr_from_magnitude(star.magnitude)
@@ -491,7 +498,9 @@ class SenpaiCocoExporter:
             scale_factor = self._get_scale_factor(frame.starfield, self.senpai_run)
             scaled_length = frame.streak.pixel_length * scale_factor
             if scaled_length > self.max_streak_length:
-                logger.info(f"Skipping live rate frame {frame.index} - streak length {scaled_length:.1f} > {self.max_streak_length}")
+                logger.info(
+                    f"Skipping live rate frame {frame.index} - streak length {scaled_length:.1f} > {self.max_streak_length}"
+                )
                 return
 
         # Get frame data
@@ -559,8 +568,7 @@ class SenpaiCocoExporter:
         wcs_unvalidated = getattr(wcs_status, "value", wcs_status) == "REFINED_UNVALIDATED_WCS"
         if wcs_unvalidated:
             logger.info(
-                "Skipping star line annotations for frame %s: WCS failed "
-                "absolute validation (REFINED_UNVALIDATED_WCS)",
+                "Skipping star line annotations for frame %s: WCS failed absolute validation (REFINED_UNVALIDATED_WCS)",
                 frame.index,
             )
 
@@ -574,7 +582,9 @@ class SenpaiCocoExporter:
                 logger.debug(f"Using {len(stars_to_process)} catalog stars for streak annotations")
             elif hasattr(starfield, "detections") and starfield.detections:
                 stars_to_process = starfield.detections
-                logger.debug(f"Using {len(stars_to_process)} detected stars for streak annotations (no catalog stars available)")
+                logger.debug(
+                    f"Using {len(stars_to_process)} detected stars for streak annotations (no catalog stars available)"
+                )
             else:
                 logger.debug("No stars available for streak annotations")
 
@@ -594,9 +604,7 @@ class SenpaiCocoExporter:
                     if hasattr(frame, "streak") and frame.streak is not None:
                         line = self._create_streak_line(star, frame.streak, frame_data)
                         if line:
-                            annotation = self._create_streak_annotation(
-                                star, line, image_id, len(streak_annotations)
-                            )
+                            annotation = self._create_streak_annotation(star, line, image_id, len(streak_annotations))
                             if annotation:
                                 streak_annotations.append(annotation)
                                 streak_lines.append(line)
@@ -628,9 +636,9 @@ class SenpaiCocoExporter:
         frame_data: np.ndarray,
         header: fits.Header,
         image_id: str,
-        file_path: Optional[str] = None,
+        file_path: str | None = None,
         starfield=None,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Save image files (PNG and/or FITS) and return the output file path."""
         output_image_file = None
 
@@ -670,7 +678,7 @@ class SenpaiCocoExporter:
                     hdu = fits.HDUList([hdu, wcs_hdu])
                     logger.debug(f"Added header-only WCS extension for {image_id}")
                 except Exception as e:
-                    logger.warning(f"Failed to add WCS extension for {image_id}: {str(e)}")
+                    logger.warning(f"Failed to add WCS extension for {image_id}: {e!s}")
                     # Continue without WCS HDU if conversion fails
 
             hdu.writeto(output_image_file, overwrite=True)
@@ -684,8 +692,8 @@ class SenpaiCocoExporter:
         image_id: str,
         collect_id: str,
         frame_type: str,
-        output_image_file: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        output_image_file: str | None = None,
+    ) -> dict[str, Any]:
         """Create image metadata for COCO format."""
         # Extract metadata from header
         exposure_time = header.get("EXPTIME", header.get("EXPOSURE", 1.0))
@@ -725,9 +733,9 @@ class SenpaiCocoExporter:
         image_id: str,
         box_size: int,
         snr: float,
-        magnitude: Optional[float] = None,
+        magnitude: float | None = None,
         annotation_id: int = 0,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Create a point source annotation (bounding box)."""
         # Check mask radius
         if self.mask_radius is not None:
@@ -757,7 +765,7 @@ class SenpaiCocoExporter:
         star,
         streak,
         frame_data: np.ndarray,
-    ) -> Optional[List[float]]:
+    ) -> list[float] | None:
         """Create a streak line from star and streak parameters."""
         if not streak:
             return None
@@ -786,10 +794,10 @@ class SenpaiCocoExporter:
     def _create_streak_annotation(
         self,
         star,
-        line: List[float],
+        line: list[float],
         image_id: str,
         annotation_id: int = 0,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Create a streak annotation (line)."""
         # Check mask radius
         if self.mask_radius is not None:
@@ -811,11 +819,11 @@ class SenpaiCocoExporter:
 
     def _create_coco_dataset(
         self,
-        images: List[Dict[str, Any]],
-        annotations: List[Dict[str, Any]],
+        images: list[dict[str, Any]],
+        annotations: list[dict[str, Any]],
         category_name: str,
         supercategory: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a COCO format dataset."""
         return {
             "images": images,
@@ -830,11 +838,11 @@ class SenpaiCocoExporter:
     def _save_coco_files(
         self,
         image_id: str,
-        point_dataset: Dict[str, Any],
-        streak_dataset: Optional[Dict[str, Any]] = None,
-        point_centers: Optional[List[List[float]]] = None,
-        frame_data: Optional[np.ndarray] = None,
-        streak_lines: Optional[List[List[float]]] = None,
+        point_dataset: dict[str, Any],
+        streak_dataset: dict[str, Any] | None = None,
+        point_centers: list[list[float]] | None = None,
+        frame_data: np.ndarray | None = None,
+        streak_lines: list[list[float]] | None = None,
         starfield=None,
         streak=None,
     ) -> None:
@@ -926,8 +934,8 @@ class SenpaiCocoExporter:
         self,
         frame_data: np.ndarray,
         header: fits.Header,
-        processing_history: List,
-        correction_frames: Optional[Dict] = None,
+        processing_history: list,
+        correction_frames: dict | None = None,
     ) -> np.ndarray:
         """Apply the same calibration chain that was used during SENPAI processing."""
         from senpai.engine.models.images import ProcessingStep
@@ -1021,7 +1029,7 @@ class SenpaiCocoExporter:
     def _apply_calibrations_from_header(
         self,
         image,
-        header: Dict[str, Any],
+        header: dict[str, Any],
     ):
         """Apply calibrations from header metadata."""
         # This is a placeholder - implement actual calibration logic
@@ -1090,7 +1098,7 @@ class SenpaiCocoExporter:
         streak,
         frame_data: np.ndarray,
         scale_factor: float,
-    ) -> Optional[List[float]]:
+    ) -> list[float] | None:
         """Create a streak line from star and streak parameters with proper scaling."""
         if not streak:
             return None
@@ -1117,11 +1125,11 @@ class SenpaiCocoExporter:
     def _create_streak_annotation_scaled(
         self,
         star,
-        line: List[float],
+        line: list[float],
         image_id: str,
         annotation_id: int = 0,
         scale_factor: float = 1.0,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Create a streak annotation (line) with proper scaling."""
         # Scale star coordinates for mask radius check
         x, y = self._scale_coordinates(star.x, star.y, scale_factor)
@@ -1152,8 +1160,8 @@ class SenpaiCocoExporter:
 
     def export_batch(
         self,
-        senpai_runs: List[Union[SenpaiRun, SenpaiRunResult]],
-        collect_ids: List[str],
+        senpai_runs: list[SenpaiRun | SenpaiRunResult],
+        collect_ids: list[str],
         apply_calibrations: bool = True,
     ) -> None:
         """Export multiple SENPAI runs to individual COCO format files."""

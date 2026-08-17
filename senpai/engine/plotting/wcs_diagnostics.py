@@ -134,10 +134,7 @@ def plot_variable_kernel_star_diagnostic(
     )
     fig.tight_layout()
 
-    output_path = (
-        config.runtime.output_dir
-        / f"{frame.index}_variable_kernel_star_{star_index}.png"
-    )
+    output_path = config.runtime.output_dir / f"{frame.index}_variable_kernel_star_{star_index}.png"
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     logger.info("Saved variable-kernel star diagnostic to %s", output_path)

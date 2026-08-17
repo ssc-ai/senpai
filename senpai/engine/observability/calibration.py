@@ -160,17 +160,15 @@ def _airmass(altitude_deg: float | None) -> float | None:
     return 1.0 / math.cos(z)
 
 
-def _sky_mu(f: "FramePhoto") -> float | None:
+def _sky_mu(f: FramePhoto) -> float | None:
     """Sky surface brightness in mag/arcsec², from the captured flat-fielded sky
     level. With m = ZP − 2.5·log10(flux/t_exp), one pixel's sky flux is at
     m_pix = ZP − 2.5·log10(sky_adu/t_exp); converting per-pixel → per-arcsec²
     adds 2.5·log10(pixel_area) = 5·log10(pixscale). Returns None if any input
     (ZP / sky / exposure / plate scale) is missing."""
-    if (f.zero_point is None or f.sky_adu is None or f.sky_adu <= 0
-            or not f.exposure_time or not f.pixel_scale_arcsec):
+    if f.zero_point is None or f.sky_adu is None or f.sky_adu <= 0 or not f.exposure_time or not f.pixel_scale_arcsec:
         return None
-    return (f.zero_point - 2.5 * math.log10(f.sky_adu / f.exposure_time)
-            + 5.0 * math.log10(f.pixel_scale_arcsec))
+    return f.zero_point - 2.5 * math.log10(f.sky_adu / f.exposure_time) + 5.0 * math.log10(f.pixel_scale_arcsec)
 
 
 def _compute_alt_az(
@@ -184,9 +182,9 @@ def _compute_alt_az(
         return None
 
     try:
+        from astropy import units as u
         from astropy.coordinates import AltAz, EarthLocation, SkyCoord
         from astropy.time import Time
-        from astropy import units as u
     except ImportError:
         logger.debug("astropy unavailable; skipping alt/az conversion")
         return None
@@ -201,7 +199,7 @@ def _compute_alt_az(
     return float(aa.alt.deg), float(aa.az.deg)
 
 
-def _add_moon_geometry(calib: "NightCalibration") -> None:
+def _add_moon_geometry(calib: NightCalibration) -> None:
     """Fill per-frame Moon separation/altitude and the night's Moon illumination,
     in place. Vectorized (one astropy ephemeris call for all frames). No-op if
     astropy or the site is unavailable. Moonglow degrades depth (sky background)
@@ -210,28 +208,30 @@ def _add_moon_geometry(calib: "NightCalibration") -> None:
     site = calib.site
     if not site or site.get("latitude") is None or site.get("longitude") is None:
         return
-    fr = [f for f in calib.frames
-          if f.timestamp is not None and f.ra_center_deg is not None
-          and f.dec_center_deg is not None]
+    fr = [
+        f
+        for f in calib.frames
+        if f.timestamp is not None and f.ra_center_deg is not None and f.dec_center_deg is not None
+    ]
     if not fr:
         return
     try:
-        from astropy.coordinates import (AltAz, EarthLocation, SkyCoord,
-                                         get_body, get_sun)
-        from astropy.time import Time
-        from astropy import units as u
         import numpy as np
+        from astropy import units as u
+        from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_body, get_sun
+        from astropy.time import Time
     except ImportError:
         logger.debug("astropy unavailable; skipping moon geometry")
         return
 
     loc = EarthLocation(
-        lat=site["latitude"] * u.deg, lon=site["longitude"] * u.deg,
-        height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m)
+        lat=site["latitude"] * u.deg,
+        lon=site["longitude"] * u.deg,
+        height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m,
+    )
     times = Time([f.timestamp for f in fr], scale="utc")
     moon = get_body("moon", times, loc)
-    fields = SkyCoord([f.ra_center_deg for f in fr] * u.deg,
-                      [f.dec_center_deg for f in fr] * u.deg)
+    fields = SkyCoord([f.ra_center_deg for f in fr] * u.deg, [f.dec_center_deg for f in fr] * u.deg)
     seps = np.atleast_1d(fields.separation(moon).deg)
     malt = np.atleast_1d(moon.transform_to(AltAz(obstime=times, location=loc)).alt.deg)
     for f, s, a in zip(fr, seps, malt):
@@ -241,8 +241,12 @@ def _add_moon_geometry(calib: "NightCalibration") -> None:
     tmid = times[len(times) // 2]
     elong = get_body("moon", tmid, loc).separation(get_sun(tmid)).deg
     calib.moon_illumination = float(0.5 * (1 - math.cos(math.radians(elong))))
-    logger.info("Moon: %.0f%% illuminated, separation median %.0f° (n=%d frames)",
-                100 * calib.moon_illumination, float(np.median(seps)), len(fr))
+    logger.info(
+        "Moon: %.0f%% illuminated, separation median %.0f° (n=%d frames)",
+        100 * calib.moon_illumination,
+        float(np.median(seps)),
+        len(fr),
+    )
 
 
 def _extract_frame_photo(
@@ -307,10 +311,10 @@ def _extract_frame_photo(
         fs = det_meta.get("fwhm_stats") or {}
         positions = fs.get("fwhm_vs_position") or []
         if positions:
-            real = [v[2] for v in positions
-                    if v and len(v) > 2 and v[2] is not None and v[2] >= _FWHM_MIN_PX]
+            real = [v[2] for v in positions if v and len(v) > 2 and v[2] is not None and v[2] >= _FWHM_MIN_PX]
             if len(real) >= 5:
                 import statistics as _st
+
                 fwhm_px = float(_st.median(real))
                 fwhm_std_px = float(_st.pstdev(real)) if len(real) > 1 else 0.0
         else:  # no per-star list (older serialization) → upstream median
@@ -330,9 +334,8 @@ def _extract_frame_photo(
     # landed; older runs leave this None and the sky plot is skipped).
     sky_adu = None
     gain_e_per_adu = None
-    for step in (frame_dict.get("processing_history") or []):
-        if isinstance(step, dict) and "column_median_subtract" in str(
-                step.get("step_type", "")).lower():
+    for step in frame_dict.get("processing_history") or []:
+        if isinstance(step, dict) and "column_median_subtract" in str(step.get("step_type", "")).lower():
             params = step.get("parameters") or {}
             sky_adu = params.get("sky_median_adu")
             gain_e_per_adu = params.get("gain_e_per_adu")
@@ -452,17 +455,19 @@ def _fill_timing_altaz(
     if not site or site.get("latitude") is None or site.get("longitude") is None:
         return
     try:
+        import numpy as np
+        from astropy import units as u
         from astropy.coordinates import AltAz, EarthLocation, SkyCoord
         from astropy.time import Time
-        from astropy import units as u
-        import numpy as np
     except ImportError:
         logger.debug("astropy unavailable; skipping boresight alt/az")
         return
 
     loc = EarthLocation(
-        lat=site["latitude"] * u.deg, lon=site["longitude"] * u.deg,
-        height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m)
+        lat=site["latitude"] * u.deg,
+        lon=site["longitude"] * u.deg,
+        height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m,
+    )
     times = Time([t.timestamp for t in timings], scale="utc")
     sky = SkyCoord(ra=np.asarray(ras) * u.deg, dec=np.asarray(decs) * u.deg)
     aa = sky.transform_to(AltAz(obstime=times, location=loc))
@@ -495,9 +500,9 @@ class ExtinctionFit:
     positive on clear nights); ``m0`` is the extra-atmospheric zero point."""
 
     filter_name: str
-    m0: float          # zero point at zero airmass (extra-atmospheric)
+    m0: float  # zero point at zero airmass (extra-atmospheric)
     m0_err: float
-    k: float           # extinction (mag/airmass) — positive on clear nights
+    k: float  # extinction (mag/airmass) — positive on clear nights
     k_err: float
     n: int
     airmass_range: tuple[float, float]
@@ -553,13 +558,11 @@ class NightCalibration:
         # Detector gain (e-/ADU), measured per frame from sky shot noise. The
         # night median over many frames beats any single frame; the spread flags
         # an unreliable estimate (e.g. crowded fields or poor flat-fielding).
-        gains = [f.gain_e_per_adu for f in self.frames
-                 if f.gain_e_per_adu is not None]
+        gains = [f.gain_e_per_adu for f in self.frames if f.gain_e_per_adu is not None]
         gain_med = float(st.median(gains)) if gains else None
         gain_std = float(st.pstdev(gains)) if len(gains) > 1 else None
         # Dominant-filter extinction (most frames).
-        ext = max(self.extinction_per_filter.values(), key=lambda x: x.n,
-                  default=None)
+        ext = max(self.extinction_per_filter.values(), key=lambda x: x.n, default=None)
         # Zenith transmission from first-order extinction, 10^(-0.4 k). Only emit
         # it when physical (k >= 0 -> T <= 1). A negative fitted k -- sources
         # "brightening" with airmass -- means the extinction fit is non-
@@ -568,8 +571,7 @@ class NightCalibration:
         zen_trans = (10 ** (-0.4 * ext.k)) if ext else None
         if zen_trans is not None and zen_trans > 1.0:
             zen_trans = None
-        lim50 = _med(list(self.limiting_mag_p50_per_filter.values())) \
-            if self.limiting_mag_p50_per_filter else None
+        lim50 = _med(list(self.limiting_mag_p50_per_filter.values())) if self.limiting_mag_p50_per_filter else None
         return {
             "moon_illumination": self.moon_illumination,
             "moon_sep_median_deg": moon_sep,
@@ -600,12 +602,8 @@ class NightCalibration:
             "n_frames_total": self.n_frames_total,
             "n_frames_with_photometry": self.n_frames_with_photometry,
             "n_frames_with_wcs": self.n_frames_with_wcs,
-            "zp_per_filter": {
-                k: _asdict_safe(v) for k, v in self.zp_per_filter.items()
-            },
-            "extinction_per_filter": {
-                k: _asdict_safe(v) for k, v in self.extinction_per_filter.items()
-            },
+            "zp_per_filter": {k: _asdict_safe(v) for k, v in self.zp_per_filter.items()},
+            "extinction_per_filter": {k: _asdict_safe(v) for k, v in self.extinction_per_filter.items()},
             "limiting_mag_p50_per_filter": self.limiting_mag_p50_per_filter,
             "limiting_mag_p90_per_filter": self.limiting_mag_p90_per_filter,
             "conditions": self.conditions(),
@@ -655,9 +653,12 @@ def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
         f.ccd_warm = f.ccd_temp_c is not None and f.ccd_temp_c > threshold
         n_warm += int(f.ccd_warm)
     return {
-        "median_c": median, "threshold_c": threshold,
-        "n_warm": n_warm, "n_with_temp": len(temps),
-        "max_c": float(max(temps)), "min_c": float(min(temps)),
+        "median_c": median,
+        "threshold_c": threshold,
+        "n_warm": n_warm,
+        "n_with_temp": len(temps),
+        "max_c": float(max(temps)),
+        "min_c": float(min(temps)),
     }
 
 
@@ -717,8 +718,7 @@ def _clear_sky_zp_band(frames: list[FramePhoto]) -> tuple[float, float] | None:
     Returns None if too few sidereal frames to estimate."""
     import numpy as np
 
-    zps = np.array([f.zero_point for f in _zp_frames(frames)
-                    if f.zero_point is not None])
+    zps = np.array([f.zero_point for f in _zp_frames(frames) if f.zero_point is not None])
     if len(zps) < 10:
         return None
     hist, edges = np.histogram(zps, bins=40)
@@ -744,8 +744,7 @@ def _clear_sky_zp_band(frames: list[FramePhoto]) -> tuple[float, float] | None:
 _PLOT_SNR_FLOOR = 0.0
 
 
-def _snr_consistent(snr: float, mag: float, f: FramePhoto,
-                    tolerance: float = 5.0) -> bool:
+def _snr_consistent(snr: float, mag: float, f: FramePhoto, tolerance: float = 5.0) -> bool:
     """True when a star's measured SNR is plausible for its catalog magnitude.
 
     By definition SNR ≈ limiting_snr (3) at the frame's lim50 and scales with
@@ -803,9 +802,9 @@ def _percentile(sorted_xs: list[float], q: float) -> float:
     return sorted_xs[lo] + (idx - lo) * (sorted_xs[hi] - sorted_xs[lo])
 
 
-_EXT_ENV_PCT = 85.0      # upper-envelope percentile = clear-sky proxy
-_EXT_BIN_W = 0.1         # airmass bin width
-_EXT_CLEAR_TOL = 0.1     # mag; frames within this below the line count as clear
+_EXT_ENV_PCT = 85.0  # upper-envelope percentile = clear-sky proxy
+_EXT_BIN_W = 0.1  # airmass bin width
+_EXT_CLEAR_TOL = 0.1  # mag; frames within this below the line count as clear
 
 
 def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
@@ -831,7 +830,7 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
     edges = np.arange(X.min(), X.max() + _EXT_BIN_W, _EXT_BIN_W)
     cx, cmed, cenv = [], [], []
     for lo, hi in zip(edges[:-1], edges[1:]):
-        zz = Z[(X >= lo) & (X < hi)]
+        zz = Z[(lo <= X) & (hi > X)]
         if len(zz) >= 5:
             cx.append(float((lo + hi) / 2))
             cmed.append(float(np.median(zz)))
@@ -852,12 +851,19 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
     sigma2 = sum(r * r for r in resid) / max(n - 2, 1)
     slope_err = math.sqrt(sigma2 / ssxx) if sigma2 > 0 else 0.0
     m0_err = math.sqrt(sigma2 * (1 / n + mx * mx / ssxx)) if sigma2 > 0 else 0.0
-    clear_fraction = float(np.mean(Z >= (m0 + slope * X) - _EXT_CLEAR_TOL))
+    clear_fraction = float(np.mean((m0 + slope * X) - _EXT_CLEAR_TOL <= Z))
     return {
-        "k": -slope, "k_err": slope_err, "m0": m0, "m0_err": m0_err,
-        "n": len(pairs), "airmass_range": (float(X.min()), float(X.max())),
-        "bin_centers": cx, "bin_median": cmed, "bin_envelope": cenv,
-        "note": note, "clear_fraction": clear_fraction,
+        "k": -slope,
+        "k_err": slope_err,
+        "m0": m0,
+        "m0_err": m0_err,
+        "n": len(pairs),
+        "airmass_range": (float(X.min()), float(X.max())),
+        "bin_centers": cx,
+        "bin_median": cmed,
+        "bin_envelope": cenv,
+        "note": note,
+        "clear_fraction": clear_fraction,
     }
 
 
@@ -880,17 +886,18 @@ def _fit_extinction(frames: list[FramePhoto]) -> dict[str, ExtinctionFit]:
             continue
         out[filt] = ExtinctionFit(
             filter_name=filt,
-            m0=r["m0"], m0_err=r["m0_err"],
-            k=r["k"], k_err=r["k_err"],
-            n=r["n"], airmass_range=r["airmass_range"],
+            m0=r["m0"],
+            m0_err=r["m0_err"],
+            k=r["k"],
+            k_err=r["k_err"],
+            n=r["n"],
+            airmass_range=r["airmass_range"],
             clear_fraction=r["clear_fraction"],
         )
     return out
 
 
-def _summarize_limiting_mag(
-    frames: list[FramePhoto], attr: str
-) -> dict[str, float]:
+def _summarize_limiting_mag(frames: list[FramePhoto], attr: str) -> dict[str, float]:
     """Median limiting magnitude per filter, from SIDEREAL frames only.
 
     Rate-tracked frames image stars as streaks; their forced-photometry
@@ -922,9 +929,7 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
     night_dir = Path(night_dir)
     manifest_path = night_dir / "manifest.json"
     if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"No manifest.json at {manifest_path}. Run `senpai-burr night` first."
-        )
+        raise FileNotFoundError(f"No manifest.json at {manifest_path}. Run `senpai-burr night` first.")
     manifest = json.loads(manifest_path.read_text())
 
     frames: list[FramePhoto] = []
@@ -956,12 +961,10 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         # first batch that recorded one (all batches in a night share config).
         if photometry_block is None and run.get("photometry"):
             photometry_block = run["photometry"]
-        for kind, default_mode in (("sidereal_frames", "sidereal"),
-                                   ("rate_track_frames", "rate")):
+        for kind, default_mode in (("sidereal_frames", "sidereal"), ("rate_track_frames", "rate")):
             for fd in run.get(kind, []):
                 n_total += 1
-                fp = _extract_frame_photo(
-                    fd, batch_id, manifest.get("site"), default_mode)
+                fp = _extract_frame_photo(fd, batch_id, manifest.get("site"), default_mode)
                 if fp is not None:
                     frames.append(fp)
                 # Timing/pointing is kept for EVERY frame (the non-fit ones too)
@@ -991,9 +994,13 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
     ccd = _flag_ccd_warm(frames)
     if ccd and ccd["n_warm"]:
         logger.info(
-            "CCD: setpoint %.1f°C, %d/%d frames above %.1f°C excluded as warm "
-            "(max %.1f°C)", ccd["median_c"], ccd["n_warm"], ccd["n_with_temp"],
-            ccd["threshold_c"], ccd["max_c"])
+            "CCD: setpoint %.1f°C, %d/%d frames above %.1f°C excluded as warm (max %.1f°C)",
+            ccd["median_c"],
+            ccd["n_warm"],
+            ccd["n_with_temp"],
+            ccd["threshold_c"],
+            ccd["max_c"],
+        )
     calib.zp_per_filter = _summarize_zp(frames)
     calib.extinction_per_filter = _fit_extinction(frames)
     calib.limiting_mag_p50_per_filter = _summarize_limiting_mag(frames, "limiting_magnitude_50")
@@ -1004,8 +1011,12 @@ def analyze_night(night_dir: str | Path) -> NightCalibration:
         "NightCalibration %s: %d/%d frames had photometry, %d had WCS, "
         "%d/%d frames placed on the slew timeline (boresight); "
         "filters with ZP: %s; extinction fits: %s",
-        calib.night_id, calib.n_frames_with_photometry, calib.n_frames_total,
-        calib.n_frames_with_wcs, n_placed, len(timings),
+        calib.night_id,
+        calib.n_frames_with_photometry,
+        calib.n_frames_total,
+        calib.n_frames_with_wcs,
+        n_placed,
+        len(timings),
         sorted(calib.zp_per_filter.keys()),
         sorted(calib.extinction_per_filter.keys()),
     )
@@ -1137,8 +1148,7 @@ def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> st
             v = c.get(key)
             cells.append("—" if v is None else fmt.format(v))
         table_rows.append(cells)
-    widths = [max(len(headers[i]), *(len(r[i]) for r in table_rows))
-              for i in range(len(headers))]
+    widths = [max(len(headers[i]), *(len(r[i]) for r in table_rows)) for i in range(len(headers))]
     sep = "  "
     out = [sep.join(h.rjust(widths[i]) for i, h in enumerate(headers))]
     out.append(sep.join("-" * widths[i] for i in range(len(headers))))
@@ -1148,6 +1158,7 @@ def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> st
 
     if csv_path is not None:
         import csv as _csv
+
         with open(csv_path, "w", newline="") as f:
             w = _csv.writer(f)
             w.writerow([h for h, _, _ in _NIGHTS_COLS])
@@ -1157,8 +1168,7 @@ def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> st
     return table
 
 
-def plot_calibration(source, output_dir: str | Path,
-                     *, save_data: bool = True) -> list[Path]:
+def plot_calibration(source, output_dir: str | Path, *, save_data: bool = True) -> list[Path]:
     """Render the calibration plot set. Quietly skips plots that have no data.
 
     ``source`` is either a NightCalibration (live: the analysis is run via
@@ -1201,7 +1211,9 @@ def _save(fig, path: Path) -> Path:
     import matplotlib.pyplot as plt
 
     from senpai.engine.plotting.psf import (
-        clean_copy_path, paper_ready_enabled, strip_titles,
+        clean_copy_path,
+        paper_ready_enabled,
+        strip_titles,
     )
 
     fig.tight_layout()
@@ -1226,8 +1238,7 @@ def _data_limiting_magnitude_hist(calib: NightCalibration):
     by_filter: dict[str, list] = {}
     for f in _zp_frames(calib.frames):
         if f.limiting_magnitude_50 is not None:
-            by_filter.setdefault(f.filter_name or "unknown", []).append(
-                f.limiting_magnitude_50)
+            by_filter.setdefault(f.filter_name or "unknown", []).append(f.limiting_magnitude_50)
     return {"by_filter": by_filter} if by_filter else None
 
 
@@ -1254,21 +1265,27 @@ def _data_extinction_curve(calib: NightCalibration):
     for f in _zp_frames(calib.frames):
         if f.zero_point is None or f.airmass is None:
             continue
-        pairs_by_filter.setdefault(f.filter_name or "unknown", []).append(
-            (f.airmass, f.zero_point))
+        pairs_by_filter.setdefault(f.filter_name or "unknown", []).append((f.airmass, f.zero_point))
     series = []
     for filt, pairs in sorted(pairs_by_filter.items()):
         r = _extinction_envelope_fit(pairs)
         if r is None:
             continue
-        series.append({
-            "filter": filt,
-            "airmass": [p[0] for p in pairs], "zp": [p[1] for p in pairs],
-            "bin_centers": r["bin_centers"], "bin_median": r["bin_median"],
-            "bin_envelope": r["bin_envelope"],
-            "k": r["k"], "k_err": r["k_err"], "m0": r["m0"],
-            "note": r["note"], "clear_fraction": r["clear_fraction"],
-        })
+        series.append(
+            {
+                "filter": filt,
+                "airmass": [p[0] for p in pairs],
+                "zp": [p[1] for p in pairs],
+                "bin_centers": r["bin_centers"],
+                "bin_median": r["bin_median"],
+                "bin_envelope": r["bin_envelope"],
+                "k": r["k"],
+                "k_err": r["k_err"],
+                "m0": r["m0"],
+                "note": r["note"],
+                "clear_fraction": r["clear_fraction"],
+            }
+        )
     return {"series": series} if series else None
 
 
@@ -1285,53 +1302,75 @@ def _render_extinction_curve(d, meta, output_dir, plt, np) -> Path:
         sky = 10 ** (-0.4 * s["k"])
         flag = "  ⚠ NON-PHOTOMETRIC" if s["clear_fraction"] < 0.30 else ""
         if multi:
-            ax.scatter(X, s["zp"], s=12, alpha=0.5, color=color,
-                       label=f"{pre}frames (n={len(X)})")
-            ax.plot(line_x, s["m0"] - s["k"] * line_x, color=color, lw=2,
-                    label=f"  k={s['k']:.3f}±{s['k_err']:.3f} (T_zen={sky:.0%})")
+            ax.scatter(X, s["zp"], s=12, alpha=0.5, color=color, label=f"{pre}frames (n={len(X)})")
+            ax.plot(
+                line_x,
+                s["m0"] - s["k"] * line_x,
+                color=color,
+                lw=2,
+                label=f"  k={s['k']:.3f}±{s['k_err']:.3f} (T_zen={sky:.0%})",
+            )
         else:
-            ax.scatter(X, s["zp"], s=12, alpha=0.4, color="lightgray",
-                       label=f"frames (n={len(X)})")
+            ax.scatter(X, s["zp"], s=12, alpha=0.4, color="lightgray", label=f"frames (n={len(X)})")
             if s["bin_centers"]:
-                ax.plot(s["bin_centers"], s["bin_median"], "o--",
-                        color="darkorange", ms=6, alpha=0.7,
-                        label="per-bin median (cloud-biased)")
-                ax.plot(s["bin_centers"], s["bin_envelope"], "o", color="black",
-                        ms=7, label=f"{_EXT_ENV_PCT:.0f}th-pct envelope (clear-sky)")
-            ax.plot(line_x, s["m0"] - s["k"] * line_x, "r-", lw=2, alpha=0.85,
-                    label=f"envelope fit: k={s['k']:.3f}±{s['k_err']:.3f}  "
-                          f"(zenith T={sky:.0%})")
+                ax.plot(
+                    s["bin_centers"],
+                    s["bin_median"],
+                    "o--",
+                    color="darkorange",
+                    ms=6,
+                    alpha=0.7,
+                    label="per-bin median (cloud-biased)",
+                )
+                ax.plot(
+                    s["bin_centers"],
+                    s["bin_envelope"],
+                    "o",
+                    color="black",
+                    ms=7,
+                    label=f"{_EXT_ENV_PCT:.0f}th-pct envelope (clear-sky)",
+                )
+            ax.plot(
+                line_x,
+                s["m0"] - s["k"] * line_x,
+                "r-",
+                lw=2,
+                alpha=0.85,
+                label=f"envelope fit: k={s['k']:.3f}±{s['k_err']:.3f}  (zenith T={sky:.0%})",
+            )
         title_bits.append(f"{pre}k={s['k']:.3f} (clear-frac {s['clear_fraction']:.0%}){flag}")
     ax.set_ylabel("zero point (instrumental → catalog mag)")
     ax.set_xlabel("Airmass")
-    ax.set_title(f"{meta['night_id']}: extinction (cloud-robust upper-envelope)\n"
-                 + " | ".join(title_bits))
+    ax.set_title(f"{meta['night_id']}: extinction (cloud-robust upper-envelope)\n" + " | ".join(title_bits))
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=8)
     ax2 = ax.twiny()
     ticks = np.array([t for t in ax.get_xticks() if t >= 1.0])
     if len(ticks):
         ax2.set_xticks(ticks)
-        ax2.set_xticklabels(
-            [f"{math.degrees(math.asin(1.0 / t)):.0f}°" for t in ticks])
+        ax2.set_xticklabels([f"{math.degrees(math.asin(1.0 / t)):.0f}°" for t in ticks])
     ax2.set_xlim(ax.get_xlim())
     ax2.set_xlabel("Altitude")
     return _save(fig, output_dir / "extinction_curve.png")
 
 
 def _data_alt_az_coverage(calib: NightCalibration):
-    aa = [(f.azimuth_deg, f.altitude_deg, f.timestamp) for f in calib.frames
-          if f.azimuth_deg is not None and f.altitude_deg is not None]
+    aa = [
+        (f.azimuth_deg, f.altitude_deg, f.timestamp)
+        for f in calib.frames
+        if f.azimuth_deg is not None and f.altitude_deg is not None
+    ]
     if not aa:
         return None
     ts = [t for _, _, t in aa if t is not None]
     ts0 = min(ts) if ts else None
-    colors = [(t - ts0).total_seconds() if (ts0 is not None and t is not None)
-              else 0 for _, _, t in aa]
+    colors = [(t - ts0).total_seconds() if (ts0 is not None and t is not None) else 0 for _, _, t in aa]
     return {
         "thetas": [math.radians(p[0]) for p in aa],
         "rs": [90 - p[1] for p in aa],
-        "colors": colors, "has_time": ts0 is not None, "n": len(aa),
+        "colors": colors,
+        "has_time": ts0 is not None,
+        "n": len(aa),
     }
 
 
@@ -1340,8 +1379,7 @@ def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
     ax = fig.add_subplot(111, projection="polar")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
-    sc = ax.scatter(d["thetas"], d["rs"], c=d["colors"], s=12, cmap="plasma",
-                    alpha=0.7)
+    sc = ax.scatter(d["thetas"], d["rs"], c=d["colors"], s=12, cmap="plasma", alpha=0.7)
     ax.set_ylim(0, 90)
     ax.set_yticks([15, 30, 45, 60, 75])
     ax.set_yticklabels([f"{90 - r}°" for r in [15, 30, 45, 60, 75]])
@@ -1353,12 +1391,15 @@ def _render_alt_az_coverage(d, meta, output_dir, plt, np) -> Path:
 
 
 def _data_zp_drift(calib: NightCalibration):
-    import numpy as np
     from datetime import timedelta
 
-    drift = [(f.timestamp, f.zero_point, f.filter_name or "unknown")
-             for f in _zp_frames(calib.frames)
-             if f.timestamp is not None and f.zero_point is not None]
+    import numpy as np
+
+    drift = [
+        (f.timestamp, f.zero_point, f.filter_name or "unknown")
+        for f in _zp_frames(calib.frames)
+        if f.timestamp is not None and f.zero_point is not None
+    ]
     if not drift:
         return None
     BIN_SECONDS = 1200.0
@@ -1383,7 +1424,10 @@ def _data_zp_drift(calib: NightCalibration):
         per_filter[filt] = {
             "scatter_t": [x.isoformat() for x in xs],
             "scatter_zp": [float(y) for y in ys],
-            "binned_t": cx, "binned_zp": cy, "err_lo": e_lo, "err_hi": e_hi,
+            "binned_t": cx,
+            "binned_zp": cy,
+            "err_lo": e_lo,
+            "err_hi": e_hi,
         }
     return {"per_filter": per_filter, "n_filters": len(per_filter)}
 
@@ -1395,16 +1439,24 @@ def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
     for filt in sorted(d["per_filter"]):
         s = d["per_filter"][filt]
         xs = [_dt.fromisoformat(t) for t in s["scatter_t"]]
-        ax.scatter(xs, s["scatter_zp"], label=f"{filt} (n={len(xs)})", s=10,
-                   alpha=0.4)
+        ax.scatter(xs, s["scatter_zp"], label=f"{filt} (n={len(xs)})", s=10, alpha=0.4)
         if s["binned_t"]:
             cx = [_dt.fromisoformat(t) for t in s["binned_t"]]
-            lbl = ("binned (median ± 16/84%)" if d["n_filters"] == 1
-                   else f"{filt} binned")
-            ax.errorbar(cx, s["binned_zp"], yerr=[s["err_lo"], s["err_hi"]],
-                        fmt="o", color="black", markersize=6, capsize=4,
-                        capthick=1.5, elinewidth=1.5, alpha=0.85, zorder=5,
-                        label=lbl)
+            lbl = "binned (median ± 16/84%)" if d["n_filters"] == 1 else f"{filt} binned"
+            ax.errorbar(
+                cx,
+                s["binned_zp"],
+                yerr=[s["err_lo"], s["err_hi"]],
+                fmt="o",
+                color="black",
+                markersize=6,
+                capsize=4,
+                capthick=1.5,
+                elinewidth=1.5,
+                alpha=0.85,
+                zorder=5,
+                label=lbl,
+            )
     ax.set_xlabel("UTC time")
     ax.set_ylabel("zero point")
     ax.set_title(f"{meta['night_id']}: zero point drift")
@@ -1425,12 +1477,14 @@ def _render_zp_drift(d, meta, output_dir, plt, np) -> Path:
 # to electrons) is drawn with its ±1σ spread.
 
 
-def _data_gain(calib: "NightCalibration"):
-    pts = [(f.sky_adu, f.gain_e_per_adu) for f in calib.frames
-           if f.gain_e_per_adu is not None and f.sky_adu is not None]
+def _data_gain(calib: NightCalibration):
+    pts = [
+        (f.sky_adu, f.gain_e_per_adu) for f in calib.frames if f.gain_e_per_adu is not None and f.sky_adu is not None
+    ]
     if len(pts) < 3:
         return None
     import statistics as st
+
     gains = [g for _, g in pts]
     return {
         "sky_adu": [s for s, _ in pts],
@@ -1443,16 +1497,16 @@ def _data_gain(calib: "NightCalibration"):
 
 def _render_gain(d, meta, output_dir, plt, np) -> Path:
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.scatter(d["sky_adu"], d["gain"], s=12, alpha=0.5, color="tab:blue",
-               label=f"per-frame (n={d['n']})")
+    ax.scatter(d["sky_adu"], d["gain"], s=12, alpha=0.5, color="tab:blue", label=f"per-frame (n={d['n']})")
     med, std = d["median"], d["std"]
-    ax.axhline(med, color="black", lw=1.8,
-               label=f"median = {med:.3f} ± {std:.3f} e-/ADU")
+    ax.axhline(med, color="black", lw=1.8, label=f"median = {med:.3f} ± {std:.3f} e-/ADU")
     ax.axhspan(med - std, med + std, color="black", alpha=0.10)
     ax.set_xlabel("sky level (ADU)")
     ax.set_ylabel("gain (e-/ADU)")
-    ax.set_title(f"{meta['night_id']}: detector gain from sky shot noise\n"
-                 "flat vs sky ⇒ trustworthy; downward trend ⇒ flat-field residual")
+    ax.set_title(
+        f"{meta['night_id']}: detector gain from sky shot noise\n"
+        "flat vs sky ⇒ trustworthy; downward trend ⇒ flat-field residual"
+    )
     ax.legend(loc="best", fontsize=9)
     ax.grid(True, alpha=0.3)
     return _save(fig, output_dir / "gain.png")
@@ -1469,11 +1523,11 @@ _PLOT_BUILDERS.update({"gain": (_data_gain, _render_gain)})
 # does not move (repeat exposures at one pointing) and gains a fixed settle step
 # plus a distance-proportional slew term whenever it does. We fit that two-regime
 # model from the night's own telemetry rather than assuming a flat overhead.
-_SLEW_READOUT_MAX_DEG = 0.1   # below this separation: no slew, overhead==readout
-_SLEW_MIN_DEG = 0.25          # at/above this separation: treat as a real slew
-_SLEW_MAX_GAP_S = 300.0       # drop pairs spanning focus runs / weather pauses
-_SLEW_ENV_PCTILE = 10         # lower-envelope percentile = physical floor per bin
-_SLEW_ENV_MIN_PTS = 6         # min pairs per distance bin to anchor the envelope
+_SLEW_READOUT_MAX_DEG = 0.1  # below this separation: no slew, overhead==readout
+_SLEW_MIN_DEG = 0.25  # at/above this separation: treat as a real slew
+_SLEW_MAX_GAP_S = 300.0  # drop pairs spanning focus runs / weather pauses
+_SLEW_ENV_PCTILE = 10  # lower-envelope percentile = physical floor per bin
+_SLEW_ENV_MIN_PTS = 6  # min pairs per distance bin to anchor the envelope
 _SLEW_DIST_BINS = [0.25, 0.5, 1, 2, 4, 8, 15, 25, 40, 60, 90, 180]
 
 
@@ -1481,8 +1535,7 @@ def _angsep_deg(alt1, az1, alt2, az2) -> float:
     """Great-circle separation (deg) in the mount's alt/az frame — the same
     slew metric burr's coverage optimizer uses."""
     a1, a2 = math.radians(alt1), math.radians(alt2)
-    d = (math.sin((a2 - a1) / 2) ** 2
-         + math.cos(a1) * math.cos(a2) * math.sin(math.radians(az2 - az1) / 2) ** 2)
+    d = math.sin((a2 - a1) / 2) ** 2 + math.cos(a1) * math.cos(a2) * math.sin(math.radians(az2 - az1) / 2) ** 2
     return math.degrees(2 * math.asin(min(1.0, math.sqrt(d))))
 
 
@@ -1498,19 +1551,20 @@ def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
     parallel separation/overhead lists."""
 
     fr = sorted(
-        (f for f in timings
-         if f.timestamp and f.exposure_time
-         and f.altitude_deg is not None and f.azimuth_deg is not None),
+        (
+            f
+            for f in timings
+            if f.timestamp and f.exposure_time and f.altitude_deg is not None and f.azimuth_deg is not None
+        ),
         key=lambda f: f.timestamp,
     )
     dist, over = [], []
     for a, b in zip(fr, fr[1:]):
         dt = (b.timestamp - a.timestamp).total_seconds()
-        ov = dt - a.exposure_time            # DATE-OBS = exposure start
+        ov = dt - a.exposure_time  # DATE-OBS = exposure start
         if ov <= 0 or dt >= _SLEW_MAX_GAP_S:  # clock glitch / long pause
             continue
-        dist.append(_angsep_deg(a.altitude_deg, a.azimuth_deg,
-                                b.altitude_deg, b.azimuth_deg))
+        dist.append(_angsep_deg(a.altitude_deg, a.azimuth_deg, b.altitude_deg, b.azimuth_deg))
         over.append(ov)
     return fr, dist, over
 
@@ -1585,7 +1639,7 @@ def _fit_slew_model(timings) -> dict | None:
     ex_a, ey_a, w = np.array(ex), np.array(ey), np.sqrt(np.array(en, float))
     A = np.vstack([np.ones_like(ex_a), ex_a]).T * w[:, None]
     (bias, slope), *_ = np.linalg.lstsq(A, ey_a * w, rcond=None)
-    if slope <= 0:        # degenerate / inverted — no usable slew term
+    if slope <= 0:  # degenerate / inverted — no usable slew term
         return None
     slew_rate = 1.0 / slope
     settle = float(bias) - readout
@@ -1602,7 +1656,7 @@ def _fit_slew_model(timings) -> dict | None:
         "bias_s": float(bias),
         "fov_width_deg": fov_width,
         "grid_overhead_s": grid_overhead,
-        "n_pairs": int(len(dist)),
+        "n_pairs": len(dist),
         "n_slew": int((dist >= _SLEW_MIN_DEG).sum()),
         "dist": dist,
         "overhead": over,
@@ -1663,23 +1717,29 @@ def _data_search_rate(calib: NightCalibration):
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
             if not iso:
                 continue
-            m_l.append(m); s_l.append(s); e_l.append(f.exposure_time)
-            fov_l.append(f.fov_sq_deg); lim_l.append(lim)
+            m_l.append(m)
+            s_l.append(s)
+            e_l.append(f.exposure_time)
+            fov_l.append(f.fov_sq_deg)
+            lim_l.append(lim)
     if not m_l:
         return None
-    mg = np.array(m_l); sn = np.array(s_l); ex = np.array(e_l)
-    fv = np.array(fov_l); lim = np.array(lim_l)
+    mg = np.array(m_l)
+    sn = np.array(s_l)
+    ex = np.array(e_l)
+    fv = np.array(fov_l)
+    lim = np.array(lim_l)
     median_lim50 = float(np.median(lim50s)) if lim50s else None
     # 16/84 spread of the per-frame 50%-limiting magnitude, for the ± band on
     # the limiting-mag line (mirrors snr_vs_mag_weathermasked).
-    lim50_band = ({"med": median_lim50,
-                   "lo": float(np.percentile(lim50s, 16)),
-                   "hi": float(np.percentile(lim50s, 84))}
-                  if lim50s else None)
+    lim50_band = (
+        {"med": median_lim50, "lo": float(np.percentile(lim50s, 16)), "hi": float(np.percentile(lim50s, 84))}
+        if lim50s
+        else None
+    )
 
     # Noise-floor SNR: median SNR of stars ≥2.5 mag past the limit (pure noise).
-    faint = (mg > median_lim50 + 2.5) if median_lim50 is not None \
-        else (mg > np.percentile(mg, 95))
+    faint = (mg > median_lim50 + 2.5) if median_lim50 is not None else (mg > np.percentile(mg, 95))
     s_noise = float(np.median(sn[faint])) if int(faint.sum()) >= 100 else 0.9
 
     # Reject spuriously-high SNR (bright-star wings, bad matches): >5× predicted.
@@ -1687,17 +1747,15 @@ def _data_search_rate(calib: NightCalibration):
         snr_pred = 3.0 * 10 ** (0.4 * (lim - mg))
     consistent = np.isnan(lim) | (sn <= 5.0 * snr_pred)
 
-    s_sig = np.sqrt(np.clip(sn ** 2 - s_noise ** 2, 0.0, None))
+    s_sig = np.sqrt(np.clip(sn**2 - s_noise**2, 0.0, None))
     detect = s_sig > 0
-    t_req = np.clip(ex * (target_snr / np.where(detect, s_sig, 1.0)) ** 2,
-                    min_exposure_s, None)
+    t_req = np.clip(ex * (target_snr / np.where(detect, s_sig, 1.0)) ** 2, min_exposure_s, None)
     rate_all = np.where(detect, fv / (t_req + overhead_s) * 3600.0, 0.0)
 
     mags = mg[consistent]
     rates = rate_all[consistent]
     bin_width = 0.5
-    bin_edges = np.arange(math.floor(mags.min() / bin_width) * bin_width,
-                          mags.max() + bin_width, bin_width)
+    bin_edges = np.arange(math.floor(mags.min() / bin_width) * bin_width, mags.max() + bin_width, bin_width)
     centers, medians, err_lo, err_hi = [], [], [], []
     for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
         in_bin = rates[(mags >= lo) & (mags < hi)]
@@ -1709,16 +1767,21 @@ def _data_search_rate(calib: NightCalibration):
         err_lo.append(med - float(np.percentile(in_bin, 16)))
         err_hi.append(float(np.percentile(in_bin, 84)) - med)
     return {
-        "mags": mags, "rates": rates,
+        "mags": mags,
+        "rates": rates,
         "binned": {"x": centers, "y": medians, "err_lo": err_lo, "err_hi": err_hi},
         "median_lim50": median_lim50,
         "lim50": lim50_band,
-        "n_stars": int(len(mags)), "target_snr": target_snr,
+        "n_stars": len(mags),
+        "target_snr": target_snr,
         "noise_floor_snr": s_noise,
         "overhead_s": overhead_s,
         "overhead_src": overhead_src,  # None when the full fit was used
-        "overhead_model": None if slew is None else {
-            "readout_s": slew["readout_s"], "settle_s": slew["settle_s"],
+        "overhead_model": None
+        if slew is None
+        else {
+            "readout_s": slew["readout_s"],
+            "settle_s": slew["settle_s"],
             "slew_rate_deg_s": slew["slew_rate_deg_s"],
             "fov_width_deg": slew["fov_width_deg"],
         },
@@ -1727,42 +1790,64 @@ def _data_search_rate(calib: NightCalibration):
 
 def _render_search_rate(d, meta, output_dir, plt, np) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.scatter(d["mags"], d["rates"], alpha=0.3, s=10, color="lightgray",
-               label="Individual stars")
+    ax.scatter(d["mags"], d["rates"], alpha=0.3, s=10, color="lightgray", label="Individual stars")
     b = d["binned"]
     if b["x"]:
-        ax.errorbar(b["x"], b["y"], yerr=[b["err_lo"], b["err_hi"]], fmt="o",
-                    color="black", markersize=7, capsize=4, capthick=1.5,
-                    elinewidth=1.5, alpha=0.85,
-                    label="Binned data (median ± 1σ percentiles)")
+        ax.errorbar(
+            b["x"],
+            b["y"],
+            yerr=[b["err_lo"], b["err_hi"]],
+            fmt="o",
+            color="black",
+            markersize=7,
+            capsize=4,
+            capthick=1.5,
+            elinewidth=1.5,
+            alpha=0.85,
+            label="Binned data (median ± 1σ percentiles)",
+        )
     lim = d.get("lim50")
     if lim is not None:
         ax.axvspan(lim["lo"], lim["hi"], color="firebrick", alpha=0.10)
         ax.axvline(lim["lo"], color="firebrick", ls=":", lw=1, alpha=0.6)
         ax.axvline(lim["hi"], color="firebrick", ls=":", lw=1, alpha=0.6)
-        ax.axvline(lim["med"], color="firebrick", ls="--", lw=1.8, alpha=0.8,
-                   label=f"Limiting Mag (G={lim['med']:.2f}, "
-                         f"16/84: {lim['lo']:.2f}–{lim['hi']:.2f})")
+        ax.axvline(
+            lim["med"],
+            color="firebrick",
+            ls="--",
+            lw=1.8,
+            alpha=0.8,
+            label=f"Limiting Mag (G={lim['med']:.2f}, 16/84: {lim['lo']:.2f}–{lim['hi']:.2f})",
+        )
     elif d["median_lim50"] is not None:
-        ax.axvline(d["median_lim50"], color="firebrick", linestyle="--",
-                   linewidth=1.5, alpha=0.8,
-                   label=f"Limiting Mag (G={d['median_lim50']:.2f})")
+        ax.axvline(
+            d["median_lim50"],
+            color="firebrick",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"Limiting Mag (G={d['median_lim50']:.2f})",
+        )
     ax.set_xlabel("Gaia G magnitude (catalog)")
     ax.set_ylabel(f"Search Rate (deg²/hour to TARGET {d['target_snr']:.0f}σ)")
     om = d.get("overhead_model")
     if om and om.get("fov_width_deg"):
-        oh_txt = (f"grid cadence overhead {d['overhead_s']:.1f}s = "
-                  f"readout {om['readout_s']:.1f}s + settle {om['settle_s']:.1f}s "
-                  f"+ {om['fov_width_deg']:.1f}° slew @ "
-                  f"{om['slew_rate_deg_s']:.1f}°/s")
+        oh_txt = (
+            f"grid cadence overhead {d['overhead_s']:.1f}s = "
+            f"readout {om['readout_s']:.1f}s + settle {om['settle_s']:.1f}s "
+            f"+ {om['fov_width_deg']:.1f}° slew @ "
+            f"{om['slew_rate_deg_s']:.1f}°/s"
+        )
     else:
         src = d.get("overhead_src") or "default"
-        oh_txt = (f"overhead {d['overhead_s']:.1f}s "
-                  f"({src}; slew fit unavailable)")
-    ax.set_title(f"{meta['night_id']}: search rate vs magnitude "
-                 f"({d['n_stars']} isolated stars, sidereal; SNR debiased by "
-                 f"{d.get('noise_floor_snr', 0):.2f}σ noise floor, scaled to "
-                 f"TARGET {d['target_snr']:.0f}σ)\n{oh_txt}", fontsize=10)
+        oh_txt = f"overhead {d['overhead_s']:.1f}s ({src}; slew fit unavailable)"
+    ax.set_title(
+        f"{meta['night_id']}: search rate vs magnitude "
+        f"({d['n_stars']} isolated stars, sidereal; SNR debiased by "
+        f"{d.get('noise_floor_snr', 0):.2f}σ noise floor, scaled to "
+        f"TARGET {d['target_snr']:.0f}σ)\n{oh_txt}",
+        fontsize=10,
+    )
     ax.grid(True, alpha=0.3)
     ax.legend(loc="lower left", fontsize=9)
     return _save(fig, output_dir / "search_rate.png")
@@ -1780,29 +1865,37 @@ def _render_slew_model(d, meta, output_dir, plt, np) -> Path:
     fovw, grid = d["fov_width_deg"], d["grid_overhead_s"]
 
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.scatter(dist, over, s=10, alpha=0.25, color="lightgray",
-               label=f"consecutive frame pairs (n={d['n_pairs']})")
+    ax.scatter(dist, over, s=10, alpha=0.25, color="lightgray", label=f"consecutive frame pairs (n={d['n_pairs']})")
     env = d["env"]
     if env["x"]:
-        ax.scatter(env["x"], env["y"], color="black", s=45, zorder=5,
-                   label=f"lower envelope (p{_SLEW_ENV_PCTILE} per bin)")
-    ax.axhline(readout, color="steelblue", ls=":", lw=1.6,
-               label=f"readout floor = {readout:.1f}s (no slew)")
+        ax.scatter(
+            env["x"], env["y"], color="black", s=45, zorder=5, label=f"lower envelope (p{_SLEW_ENV_PCTILE} per bin)"
+        )
+    ax.axhline(readout, color="steelblue", ls=":", lw=1.6, label=f"readout floor = {readout:.1f}s (no slew)")
     xs = np.linspace(_SLEW_MIN_DEG, float(dist.max()), 200)
-    ax.plot(xs, bias + xs / rate, color="firebrick", lw=2.2,
-            label=(f"slew fit: {bias:.1f}s + sep / {rate:.1f}°/s   "
-                   f"(settle {settle:.1f}s, n_slew={d['n_slew']})"))
+    ax.plot(
+        xs,
+        bias + xs / rate,
+        color="firebrick",
+        lw=2.2,
+        label=(f"slew fit: {bias:.1f}s + sep / {rate:.1f}°/s   (settle {settle:.1f}s, n_slew={d['n_slew']})"),
+    )
     if fovw:
         ax.axvline(fovw, color="seagreen", ls="--", lw=1.5, alpha=0.8)
-        ax.scatter([fovw], [grid], color="seagreen", s=160, marker="*", zorder=6,
-                   label=f"contiguous-grid step {fovw:.1f}° → cadence "
-                         f"overhead {grid:.1f}s")
+        ax.scatter(
+            [fovw],
+            [grid],
+            color="seagreen",
+            s=160,
+            marker="*",
+            zorder=6,
+            label=f"contiguous-grid step {fovw:.1f}° → cadence overhead {grid:.1f}s",
+        )
     ax.set_xscale("log")
     ax.set_xlabel("Slew separation between consecutive frames (deg, alt/az)")
     ax.set_ylabel("Inter-frame overhead  =  Δt − exposure  (s)")
     ax.set_ylim(0, float(np.percentile(over, 98)))
-    ax.set_title(f"{meta['night_id']}: inter-frame overhead model "
-                 f"(readout + settle + slew)")
+    ax.set_title(f"{meta['night_id']}: inter-frame overhead model (readout + settle + slew)")
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="upper left", fontsize=9)
     return _save(fig, output_dir / "slew_model.png")
@@ -1816,33 +1909,34 @@ def _render_slew_model(d, meta, output_dir, plt, np) -> Path:
 # stamps of its bright, isolated, unsaturated catalog stars from the raw FITS,
 # then read off the azimuthally-averaged radial profile + x/y cuts. This reuses
 # the approach proven in scripts/psf_vs_exposure.py, re-binned by seeing.
-_PSF_STAMP_HALF = 30      # stamp is (2*half+1)² px
-_PSF_SAT_PEAK = 40000.0   # raw ADU; reject saturated stars (well below 65535)
-_PSF_ISO_RADIUS = 60.0    # px; no neighbor brighter than mag+2 within this
-_PSF_MAX_STARS = 200      # stamps to stack per frame
+_PSF_STAMP_HALF = 30  # stamp is (2*half+1)² px
+_PSF_SAT_PEAK = 40000.0  # raw ADU; reject saturated stars (well below 65535)
+_PSF_ISO_RADIUS = 60.0  # px; no neighbor brighter than mag+2 within this
+_PSF_MAX_STARS = 200  # stamps to stack per frame
 _PSF_MIN_STARS_FRAME = 200  # need a well-populated field to pick from
-_PSF_MIN_STAMPS = 20      # min stacked stars for a usable profile
+_PSF_MIN_STAMPS = 20  # min stacked stars for a usable profile
 _PSF_MIN_PEAK_SNR = 20.0  # per-stamp peak/background-noise floor: below this the
-                          # max pixel is a noise spike, so peak-normalization
-                          # corrupts the stack (e.g. faint stars in a 1s frame)
-_PSF_FWHM_SANITY = 2.5    # reject a stack whose cut FWHM exceeds this × the
-                          # frame's detection FWHM (cosmic rays / settling-trailed
-                          # short frames stack to a meaningless broad blob)
+# max pixel is a noise spike, so peak-normalization
+# corrupts the stack (e.g. faint stars in a 1s frame)
+_PSF_FWHM_SANITY = 2.5  # reject a stack whose cut FWHM exceeds this × the
+# frame's detection FWHM (cosmic rays / settling-trailed
+# short frames stack to a meaningless broad blob)
 _PSF_N_BANDS = 3
 # Concentration-vs-time defocus diagnostic. C = central value / peak of the
 # stacked PSF: ~1 when focused (peak at center), low when defocused (donut, peak
 # in a ring → hollow center). Detection FWHM is fooled by donuts (a defocus ring
 # fits to a small FWHM), so it can't flag defocus; this shape metric can.
-_CONC_N_SAMPLE = 60       # frames sampled across the night
-_CONC_MAX_STARS = 40      # stars stacked per sampled frame (lighter than profile)
-_CONC_N_SHOWCASE = 5      # PSF thumbnails shown along the timeline
-_CONC_DEFOCUS = 0.7       # C below this ≈ defocused
+_CONC_N_SAMPLE = 60  # frames sampled across the night
+_CONC_MAX_STARS = 40  # stars stacked per sampled frame (lighter than profile)
+_CONC_N_SHOWCASE = 5  # PSF thumbnails shown along the timeline
+_CONC_DEFOCUS = 0.7  # C below this ≈ defocused
 
 
 def _batch_result_paths(source_dir: str) -> dict[str, Path]:
     """{batch_id: result JSON path}, re-anchored on source_dir when the
     manifest's absolute paths are stale (drive remounted elsewhere)."""
     import glob as _glob
+
     md = json.loads((Path(source_dir) / "manifest.json").read_text())
     out: dict[str, Path] = {}
     for e in md.get("batches", []):
@@ -1871,8 +1965,7 @@ def _sidereal_frame_dict(batch_path: Path, index: int) -> dict | None:
     return None
 
 
-def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int,
-                     max_stars: int = _PSF_MAX_STARS):
+def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int, max_stars: int = _PSF_MAX_STARS):
     """Median-stacked, peak-normalized PSF stamp from a frame's bright, isolated,
     unsaturated catalog stars. Returns (stamp2d, n_stars) or (None, 0)."""
     import numpy as np
@@ -1885,17 +1978,15 @@ def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int
     except Exception:
         return None, 0
     h, w = data.shape
-    keep = [s for s in catalog_stars
-            if s.get("x") is not None and s.get("y") is not None]
+    keep = [s for s in catalog_stars if s.get("x") is not None and s.get("y") is not None]
     if len(keep) < 20:
         return None, 0
     xy = np.array([(s["x"], s["y"]) for s in keep])
-    mags = np.array([s.get("magnitude") if s.get("magnitude") is not None
-                     else np.inf for s in keep])
+    mags = np.array([s.get("magnitude") if s.get("magnitude") is not None else np.inf for s in keep])
     tree = cKDTree(xy)
     n = 2 * half + 1
     stamps = []
-    for i in np.argsort(mags):              # brightest first
+    for i in np.argsort(mags):  # brightest first
         if len(stamps) >= max_stars:
             break
         x, y = xy[i]
@@ -1905,11 +1996,10 @@ def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int
         if any(j != i and mags[j] < mags[i] + 2.0 for j in neigh):
             continue
         xi, yi = int(round(x)), int(round(y))
-        st = data[yi - half:yi + half + 1, xi - half:xi + half + 1].copy()
+        st = data[yi - half : yi + half + 1, xi - half : xi + half + 1].copy()
         if st.shape != (n, n):
             continue
-        ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(),
-                               st[:, 0:4].ravel(), st[:, -4:].ravel()])
+        ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(), st[:, 0:4].ravel(), st[:, -4:].ravel()])
         noise = float(np.std(ring))
         st -= np.median(ring)
         # Cosmic rays / hot pixels are single-pixel spikes that can top the real
@@ -1921,12 +2011,12 @@ def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int
         if peak <= 0 or peak > _PSF_SAT_PEAK:
             continue
         if noise <= 0 or peak < _PSF_MIN_PEAK_SNR * noise:
-            continue                        # noise-dominated stamp
+            continue  # noise-dominated stamp
         cy, cx = ndimage.center_of_mass(np.clip(sm, 0, None))
         if not (np.isfinite(cx) and np.isfinite(cy)):
             continue
         if abs(cy - half) > fwhm or abs(cx - half) > fwhm:
-            continue                        # centroid far off — blend/artifact
+            continue  # centroid far off — blend/artifact
         st = ndimage.shift(st, (half - cy, half - cx), order=3, mode="nearest")
         st /= peak
         stamps.append(st)
@@ -1962,11 +2052,16 @@ def _cut_width(profile, np, level: float = 0.5) -> float:
     if len(above) < 2:
         return float("nan")
     lo, hi = int(above[0]), int(above[-1])
-    left = (lo - (profile[lo] - thr) / (profile[lo] - profile[lo - 1])
-            if lo > 0 and profile[lo] != profile[lo - 1] else float(lo))
-    right = (hi + (profile[hi] - thr) / (profile[hi] - profile[hi + 1])
-             if hi < len(profile) - 1 and profile[hi] != profile[hi + 1]
-             else float(hi))
+    left = (
+        lo - (profile[lo] - thr) / (profile[lo] - profile[lo - 1])
+        if lo > 0 and profile[lo] != profile[lo - 1]
+        else float(lo)
+    )
+    right = (
+        hi + (profile[hi] - thr) / (profile[hi] - profile[hi + 1])
+        if hi < len(profile) - 1 and profile[hi] != profile[hi + 1]
+        else float(hi)
+    )
     return float(right - left)
 
 
@@ -1993,8 +2088,7 @@ def _profile_shape(profile, np) -> dict:
     ok = np.isfinite(w50) and w50 > 0 and np.isfinite(w25)
     index = float((w25 / w50) / _GAUSS_W25_OVER_W50) if ok else float("nan")
     robust = float(w25 / _GAUSS_W25_OVER_W50) if (ok and index > 1.0) else w50
-    return {"fwhm": w50, "fwqm": w25, "fw3qm": w75,
-            "spike_index": index, "robust_fwhm": robust}
+    return {"fwhm": w50, "fwqm": w25, "fw3qm": w75, "spike_index": index, "robust_fwhm": robust}
 
 
 def _wcs_sky_axes(wcs_dict: dict):
@@ -2020,8 +2114,7 @@ def _wcs_sky_axes(wcs_dict: dict):
         ra0, dec0 = (float(c) for c in w.all_pix2world(x0, y0, 0))
         dd = 1.0 / 3600.0  # 1 arcsec step
         xn, yn = (float(c) for c in w.all_world2pix(ra0, dec0 + dd, 0))
-        xe, ye = (float(c) for c in w.all_world2pix(
-            ra0 + dd / math.cos(math.radians(dec0)), dec0, 0))
+        xe, ye = (float(c) for c in w.all_world2pix(ra0 + dd / math.cos(math.radians(dec0)), dec0, 0))
         north = np.array([xn - x0, yn - y0])
         east = np.array([xe - x0, ye - y0])
         nn, ne = np.linalg.norm(north), np.linalg.norm(east)
@@ -2048,11 +2141,18 @@ def _data_psf_profile(calib: NightCalibration):
 
     if not calib.source_dir:
         return None
-    cands = [f for f in calib.frames
-             if f.track_mode == "sidereal" and not f.ccd_warm and f.fwhm_px
-             and f.zero_point and f.batch_id
-             and f.frame_index is not None and f.frame_index >= 0
-             and (f.n_stars or 0) >= _PSF_MIN_STARS_FRAME]
+    cands = [
+        f
+        for f in calib.frames
+        if f.track_mode == "sidereal"
+        and not f.ccd_warm
+        and f.fwhm_px
+        and f.zero_point
+        and f.batch_id
+        and f.frame_index is not None
+        and f.frame_index >= 0
+        and (f.n_stars or 0) >= _PSF_MIN_STARS_FRAME
+    ]
     if len(cands) < 2 * _PSF_N_BANDS:
         return None
     try:
@@ -2068,13 +2168,12 @@ def _data_psf_profile(calib: NightCalibration):
     bands = []
     for i in range(_PSF_N_BANDS):
         lo, hi = float(edges[i]), float(edges[i + 1])
-        in_band = [f for f in cands if lo <= f.fwhm_px <=
-                   (hi if i == _PSF_N_BANDS - 1 else hi - 1e-9)]
+        in_band = [f for f in cands if lo <= f.fwhm_px <= (hi if i == _PSF_N_BANDS - 1 else hi - 1e-9)]
         if not in_band:
             continue
-        in_band.sort(key=lambda f: -f.zero_point)   # clearest first
+        in_band.sort(key=lambda f: -f.zero_point)  # clearest first
         picked = None
-        for f in in_band[:12]:                       # try a few before giving up
+        for f in in_band[:12]:  # try a few before giving up
             bp = batch_paths.get(f.batch_id)
             if not bp or not bp.is_file():
                 continue
@@ -2088,7 +2187,7 @@ def _data_psf_profile(calib: NightCalibration):
             stamp, n = _psf_stack_stamp(fp, stars, f.fwhm_px, half)
             if stamp is None or stamp.max() <= 0:
                 continue
-            stamp = stamp / stamp.max()      # peak = 1 for radial & cuts alike
+            stamp = stamp / stamp.max()  # peak = 1 for radial & cuts alike
             # Cut along sky axes (RA = East, Dec = North) when the WCS is
             # available, so an elongation reads as a tracking error in RA vs Dec;
             # else fall back to detector x/y.
@@ -2108,30 +2207,38 @@ def _data_psf_profile(calib: NightCalibration):
             fwhm_ra, fwhm_dec = shape_ra["fwhm"], shape_dec["fwhm"]
             # Reject implausible stacks (cosmic rays / settling-trailed short
             # frames) so the band falls through to a clean frame.
-            if not (np.isfinite(fwhm_ra) and np.isfinite(fwhm_dec)
-                    and 0 < max(fwhm_ra, fwhm_dec) <= _PSF_FWHM_SANITY * f.fwhm_px):
+            if not (
+                np.isfinite(fwhm_ra)
+                and np.isfinite(fwhm_dec)
+                and 0 < max(fwhm_ra, fwhm_dec) <= _PSF_FWHM_SANITY * f.fwhm_px
+            ):
                 continue
             r, radial = _radial_profile(stamp, half, np)
             picked = {
-                "fwhm_lo": lo, "fwhm_hi": hi, "fwhm_det": float(f.fwhm_px),
-                "fwhm_ra": float(fwhm_ra), "fwhm_dec": float(fwhm_dec),
-                "fwqm_ra": shape_ra["fwqm"], "fwqm_dec": shape_dec["fwqm"],
+                "fwhm_lo": lo,
+                "fwhm_hi": hi,
+                "fwhm_det": float(f.fwhm_px),
+                "fwhm_ra": float(fwhm_ra),
+                "fwhm_dec": float(fwhm_dec),
+                "fwqm_ra": shape_ra["fwqm"],
+                "fwqm_dec": shape_dec["fwqm"],
                 "spike_ra": shape_ra["spike_index"],
                 "spike_dec": shape_dec["spike_index"],
                 "robust_ra": shape_ra["robust_fwhm"],
                 "robust_dec": shape_dec["robust_fwhm"],
                 "axes_kind": axes_kind,
-                "n_stars": int(n), "zp": float(f.zero_point),
+                "n_stars": int(n),
+                "zp": float(f.zero_point),
                 "exposure": f.exposure_time,
                 "timestamp": f.timestamp.isoformat() if f.timestamp else None,
                 "axis": (np.arange(stamp.shape[0]) - half).tolist(),
-                "cut_ra": cut_ra.tolist(), "cut_dec": cut_dec.tolist(),
-                "r": r.tolist(), "radial": radial.tolist(),
+                "cut_ra": cut_ra.tolist(),
+                "cut_dec": cut_dec.tolist(),
+                "r": r.tolist(),
+                "radial": radial.tolist(),
                 "stamp2d": np.round(stamp, 4).tolist(),
-                "east_unit": (None if east_u is None
-                              else [float(east_u[0]), float(east_u[1])]),
-                "north_unit": (None if north_u is None
-                               else [float(north_u[0]), float(north_u[1])]),
+                "east_unit": (None if east_u is None else [float(east_u[0]), float(east_u[1])]),
+                "north_unit": (None if north_u is None else [float(north_u[0]), float(north_u[1])]),
             }
             break
         if picked is None:
@@ -2151,8 +2258,7 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     colors = plt.cm.viridis(np.linspace(0.12, 0.85, nb))
     sky = all(b.get("axes_kind") == "sky" for b in bands)
     a_name, b_name = ("RA", "Dec") if sky else ("x", "y")
-    win = min(half, max(12.0, max(
-        3.0 * max(b["fwhm_ra"], b["fwhm_dec"]) for b in bands)))
+    win = min(half, max(12.0, max(3.0 * max(b["fwhm_ra"], b["fwhm_dec"]) for b in bands)))
 
     # Layout: top row = one 2D heatmap per band; bottom row = radial (left half)
     # + 1D cuts (right half). 2*nb columns so the bottom splits evenly.
@@ -2160,29 +2266,29 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     gs = fig.add_gridspec(2, 2 * nb, height_ratios=[1.05, 1.0])
 
     for i, (b, c) in enumerate(zip(bands, colors)):
-        ax = fig.add_subplot(gs[0, 2 * i:2 * i + 2])
+        ax = fig.add_subplot(gs[0, 2 * i : 2 * i + 2])
         stamp = np.asarray(b["stamp2d"])
         ext = [-half, half, -half, half]
-        ax.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower",
-                  extent=ext, cmap="inferno")
+        ax.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower", extent=ext, cmap="inferno")
         grid = np.linspace(-half, half, stamp.shape[0])
         ax.contour(grid, grid, stamp, levels=[0.5], colors="cyan", linewidths=1.0)
         # N/E arrows so the heatmap is readable in sky orientation.
         if b.get("north_unit") and b.get("east_unit"):
             L = 0.7 * win
-            for u, name, col in ((b["north_unit"], "N", "white"),
-                                 (b["east_unit"], "E", "deepskyblue")):
-                ax.annotate("", xy=(L * u[0], L * u[1]), xytext=(0, 0),
-                            arrowprops=dict(arrowstyle="->", color=col, lw=1.4))
-                ax.text(L * 1.12 * u[0], L * 1.12 * u[1], name, color=col,
-                        fontsize=9, ha="center", va="center")
+            for u, name, col in ((b["north_unit"], "N", "white"), (b["east_unit"], "E", "deepskyblue")):
+                ax.annotate(
+                    "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=col, lw=1.4)
+                )
+                ax.text(L * 1.12 * u[0], L * 1.12 * u[1], name, color=col, fontsize=9, ha="center", va="center")
         ax.set_xlim(-win, win)
         ax.set_ylim(-win, win)
-        sec = f", {b['fwhm_det']*psc:.1f}\"" if psc else ""
-        ax.set_title(f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px{sec}\n"
-                     f"{b['exposure']:.0f}s, {a_name}/{b_name}="
-                     f"{b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px, n={b['n_stars']}",
-                     fontsize=9)
+        sec = f', {b["fwhm_det"] * psc:.1f}"' if psc else ""
+        ax.set_title(
+            f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px{sec}\n"
+            f"{b['exposure']:.0f}s, {a_name}/{b_name}="
+            f"{b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px, n={b['n_stars']}",
+            fontsize=9,
+        )
         ax.set_xlabel("Δx (px)")
         if i == 0:
             ax.set_ylabel("Δy (px)")
@@ -2192,10 +2298,15 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
     for b, c in zip(bands, colors):
         spike = max(b.get("spike_ra") or 0, b.get("spike_dec") or 0)
         # Flag when half-max FWHM is unreliable (narrow core on a broad halo).
-        flag = f"  ⚠spike {spike:.1f}× → FW¼M {b.get('fwqm_ra', 0):.0f}/" \
-               f"{b.get('fwqm_dec', 0):.0f}px" if spike >= 1.3 else ""
-        lbl = (f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px  "
-               f"{a_name}/{b_name}={b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px{flag}")
+        flag = (
+            f"  ⚠spike {spike:.1f}× → FW¼M {b.get('fwqm_ra', 0):.0f}/{b.get('fwqm_dec', 0):.0f}px"
+            if spike >= 1.3
+            else ""
+        )
+        lbl = (
+            f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px  "
+            f"{a_name}/{b_name}={b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px{flag}"
+        )
         axr.plot(b["r"], np.clip(b["radial"], 1e-4, None), color=c, lw=2, label=lbl)
         axc.plot(b["axis"], b["cut_ra"], color=c, lw=2.0, ls="-")
         axc.plot(b["axis"], b["cut_dec"], color=c, lw=1.5, ls="--")
@@ -2216,18 +2327,22 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
         axc.text(win * 0.98, lv + 0.01, txt, fontsize=7, color="gray", ha="right")
     axc.set_xlim(-win, win)
     axc.set_ylim(-0.05, 1.05)
-    axc.set_xlabel("Δ from center along sky axis (px)" if sky
-                   else "Δ from center (px)")
+    axc.set_xlabel("Δ from center along sky axis (px)" if sky else "Δ from center (px)")
     axc.set_ylabel("normalized flux")
-    axc.set_title(f"{a_name} cut (E–W, solid) & {b_name} cut (N–S, dashed)"
-                  if sky else f"{a_name} cut (solid) & {b_name} cut (dashed)")
+    axc.set_title(
+        f"{a_name} cut (E–W, solid) & {b_name} cut (N–S, dashed)"
+        if sky
+        else f"{a_name} cut (solid) & {b_name} cut (dashed)"
+    )
     axc.grid(True, alpha=0.3)
 
-    scale_txt = f"   plate scale {psc:.2f}\"/px" if psc else ""
-    axis_txt = ("RA/Dec → tracking-error direction" if sky else "detector x/y")
-    fig.suptitle(f"{meta['night_id']}: empirical PSF by seeing band — 2D stack, "
-                 f"radial & {axis_txt} cuts (median of isolated stars){scale_txt}",
-                 fontsize=12)
+    scale_txt = f'   plate scale {psc:.2f}"/px' if psc else ""
+    axis_txt = "RA/Dec → tracking-error direction" if sky else "detector x/y"
+    fig.suptitle(
+        f"{meta['night_id']}: empirical PSF by seeing band — 2D stack, "
+        f"radial & {axis_txt} cuts (median of isolated stars){scale_txt}",
+        fontsize=12,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     return _save(fig, output_dir / "psf_profile.png")
 
@@ -2235,8 +2350,11 @@ def _render_psf_profile(d, meta, output_dir, plt, np) -> Path:
 def _data_ccd_temperature(calib: NightCalibration):
     import statistics as st
 
-    pts = [(f.timestamp, f.ccd_temp_c, bool(f.ccd_warm)) for f in calib.frames
-           if f.timestamp is not None and f.ccd_temp_c is not None]
+    pts = [
+        (f.timestamp, f.ccd_temp_c, bool(f.ccd_warm))
+        for f in calib.frames
+        if f.timestamp is not None and f.ccd_temp_c is not None
+    ]
     if len(pts) < 5:
         return None
     pts.sort(key=lambda p: p[0])
@@ -2260,20 +2378,18 @@ def _render_ccd_temperature(d, meta, output_dir, plt, np) -> Path:
     t = np.array(d["temp"])
     warm = np.array(d["warm"], dtype=bool)
     fig, ax = plt.subplots(figsize=(11, 5))
-    ax.scatter(m[~warm], t[~warm], s=10, color="steelblue", alpha=0.6,
-               label=f"used ({int((~warm).sum())})")
+    ax.scatter(m[~warm], t[~warm], s=10, color="steelblue", alpha=0.6, label=f"used ({int((~warm).sum())})")
     if warm.any():
-        ax.scatter(m[warm], t[warm], s=16, color="firebrick", alpha=0.85,
-                   label=f"excluded warm ({int(warm.sum())})")
-    ax.axhline(d["median_c"], color="gray", ls="--", lw=1.2,
-               label=f"setpoint (median) {d['median_c']:.1f}°C")
-    ax.axhline(d["threshold_c"], color="firebrick", ls=":", lw=1.2,
-               label=f"warm cut > {d['threshold_c']:.1f}°C")
+        ax.scatter(m[warm], t[warm], s=16, color="firebrick", alpha=0.85, label=f"excluded warm ({int(warm.sum())})")
+    ax.axhline(d["median_c"], color="gray", ls="--", lw=1.2, label=f"setpoint (median) {d['median_c']:.1f}°C")
+    ax.axhline(d["threshold_c"], color="firebrick", ls=":", lw=1.2, label=f"warm cut > {d['threshold_c']:.1f}°C")
     ax.set_xlabel("minutes into night")
     ax.set_ylabel("CCD temperature (°C)")
-    ax.set_title(f"{meta['night_id']}: CCD temperature vs time "
-                 f"({d['n_warm']} of {d['n_total']} frames excluded as warm; "
-                 f"max {d['max_c']:.1f}°C)")
+    ax.set_title(
+        f"{meta['night_id']}: CCD temperature vs time "
+        f"({d['n_warm']} of {d['n_total']} frames excluded as warm; "
+        f"max {d['max_c']:.1f}°C)"
+    )
     ax.grid(alpha=0.3)
     ax.legend(fontsize=9, loc="upper right")
     return _save(fig, output_dir / "ccd_temperature.png")
@@ -2284,11 +2400,19 @@ def _data_psf_concentration(calib: NightCalibration):
 
     if not calib.source_dir:
         return None
-    cands = [f for f in calib.frames
-             if f.track_mode == "sidereal" and not f.ccd_warm and f.fwhm_px
-             and f.zero_point and f.batch_id and f.timestamp is not None
-             and f.frame_index is not None and f.frame_index >= 0
-             and (f.n_stars or 0) >= 100]
+    cands = [
+        f
+        for f in calib.frames
+        if f.track_mode == "sidereal"
+        and not f.ccd_warm
+        and f.fwhm_px
+        and f.zero_point
+        and f.batch_id
+        and f.timestamp is not None
+        and f.frame_index is not None
+        and f.frame_index >= 0
+        and (f.n_stars or 0) >= 100
+    ]
     if len(cands) < 2 * _CONC_N_SHOWCASE:
         return None
     try:
@@ -2300,8 +2424,7 @@ def _data_psf_concentration(calib: NightCalibration):
 
     cands.sort(key=lambda f: f.timestamp)
     t0 = cands[0].timestamp
-    sel = sorted(set(np.linspace(0, len(cands) - 1,
-                 min(len(cands), _CONC_N_SAMPLE)).round().astype(int).tolist()))
+    sel = sorted(set(np.linspace(0, len(cands) - 1, min(len(cands), _CONC_N_SAMPLE)).round().astype(int).tolist()))
     half = _PSF_STAMP_HALF
     series = []
     for i in sel:
@@ -2316,17 +2439,19 @@ def _data_psf_concentration(calib: NightCalibration):
         stars = (fd.get("starfield") or {}).get("catalog_stars") or []
         if not fp or not Path(fp).is_file() or len(stars) < 100:
             continue
-        stamp, n = _psf_stack_stamp(fp, stars, f.fwhm_px, half,
-                                    max_stars=_CONC_MAX_STARS)
+        stamp, n = _psf_stack_stamp(fp, stars, f.fwhm_px, half, max_stars=_CONC_MAX_STARS)
         if stamp is None or stamp.max() <= 0:
             continue
         stamp = stamp / stamp.max()
         # C = central value / peak: ~1 focused (peak at center), low for a donut.
-        series.append({
-            "minutes": (f.timestamp - t0).total_seconds() / 60.0,
-            "C": float(stamp[half, half]), "fwhm_det": float(f.fwhm_px),
-            "stamp": stamp,
-        })
+        series.append(
+            {
+                "minutes": (f.timestamp - t0).total_seconds() / 60.0,
+                "C": float(stamp[half, half]),
+                "fwhm_det": float(f.fwhm_px),
+                "stamp": stamp,
+            }
+        )
     if len(series) < _CONC_N_SHOWCASE:
         return None
 
@@ -2335,18 +2460,24 @@ def _data_psf_concentration(calib: NightCalibration):
     idx = set(np.linspace(0, n - 1, _CONC_N_SHOWCASE).round().astype(int).tolist())
     idx.add(min(range(n), key=lambda k: series[k]["C"]))
     idx.add(max(range(n), key=lambda k: series[k]["C"]))
-    showcase = [{
-        "minutes": series[k]["minutes"], "C": series[k]["C"],
-        "fwhm_det": series[k]["fwhm_det"],
-        "stamp2d": np.round(series[k]["stamp"], 4).tolist(),
-    } for k in sorted(idx)]
+    showcase = [
+        {
+            "minutes": series[k]["minutes"],
+            "C": series[k]["C"],
+            "fwhm_det": series[k]["fwhm_det"],
+            "stamp2d": np.round(series[k]["stamp"], 4).tolist(),
+        }
+        for k in sorted(idx)
+    ]
     return {
-        "half": half, "defocus_c": _CONC_DEFOCUS,
+        "half": half,
+        "defocus_c": _CONC_DEFOCUS,
         "minutes": [s["minutes"] for s in series],
         "C": [s["C"] for s in series],
         "fwhm_det": [s["fwhm_det"] for s in series],
         "n_defocused": int(sum(1 for s in series if s["C"] < _CONC_DEFOCUS)),
-        "n_sampled": n, "showcase": showcase,
+        "n_sampled": n,
+        "showcase": showcase,
     }
 
 
@@ -2362,17 +2493,23 @@ def _render_psf_concentration(d, meta, output_dir, plt, np) -> Path:
         ax = fig.add_subplot(gs[0, i])
         stamp = np.asarray(s["stamp2d"])
         grid = np.linspace(-half, half, stamp.shape[0])
-        ax.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower",
-                  extent=[-half, half, -half, half], cmap="inferno")
+        ax.imshow(
+            np.arcsinh(np.clip(stamp, 0, None) / 0.02),
+            origin="lower",
+            extent=[-half, half, -half, half],
+            cmap="inferno",
+        )
         ax.contour(grid, grid, stamp, levels=[0.5], colors="cyan", linewidths=0.8)
         ax.set_xlim(-win, win)
         ax.set_ylim(-win, win)
         ax.set_xticks([])
         ax.set_yticks([])
         focused = s["C"] >= thr
-        ax.set_title(f"#{i+1}  t+{s['minutes']:.0f}m   C={s['C']:.2f}"
-                     f"{'' if focused else '  defocus'}", fontsize=9,
-                     color="black" if focused else "firebrick")
+        ax.set_title(
+            f"#{i + 1}  t+{s['minutes']:.0f}m   C={s['C']:.2f}{'' if focused else '  defocus'}",
+            fontsize=9,
+            color="black" if focused else "firebrick",
+        )
         for sp in ax.spines.values():
             sp.set_color("seagreen" if focused else "firebrick")
             sp.set_linewidth(2.2)
@@ -2381,39 +2518,47 @@ def _render_psf_concentration(d, meta, output_dir, plt, np) -> Path:
     m = np.array(d["minutes"])
     C = np.array(d["C"])
     axb.plot(m, C, "-", color="gray", lw=1, alpha=0.5, zorder=1)
-    axb.scatter(m, C, c=C, cmap="RdYlGn", vmin=0.3, vmax=1.0, s=32,
-                edgecolor="black", linewidth=0.3, zorder=2)
-    axb.axhline(thr, color="firebrick", ls=":", lw=1.3,
-                label=f"defocus threshold C = {thr}")
+    axb.scatter(m, C, c=C, cmap="RdYlGn", vmin=0.3, vmax=1.0, s=32, edgecolor="black", linewidth=0.3, zorder=2)
+    axb.axhline(thr, color="firebrick", ls=":", lw=1.3, label=f"defocus threshold C = {thr}")
     for i, s in enumerate(show):
-        axb.annotate(f"#{i+1}", (s["minutes"], s["C"]), textcoords="offset points",
-                     xytext=(0, 9), fontsize=9, ha="center", fontweight="bold")
+        axb.annotate(
+            f"#{i + 1}",
+            (s["minutes"], s["C"]),
+            textcoords="offset points",
+            xytext=(0, 9),
+            fontsize=9,
+            ha="center",
+            fontweight="bold",
+        )
     axb.set_ylim(0.2, 1.05)
     axb.set_xlabel("minutes into night")
     axb.set_ylabel("central concentration  C = center / peak")
-    axb.set_title(f"PSF concentration vs time ({d['n_defocused']} of "
-                  f"{d['n_sampled']} sampled frames below C = {thr})")
+    axb.set_title(f"PSF concentration vs time ({d['n_defocused']} of {d['n_sampled']} sampled frames below C = {thr})")
     axb.grid(alpha=0.3)
     axb.legend(loc="lower right", fontsize=9)
-    fig.suptitle(f"{meta['night_id']}: PSF focus diagnostic — concentration over "
-                 f"the night (green border = focused, red = defocused; "
-                 f"cyan = 50% contour)", fontsize=12)
+    fig.suptitle(
+        f"{meta['night_id']}: PSF focus diagnostic — concentration over "
+        f"the night (green border = focused, red = defocused; "
+        f"cyan = 50% contour)",
+        fontsize=12,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     return _save(fig, output_dir / "psf_concentration.png")
 
 
-_PLOT_BUILDERS.update({
-    "extinction_curve": (_data_extinction_curve, _render_extinction_curve),
-    "limiting_magnitude_hist": (
-        _data_limiting_magnitude_hist, _render_limiting_magnitude_hist),
-    "alt_az_coverage": (_data_alt_az_coverage, _render_alt_az_coverage),
-    "zp_drift": (_data_zp_drift, _render_zp_drift),
-    "search_rate": (_data_search_rate, _render_search_rate),
-    "slew_model": (_data_slew_model, _render_slew_model),
-    "psf_profile": (_data_psf_profile, _render_psf_profile),
-    "ccd_temperature": (_data_ccd_temperature, _render_ccd_temperature),
-    "psf_concentration": (_data_psf_concentration, _render_psf_concentration),
-})
+_PLOT_BUILDERS.update(
+    {
+        "extinction_curve": (_data_extinction_curve, _render_extinction_curve),
+        "limiting_magnitude_hist": (_data_limiting_magnitude_hist, _render_limiting_magnitude_hist),
+        "alt_az_coverage": (_data_alt_az_coverage, _render_alt_az_coverage),
+        "zp_drift": (_data_zp_drift, _render_zp_drift),
+        "search_rate": (_data_search_rate, _render_search_rate),
+        "slew_model": (_data_slew_model, _render_slew_model),
+        "psf_profile": (_data_psf_profile, _render_psf_profile),
+        "ccd_temperature": (_data_ccd_temperature, _render_ccd_temperature),
+        "psf_concentration": (_data_psf_concentration, _render_psf_concentration),
+    }
+)
 
 
 def _data_snr_vs_exposure(calib: NightCalibration):
@@ -2427,26 +2572,28 @@ def _data_snr_vs_exposure(calib: NightCalibration):
     k_default = float(np.median(list(ext_k.values()))) if ext_k else 0.0
     by_task: dict[str, list] = {}
     for f in _zp_frames(calib.frames):
-        if (f.zero_point is None or not f.exposure_time or not f.stars_mag
-                or abs(f.zero_point - zp_mode) > zp_sig or not _moon_ok(f)):
+        if (
+            f.zero_point is None
+            or not f.exposure_time
+            or not f.stars_mag
+            or abs(f.zero_point - zp_mode) > zp_sig
+            or not _moon_ok(f)
+        ):
             continue
         k = ext_k.get(f.filter_name or "unknown", k_default)
-        corr = (10 ** (0.4 * k * (f.airmass - 1.0))
-                if f.airmass is not None else 1.0)
+        corr = 10 ** (0.4 * k * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         by_task.setdefault(_frame_task(f), []).extend(
             (f.exposure_time, m, s * corr)
             for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
-    order = [t for t in ("coverage", "photometric", "calsats", "other")
-             if by_task.get(t)]
+    order = [t for t in ("coverage", "photometric", "calsats", "other") if by_task.get(t)]
     if not order:
         return None
     all_pts = [p for t in order for p in by_task[t]]
     a_exp = np.array([p[0] for p in all_pts])
     a_mag = np.array([p[1] for p in all_pts])
-    std_exps = list(range(max(1, math.floor(a_exp.min())),
-                          math.ceil(a_exp.max()) + 1))
+    std_exps = list(range(max(1, math.floor(a_exp.min())), math.ceil(a_exp.max()) + 1))
     bins = list(range(math.floor(a_mag.min()), math.ceil(a_mag.max())))
 
     def _series(pts):
@@ -2469,14 +2616,14 @@ def _data_snr_vs_exposure(calib: NightCalibration):
                 e_lo.append(sem)
                 e_hi.append(sem)
             if len(xs) >= 2:
-                out.append({"bin": lo, "x": xs, "y": meds,
-                            "e_lo": e_lo, "e_hi": e_hi})
+                out.append({"bin": lo, "x": xs, "y": meds, "e_lo": e_lo, "e_hi": e_hi})
         return out
 
-    pooled_pts = [p for t in ("coverage", "photometric")
-                  for p in by_task.get(t, [])]
+    pooled_pts = [p for t in ("coverage", "photometric") for p in by_task.get(t, [])]
     return {
-        "std_exps": std_exps, "bins": bins, "order": order,
+        "std_exps": std_exps,
+        "bins": bins,
+        "order": order,
         "faceted": {tk: _series(by_task[tk]) for tk in order},
         "pooled": _series(pooled_pts) if pooled_pts else [],
     }
@@ -2490,15 +2637,22 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
     color_of = {lo: colors[i] for i, lo in enumerate(bins)}
     paths = []
 
-    fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5),
-                             sharey=True, squeeze=False)
+    fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5), sharey=True, squeeze=False)
     axes = axes[0]
     for ax, tk in zip(axes, order):
         for ser in d["faceted"].get(tk, []):
-            ax.errorbar(ser["x"], ser["y"], yerr=[ser["e_lo"], ser["e_hi"]],
-                        fmt="o-", color=color_of[ser["bin"]], alpha=0.8,
-                        linewidth=1.5, markersize=5, capsize=3,
-                        label=f"{ser['bin'] + 0.5:.1f}")
+            ax.errorbar(
+                ser["x"],
+                ser["y"],
+                yerr=[ser["e_lo"], ser["e_hi"]],
+                fmt="o-",
+                color=color_of[ser["bin"]],
+                alpha=0.8,
+                linewidth=1.5,
+                markersize=5,
+                capsize=3,
+                label=f"{ser['bin'] + 0.5:.1f}",
+            )
         ax.set_yscale("log")
         ax.set_xticks(std_exps)
         ax.set_xlabel("Exposure Time [s]")
@@ -2510,17 +2664,26 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
             ax.legend(loc="lower right", fontsize=7, title=r"m$_G$", ncol=2)
     fig.suptitle(
         f"{meta['night_id']}: SNR vs exposure by task "
-        f"(weather-masked, airmass-normalized, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
+        f"(weather-masked, airmass-normalized, Moon>{_MOON_SEP_MIN_DEG:.0f}°)"
+    )
     fig.tight_layout()
     paths.append(_save(fig, output_dir / "snr_vs_exposure_by_task.png"))
 
     if d["pooled"]:
         figg, axg = plt.subplots(figsize=(10, 7))
         for ser in d["pooled"]:
-            axg.errorbar(ser["x"], ser["y"], yerr=[ser["e_lo"], ser["e_hi"]],
-                         fmt="o-", color=color_of[ser["bin"]], alpha=0.8,
-                         linewidth=1.5, markersize=5, capsize=3,
-                         label=f"{ser['bin'] + 0.5:.1f}")
+            axg.errorbar(
+                ser["x"],
+                ser["y"],
+                yerr=[ser["e_lo"], ser["e_hi"]],
+                fmt="o-",
+                color=color_of[ser["bin"]],
+                alpha=0.8,
+                linewidth=1.5,
+                markersize=5,
+                capsize=3,
+                label=f"{ser['bin'] + 0.5:.1f}",
+            )
         axg.set_yscale("log")
         axg.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:g}"))
         axg.yaxis.set_minor_formatter(NullFormatter())
@@ -2530,10 +2693,10 @@ def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
         axg.set_ylabel("SNR (normalized to airmass = 1)")
         axg.set_title(
             f"{meta['night_id']}: SNR vs exposure  (coverage+photometric, "
-            f"weather-masked, airmass-norm, Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
+            f"weather-masked, airmass-norm, Moon>{_MOON_SEP_MIN_DEG:.0f}°)"
+        )
         axg.grid(True, alpha=0.3, which="both")
-        axg.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8,
-                   title=r"m$_G$", ncol=1)
+        axg.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8, title=r"m$_G$", ncol=1)
         paths.append(_save(figg, output_dir / "snr_vs_exposure_by_magnitude.png"))
     return paths
 
@@ -2554,13 +2717,17 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
     cal_tasks = ("coverage", "photometric")
     mag_pts = []
     for f in _zp_frames(calib.frames):
-        if (f.zero_point is None or not f.exposure_time or not f.stars_mag
-                or abs(f.zero_point - zp_mode) > zp_sig
-                or _frame_task(f) not in cal_tasks or not _moon_ok(f)):
+        if (
+            f.zero_point is None
+            or not f.exposure_time
+            or not f.stars_mag
+            or abs(f.zero_point - zp_mode) > zp_sig
+            or _frame_task(f) not in cal_tasks
+            or not _moon_ok(f)
+        ):
             continue
         kk = ext_k.get(f.filter_name or "unknown", k_default)
-        corr = (10 ** (0.4 * kk * (f.airmass - 1.0))
-                if f.airmass is not None else 1.0)
+        corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         mag_pts.extend(
             (f.exposure_time, m, s * corr)
             for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
@@ -2571,8 +2738,7 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
     exps = np.array([p[0] for p in mag_pts])
     mags = np.array([p[1] for p in mag_pts])
     snrs = np.array([p[2] for p in mag_pts])
-    std_exps = list(range(max(1, math.floor(exps.min())),
-                          math.ceil(exps.max()) + 1))
+    std_exps = list(range(max(1, math.floor(exps.min())), math.ceil(exps.max()) + 1))
     mgrid = np.arange(math.floor(mags.min()), math.ceil(mags.max()), 0.5)
     lines = []
     for t in std_exps:
@@ -2587,17 +2753,30 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration):
                 ys.append(float(np.median(cell)))
         if len(xs) >= 3:
             lines.append({"exp": int(t), "x": xs, "y": ys})
-    lims = [f.limiting_magnitude_50 for f in _zp_frames(calib.frames)
-            if f.limiting_magnitude_50 is not None and f.zero_point is not None
-            and abs(f.zero_point - zp_mode) <= zp_sig
-            and _frame_task(f) in cal_tasks and _moon_ok(f)]
+    lims = [
+        f.limiting_magnitude_50
+        for f in _zp_frames(calib.frames)
+        if f.limiting_magnitude_50 is not None
+        and f.zero_point is not None
+        and abs(f.zero_point - zp_mode) <= zp_sig
+        and _frame_task(f) in cal_tasks
+        and _moon_ok(f)
+    ]
     lim50 = None
     if lims:
-        lim50 = {"med": float(np.median(lims)),
-                 "lo": float(np.percentile(lims, 16)),
-                 "hi": float(np.percentile(lims, 84))}
-    return {"std_exps": std_exps, "lines": lines, "lim50": lim50,
-            "min_meas_snr": ref_snr, "zp_mode": zp_mode, "zp_sig": zp_sig}
+        lim50 = {
+            "med": float(np.median(lims)),
+            "lo": float(np.percentile(lims, 16)),
+            "hi": float(np.percentile(lims, 84)),
+        }
+    return {
+        "std_exps": std_exps,
+        "lines": lines,
+        "lim50": lim50,
+        "min_meas_snr": ref_snr,
+        "zp_mode": zp_mode,
+        "zp_sig": zp_sig,
+    }
 
 
 def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
@@ -2606,62 +2785,69 @@ def _render_snr_vs_mag_weathermasked(d, meta, output_dir, plt, np) -> Path:
     cmap = plt.cm.viridis(np.linspace(0, 0.9, max(len(std_exps), 1)))
     color_of = {t: cmap[i] for i, t in enumerate(std_exps)}
     for ln in d["lines"]:
-        ax.plot(ln["x"], ln["y"], "o-", color=color_of[ln["exp"]], ms=4,
-                lw=1.5, alpha=0.85, label=f"{int(ln['exp'])}s")
+        ax.plot(ln["x"], ln["y"], "o-", color=color_of[ln["exp"]], ms=4, lw=1.5, alpha=0.85, label=f"{int(ln['exp'])}s")
     lim = d["lim50"]
     if lim is not None:
         ax.axvspan(lim["lo"], lim["hi"], color="red", alpha=0.10)
         ax.axvline(lim["lo"], color="red", ls=":", lw=1, alpha=0.6)
         ax.axvline(lim["hi"], color="red", ls=":", lw=1, alpha=0.6)
-        ax.axvline(lim["med"], color="red", ls="--", lw=1.8,
-                   label=f"Limiting Mag (G={lim['med']:.2f}, "
-                         f"16/84: {lim['lo']:.2f}–{lim['hi']:.2f})")
-    ax.axhline(d["min_meas_snr"], color="gray", ls=":", lw=1,
-               label=f"SNR = {d['min_meas_snr']:.0f}")
+        ax.axvline(
+            lim["med"],
+            color="red",
+            ls="--",
+            lw=1.8,
+            label=f"Limiting Mag (G={lim['med']:.2f}, 16/84: {lim['lo']:.2f}–{lim['hi']:.2f})",
+        )
+    ax.axhline(d["min_meas_snr"], color="gray", ls=":", lw=1, label=f"SNR = {d['min_meas_snr']:.0f}")
     ax.set_yscale("log")
     ax.set_xlabel("Gaia G magnitude")
     ax.set_ylabel("SNR (normalized to airmass = 1)")
     ax.set_title(
         f"{meta['night_id']}: SNR vs magnitude  (coverage+photometric, "
         f"weather-masked ZP {d['zp_mode']:.2f}±{d['zp_sig']:.2f}, "
-        f"Moon>{_MOON_SEP_MIN_DEG:.0f}°)")
+        f"Moon>{_MOON_SEP_MIN_DEG:.0f}°)"
+    )
     ax.grid(True, alpha=0.3, which="both")
     ax.legend(loc="upper right", fontsize=9, title="exposure")
     return _save(fig, output_dir / "snr_vs_mag_weathermasked.png")
 
 
-_PLOT_BUILDERS.update({
-    "snr_vs_exposure": (_data_snr_vs_exposure, _render_snr_vs_exposure),
-    "snr_vs_mag_weathermasked": (
-        _data_snr_vs_mag_weathermasked, _render_snr_vs_mag_weathermasked),
-})
+_PLOT_BUILDERS.update(
+    {
+        "snr_vs_exposure": (_data_snr_vs_exposure, _render_snr_vs_exposure),
+        "snr_vs_mag_weathermasked": (_data_snr_vs_mag_weathermasked, _render_snr_vs_mag_weathermasked),
+    }
+)
 
 
 def _data_moon_az_el(calib: NightCalibration):
     import numpy as np
 
-    moon_frames = [f for f in calib.frames
-                   if f.moon_sep_deg is not None and f.altitude_deg is not None
-                   and f.azimuth_deg is not None]
+    moon_frames = [
+        f
+        for f in calib.frames
+        if f.moon_sep_deg is not None and f.altitude_deg is not None and f.azimuth_deg is not None
+    ]
     if not moon_frames:
         return None
     track = None
     try:
+        from astropy import units as u
         from astropy.coordinates import AltAz, EarthLocation, get_body
         from astropy.time import Time
-        from astropy import units as u
+
         site = calib.site or {}
         loc = EarthLocation(
-            lat=site["latitude"] * u.deg, lon=site["longitude"] * u.deg,
-            height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m)
+            lat=site["latitude"] * u.deg,
+            lon=site["longitude"] * u.deg,
+            height=(site.get("altitude_km") or 0.0) * 1000.0 * u.m,
+        )
         tss = [f.timestamp for f in moon_frames if f.timestamp]
         t0, t1 = min(tss), max(tss)
         tt = Time([t0 + (t1 - t0) * i / 60 for i in range(61)], scale="utc")
-        mtrk = get_body("moon", tt, loc).transform_to(
-            AltAz(obstime=tt, location=loc))
+        mtrk = get_body("moon", tt, loc).transform_to(AltAz(obstime=tt, location=loc))
         up = mtrk.alt.deg > 0
-        track = {"theta": list(np.radians(mtrk.az.deg[up])),
-                 "r": list(90 - mtrk.alt.deg[up])}
+        track = {"theta": list(np.radians(mtrk.az.deg[up])), "r": list(90 - mtrk.alt.deg[up])}
     except Exception as e:
         logger.debug("moon track overlay skipped: %s", e)
     return {
@@ -2678,10 +2864,8 @@ def _render_moon_az_el(d, meta, output_dir, plt, np) -> Path:
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     if d["track"] is not None:
-        ax.plot(d["track"]["theta"], d["track"]["r"], "-", color="gold", lw=3,
-                label="Moon track", zorder=3)
-    sc = ax.scatter(d["theta"], d["r"], c=d["sep"], s=14, cmap="viridis",
-                    alpha=0.75, zorder=2)
+        ax.plot(d["track"]["theta"], d["track"]["r"], "-", color="gold", lw=3, label="Moon track", zorder=3)
+    sc = ax.scatter(d["theta"], d["r"], c=d["sep"], s=14, cmap="viridis", alpha=0.75, zorder=2)
     ax.set_ylim(0, 90)
     ax.set_yticks([15, 30, 45, 60, 75])
     ax.set_yticklabels([f"{90 - r}°" for r in [15, 30, 45, 60, 75]])
@@ -2707,16 +2891,20 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
 
     def _norm_stars(f):
         kk = ext_k.get(f.filter_name or "unknown", k_default)
-        corr = (10 ** (0.4 * kk * (f.airmass - 1.0))
-                if f.airmass is not None else 1.0)
+        corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
             if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f):
                 yield round(f.exposure_time), m, s * corr
 
-    masked = [f for f in _zp_frames(calib.frames)
-              if f.zero_point is not None and f.exposure_time and f.stars_mag
-              and abs(f.zero_point - zp_mode) <= zp_sig
-              and f.moon_sep_deg is not None]
+    masked = [
+        f
+        for f in _zp_frames(calib.frames)
+        if f.zero_point is not None
+        and f.exposure_time
+        and f.stars_mag
+        and abs(f.zero_point - zp_mode) <= zp_sig
+        and f.moon_sep_deg is not None
+    ]
     cells: dict[tuple, list] = {}
     for f in masked:
         if f.moon_sep_deg < FAR:
@@ -2732,8 +2920,7 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
                 sep_arr.append(f.moon_sep_deg)
                 dmag_arr.append(2.5 * math.log10(s / b))
                 mag_arr.append(m)
-    near_lims = [f.limiting_magnitude_50 for f in masked
-                 if f.moon_sep_deg < 30 and f.limiting_magnitude_50 is not None]
+    near_lims = [f.limiting_magnitude_50 for f in masked if f.moon_sep_deg < 30 and f.limiting_magnitude_50 is not None]
     m_safe = (float(np.median(near_lims)) - 2.5) if near_lims else None
     if len(sep_arr) < 50:
         return None
@@ -2756,45 +2943,73 @@ def _data_snr_vs_moon_distance(calib: NightCalibration):
         if len(cx) >= 2:
             slope, intercept = np.polyfit(cx, cy, 1)
             fit = {"slope": float(slope), "intercept": float(intercept)}
-        return {"name": name, "sep": list(sep_arr[mask]),
-                "dmag": list(dmag_arr[mask]),
-                "binned": {"x": cx, "y": cy, "e_lo": e_lo, "e_hi": e_hi},
-                "fit": fit, "dot_color": dot_color, "dot_alpha": dot_alpha,
-                "bin_color": bin_color, "fit_color": fit_color}
+        return {
+            "name": name,
+            "sep": list(sep_arr[mask]),
+            "dmag": list(dmag_arr[mask]),
+            "binned": {"x": cx, "y": cy, "e_lo": e_lo, "e_hi": e_hi},
+            "fit": fit,
+            "dot_color": dot_color,
+            "dot_alpha": dot_alpha,
+            "bin_color": bin_color,
+            "fit_color": fit_color,
+        }
 
-    series = [_series(np.ones(len(sep_arr), bool), "all stars",
-                      "lightgray", 0.12, "black", "red")]
+    series = [_series(np.ones(len(sep_arr), bool), "all stars", "lightgray", 0.12, "black", "red")]
     if m_safe is not None and (mag_arr < m_safe).sum() >= 50:
-        series.append(_series(
-            mag_arr < m_safe, f"bright m<{m_safe:.1f} (complete at all sep)",
-            "tab:blue", 0.08, "tab:blue", "tab:blue"))
+        series.append(
+            _series(
+                mag_arr < m_safe,
+                f"bright m<{m_safe:.1f} (complete at all sep)",
+                "tab:blue",
+                0.08,
+                "tab:blue",
+                "tab:blue",
+            )
+        )
     return {"series": series}
 
 
 def _render_snr_vs_moon_distance(d, meta, output_dir, plt, np) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
     for s in d["series"]:
-        ax.scatter(s["sep"], s["dmag"], s=6, alpha=s["dot_alpha"],
-                   color=s["dot_color"], zorder=1)
+        ax.scatter(s["sep"], s["dmag"], s=6, alpha=s["dot_alpha"], color=s["dot_color"], zorder=1)
         b = s["binned"]
         if b["x"]:
-            ax.errorbar(b["x"], b["y"], yerr=[b["e_lo"], b["e_hi"]], fmt="o",
-                        color=s["bin_color"], ms=7, capsize=4, capthick=1.5,
-                        elinewidth=1.5, zorder=5)
+            ax.errorbar(
+                b["x"],
+                b["y"],
+                yerr=[b["e_lo"], b["e_hi"]],
+                fmt="o",
+                color=s["bin_color"],
+                ms=7,
+                capsize=4,
+                capthick=1.5,
+                elinewidth=1.5,
+                zorder=5,
+            )
         if s["fit"] is not None:
             slope, intercept = s["fit"]["slope"], s["fit"]["intercept"]
             lx = np.linspace(min(b["x"]), max(b["x"]), 50)
-            ax.plot(lx, slope * lx + intercept, "-", color=s["fit_color"],
-                    lw=2, alpha=0.85,
-                    label=f"{s['name']}: {-slope * 10:+.2f} mag / 10° closer")
+            ax.plot(
+                lx,
+                slope * lx + intercept,
+                "-",
+                color=s["fit_color"],
+                lw=2,
+                alpha=0.85,
+                label=f"{s['name']}: {-slope * 10:+.2f} mag / 10° closer",
+            )
     ax.axhline(0, color="gray", ls=":")
     mi = meta.get("moon_illumination")
     illum = f"{100 * mi:.0f}%" if mi is not None else "?"
     ax.set_xlabel("Moon separation (°)")
     ax.set_ylabel("ΔSNR [mag]  (0 = far-Moon baseline; negative = penalty)")
-    ax.set_title(f"{meta['night_id']}: SNR penalty vs Moon distance "
-                 f"(Moon {illum}; all-stars vs bright-complete = "
-                 f"survivorship check)")
+    ax.set_title(
+        f"{meta['night_id']}: SNR penalty vs Moon distance "
+        f"(Moon {illum}; all-stars vs bright-complete = "
+        f"survivorship check)"
+    )
     ax.grid(True, alpha=0.3)
     ax.legend(loc="lower right", fontsize=9)
     return _save(fig, output_dir / "snr_vs_moon_distance.png")
@@ -2803,11 +3018,16 @@ def _render_snr_vs_moon_distance(d, meta, output_dir, plt, np) -> Path:
 def _usable_cal_frames(calib, zp_mode, zp_sig):
     """Weather-masked calibration-taskset frames with Moon geometry (shared by
     the two fixed-magnitude Moon plots)."""
-    return [f for f in _zp_frames(calib.frames)
-            if f.zero_point is not None and f.exposure_time and f.stars_mag
-            and abs(f.zero_point - zp_mode) <= zp_sig
-            and _frame_task(f) in ("coverage", "photometric")
-            and f.moon_sep_deg is not None]
+    return [
+        f
+        for f in _zp_frames(calib.frames)
+        if f.zero_point is not None
+        and f.exposure_time
+        and f.stars_mag
+        and abs(f.zero_point - zp_mode) <= zp_sig
+        and _frame_task(f) in ("coverage", "photometric")
+        and f.moon_sep_deg is not None
+    ]
 
 
 def _best_sampled_mag(usable, min_meas_snr):
@@ -2842,12 +3062,14 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
         tk = _frame_task(f)
         if tk not in prog:
             continue
-        corr = (10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default)
-                       * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
+        corr = (
+            10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default) * (f.airmass - 1.0))
+            if f.airmass is not None
+            else 1.0
+        )
         ex = round(f.exposure_time)
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
-            if (iso and m and s > _PLOT_SNR_FLOOR
-                    and _snr_consistent(s, m, f) and best_mag <= m < best_mag + 1):
+            if iso and m and s > _PLOT_SNR_FLOOR and _snr_consistent(s, m, f) and best_mag <= m < best_mag + 1:
                 prog[tk].setdefault(ex, []).append(s * corr)
     if not any(len(dd) >= 2 for dd in prog.values()):
         return None
@@ -2859,18 +3081,15 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
         out_prog[tk] = {
             "exps": exps,
             "med": [float(np.median(dd[ex])) for ex in exps],
-            "sem": [1.253 * float(np.std(dd[ex])) / math.sqrt(len(dd[ex]))
-                    for ex in exps],
+            "sem": [1.253 * float(np.std(dd[ex])) / math.sqrt(len(dd[ex])) for ex in exps],
         }
     annotation = None
     if prog["coverage"].get(1) and prog["photometric"].get(1):
         c1 = float(np.median(prog["coverage"][1]))
         p1 = float(np.median(prog["photometric"][1]))
         annotation = {"p1": p1, "delta": 2.5 * math.log10(c1 / p1)}
-    xticks = sorted({ex for dd in prog.values() for ex in dd
-                     if len(dd[ex]) >= 10})
-    return {"best_mag": best_mag, "prog": out_prog,
-            "annotation": annotation, "xticks": xticks}
+    xticks = sorted({ex for dd in prog.values() for ex in dd if len(dd[ex]) >= 10})
+    return {"best_mag": best_mag, "prog": out_prog, "annotation": annotation, "xticks": xticks}
 
 
 def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
@@ -2878,20 +3097,24 @@ def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
     for tk, dd in d["prog"].items():
         exps, med, sem = dd["exps"], dd["med"], dd["sem"]
-        ax.errorbar(exps, med, yerr=sem, fmt="o", color=pcolor[tk], ms=9,
-                    capsize=4, zorder=5, label=f"{tk} (measured)")
+        ax.errorbar(exps, med, yerr=sem, fmt="o", color=pcolor[tk], ms=9, capsize=4, zorder=5, label=f"{tk} (measured)")
         xr = np.linspace(exps[0], exps[-1], 50)
-        ax.plot(xr, med[0] * np.sqrt(xr / exps[0]), "--", color=pcolor[tk],
-                alpha=0.7, label=f"{tk}: √t from {exps[0]}s")
+        ax.plot(
+            xr, med[0] * np.sqrt(xr / exps[0]), "--", color=pcolor[tk], alpha=0.7, label=f"{tk}: √t from {exps[0]}s"
+        )
     ann = d["annotation"]
     if ann is not None:
         ax.annotate(
             f"photometric is {ann['delta']:+.2f} mag below coverage\n"
             f"at 1s — same offset at 6s/10s.\n"
             f"Whole-program shift (Moon + airmass),\nnot a 6s effect.",
-            xy=(1, ann["p1"]), xytext=(0.32, 0.10), textcoords="axes fraction",
-            fontsize=9, ha="left",
-            arrowprops=dict(arrowstyle="->", color="gray"))
+            xy=(1, ann["p1"]),
+            xytext=(0.32, 0.10),
+            textcoords="axes fraction",
+            fontsize=9,
+            ha="left",
+            arrowprops=dict(arrowstyle="->", color="gray"),
+        )
     ax.set_yscale("log")
     if d["xticks"]:
         ax.set_xticks(d["xticks"])
@@ -2899,7 +3122,8 @@ def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
     ax.set_ylabel("SNR (normalized to airmass = 1)")
     ax.set_title(
         f"{meta['night_id']}: the pooled 6s 'dip' is a program offset, "
-        f"not an exposure effect  (m_G≈{d['best_mag'] + 0.5:.1f})")
+        f"not an exposure effect  (m_G≈{d['best_mag'] + 0.5:.1f})"
+    )
     ax.grid(True, alpha=0.3, which="both")
     ax.legend(loc="lower right", fontsize=8)
     return _save(fig, output_dir / "snr_vs_exposure_6s_explained.png")
@@ -2924,26 +3148,28 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
     for f in usable:
         if f.moon_sep_deg < 60:
             continue
-        corr = (10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default)
-                       * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
+        corr = (
+            10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default) * (f.airmass - 1.0))
+            if f.airmass is not None
+            else 1.0
+        )
         rt = math.sqrt(f.exposure_time)
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
-            if (iso and m and s and s >= min_meas_snr
-                    and target - 2 <= m < target + 2):
+            if iso and m and s and s >= min_meas_snr and target - 2 <= m < target + 2:
                 sm.append(m)
                 sl.append(math.log10(s * corr / rt))
     slope = float(np.polyfit(sm, sl, 1)[0]) if len(sm) >= 50 else -0.37
     pts = []
     for f in usable:
-        corr = (10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default)
-                       * (f.airmass - 1.0)) if f.airmass is not None else 1.0)
+        corr = (
+            10 ** (0.4 * ext_k.get(f.filter_name or "unknown", k_default) * (f.airmass - 1.0))
+            if f.airmass is not None
+            else 1.0
+        )
         rt = math.sqrt(f.exposure_time)
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
-            if (iso and m and s and s >= min_meas_snr
-                    and _snr_consistent(s, m, f)
-                    and target - 1 <= m < target + 1):
-                pts.append((f.moon_sep_deg,
-                            (s * corr / rt) * 10 ** (slope * (target - m))))
+            if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f) and target - 1 <= m < target + 1:
+                pts.append((f.moon_sep_deg, (s * corr / rt) * 10 ** (slope * (target - m))))
     if len(pts) < 100:
         return None
     msep = np.array([p[0] for p in pts])
@@ -2956,47 +3182,61 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration):
             cx.append((lo + hi) / 2)
             cy.append(float(np.median(v)))
             cerr.append(1.253 * float(np.std(v)) / math.sqrt(len(v)))
-    return {"target": target, "sep": list(msep), "snrt": list(snrt),
-            "binned": {"x": cx, "y": cy, "err": cerr},
-            "moon_cut": _MOON_SEP_MIN_DEG}
+    return {
+        "target": target,
+        "sep": list(msep),
+        "snrt": list(snrt),
+        "binned": {"x": cx, "y": cy, "err": cerr},
+        "moon_cut": _MOON_SEP_MIN_DEG,
+    }
 
 
 def _render_snr_vs_moon_fixedmag(d, meta, output_dir, plt, np) -> Path:
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.scatter(d["sep"], d["snrt"], s=6, alpha=0.10, color="lightgray",
-               label="individual stars")
+    ax.scatter(d["sep"], d["snrt"], s=6, alpha=0.10, color="lightgray", label="individual stars")
     b = d["binned"]
     if b["x"]:
-        ax.errorbar(b["x"], b["y"], yerr=b["err"], fmt="o-", color="black",
-                    ms=7, lw=1.5, capsize=4, capthick=1.5, elinewidth=1.5,
-                    zorder=5, label="binned median ± SEM")
-    ax.axvline(d["moon_cut"], color="red", ls="--", lw=1.5,
-               label=f"Moon cut = {d['moon_cut']:.0f}°")
+        ax.errorbar(
+            b["x"],
+            b["y"],
+            yerr=b["err"],
+            fmt="o-",
+            color="black",
+            ms=7,
+            lw=1.5,
+            capsize=4,
+            capthick=1.5,
+            elinewidth=1.5,
+            zorder=5,
+            label="binned median ± SEM",
+        )
+    ax.axvline(d["moon_cut"], color="red", ls="--", lw=1.5, label=f"Moon cut = {d['moon_cut']:.0f}°")
     ax.set_xlabel("Moon separation (°)")
     ax.set_ylabel(r"SNR / $\sqrt{t_{exp}}$ (airmass-normalized)")
-    ax.set_title(f"{meta['night_id']}: Moon penalty at m_G={d['target']:.1f} "
-                 f"(±1 mag corrected to center, √t-collapsed)")
+    ax.set_title(
+        f"{meta['night_id']}: Moon penalty at m_G={d['target']:.1f} (±1 mag corrected to center, √t-collapsed)"
+    )
     ax.grid(True, alpha=0.3)
     ax.legend(loc="lower right", fontsize=9)
     return _save(fig, output_dir / "snr_vs_moon_fixedmag.png")
 
 
-_PLOT_BUILDERS.update({
-    "moon_az_el": (_data_moon_az_el, _render_moon_az_el),
-    "snr_vs_moon_distance": (
-        _data_snr_vs_moon_distance, _render_snr_vs_moon_distance),
-    "snr_vs_exposure_6s_explained": (
-        _data_snr_vs_exposure_6s_explained, _render_snr_vs_exposure_6s_explained),
-    "snr_vs_moon_fixedmag": (
-        _data_snr_vs_moon_fixedmag, _render_snr_vs_moon_fixedmag),
-})
+_PLOT_BUILDERS.update(
+    {
+        "moon_az_el": (_data_moon_az_el, _render_moon_az_el),
+        "snr_vs_moon_distance": (_data_snr_vs_moon_distance, _render_snr_vs_moon_distance),
+        "snr_vs_exposure_6s_explained": (_data_snr_vs_exposure_6s_explained, _render_snr_vs_exposure_6s_explained),
+        "snr_vs_moon_fixedmag": (_data_snr_vs_moon_fixedmag, _render_snr_vs_moon_fixedmag),
+    }
+)
 
 
 def _data_fwhm(calib: NightCalibration):
     import numpy as np
 
-    pts = [(f.timestamp, f.fwhm_px, f.airmass) for f in calib.frames
-           if f.fwhm_px is not None and f.timestamp is not None]
+    pts = [
+        (f.timestamp, f.fwhm_px, f.airmass) for f in calib.frames if f.fwhm_px is not None and f.timestamp is not None
+    ]
     if not pts:
         return None
     fw = [float(p[1]) for p in pts]
@@ -3017,16 +3257,21 @@ def _render_fwhm(d, meta, output_dir, plt, np) -> Path:
     xs = [_dt.fromisoformat(t) for t in d["t"]]
     cs = d["airmass"]
     sc = ax.scatter(xs, d["fwhm"], c=cs, cmap="viridis", s=12, alpha=0.6)
-    ax.axhline(d["median_fwhm"], color="firebrick", ls="--", lw=1.5,
-               label=f"median = {d['median_fwhm']:.1f} px "
-                     f"(16/84: {d['p16']:.1f}–{d['p84']:.1f})")
+    ax.axhline(
+        d["median_fwhm"],
+        color="firebrick",
+        ls="--",
+        lw=1.5,
+        label=f"median = {d['median_fwhm']:.1f} px (16/84: {d['p16']:.1f}–{d['p84']:.1f})",
+    )
     if any(c > 0 for c in cs):
         cb = plt.colorbar(sc, ax=ax)
         cb.set_label("airmass")
     ax.set_xlabel("UTC time")
     ax.set_ylabel("PSF FWHM (pixels)")
-    ax.set_title(f"{meta['night_id']}: PSF FWHM over the night "
-                 f"(sidereal; flat trend = stable optics, ramp = focus drift)")
+    ax.set_title(
+        f"{meta['night_id']}: PSF FWHM over the night (sidereal; flat trend = stable optics, ramp = focus drift)"
+    )
     ax.legend(loc="best", fontsize=9)
     ax.grid(True, alpha=0.3)
     fig.autofmt_xdate()
@@ -3041,9 +3286,14 @@ def _data_sky_background(calib: NightCalibration):
         if f.sky_adu is None or f.moon_sep_deg is None:
             continue
         mu = _sky_mu(f)
-        rows.append((f.moon_sep_deg, float(f.sky_adu),
-                     float(mu) if mu is not None else float("nan"),
-                     float(f.altitude_deg) if f.altitude_deg is not None else 0.0))
+        rows.append(
+            (
+                f.moon_sep_deg,
+                float(f.sky_adu),
+                float(mu) if mu is not None else float("nan"),
+                float(f.altitude_deg) if f.altitude_deg is not None else 0.0,
+            )
+        )
     if len(rows) < 10:
         return None
     sep = np.array([r[0] for r in rows])
@@ -3064,9 +3314,11 @@ def _data_sky_background(calib: NightCalibration):
             e_hi.append(float(np.percentile(v, 84)) - md)
     mu_clean = mu[np.isfinite(mu)]
     return {
-        "sep": list(sep), "adu": list(adu),
+        "sep": list(sep),
+        "adu": list(adu),
         "mu": [None if not math.isfinite(m) else float(m) for m in mu],
-        "alt": [r[3] for r in rows], "has_mu": has_mu,
+        "alt": [r[3] for r in rows],
+        "has_mu": has_mu,
         "binned": {"x": cx, "y": cy, "e_lo": e_lo, "e_hi": e_hi},
         "median_adu": float(np.median(adu)),
         "median_mu": float(np.median(mu_clean)) if len(mu_clean) else None,
@@ -3078,15 +3330,24 @@ def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
     sep = np.array(d["sep"])
     alt = np.array(d["alt"])
     use_mu = d["has_mu"]
-    yv = np.array([np.nan if m is None else m for m in d["mu"]]) if use_mu \
-        else np.array(d["adu"])
+    yv = np.array([np.nan if m is None else m for m in d["mu"]]) if use_mu else np.array(d["adu"])
     m = np.isfinite(yv)
     sc = ax.scatter(sep[m], yv[m], c=alt[m], cmap="viridis", s=10, alpha=0.4)
     b = d["binned"]
     if b["x"]:
-        ax.errorbar(b["x"], b["y"], yerr=[b["e_lo"], b["e_hi"]], fmt="o-",
-                    color="black", ms=7, capsize=4, capthick=1.5, elinewidth=1.5,
-                    zorder=5, label="binned median ± 16/84%")
+        ax.errorbar(
+            b["x"],
+            b["y"],
+            yerr=[b["e_lo"], b["e_hi"]],
+            fmt="o-",
+            color="black",
+            ms=7,
+            capsize=4,
+            capthick=1.5,
+            elinewidth=1.5,
+            zorder=5,
+            label="binned median ± 16/84%",
+        )
     cb = plt.colorbar(sc, ax=ax)
     cb.set_label("altitude (deg)")
     mi = meta.get("moon_illumination")
@@ -3095,13 +3356,16 @@ def _render_sky_background(d, meta, output_dir, plt, np) -> Path:
     if use_mu:
         ax.set_ylabel("sky surface brightness (mag/arcsec² — lower = brighter)")
         ax.invert_yaxis()  # brighter sky (smaller mag) at top
-        ax.set_title(f"{meta['night_id']}: sky brightness vs Moon separation "
-                     f"({illum}; median {d['median_mu']:.1f} mag/arcsec², "
-                     f"{d['median_adu']:.0f} ADU)")
+        ax.set_title(
+            f"{meta['night_id']}: sky brightness vs Moon separation "
+            f"({illum}; median {d['median_mu']:.1f} mag/arcsec², "
+            f"{d['median_adu']:.0f} ADU)"
+        )
     else:
         ax.set_ylabel("sky background (ADU, flat-fielded, pre-subtraction)")
-        ax.set_title(f"{meta['night_id']}: sky background vs Moon separation "
-                     f"({illum}; median {d['median_adu']:.0f} ADU)")
+        ax.set_title(
+            f"{meta['night_id']}: sky background vs Moon separation ({illum}; median {d['median_adu']:.0f} ADU)"
+        )
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=9)
     return _save(fig, output_dir / "sky_background_vs_moon.png")
@@ -3127,17 +3391,20 @@ def _data_sky_background_altaz(calib: NightCalibration):
 
     rows = []  # (alt, az, mu_or_nan, rate_or_nan)
     for f in calib.frames:
-        if (f.altitude_deg is None or f.azimuth_deg is None
-                or f.altitude_deg < 0):
+        if f.altitude_deg is None or f.azimuth_deg is None or f.altitude_deg < 0:
             continue
         mu = _sky_mu(f)
-        rate = (f.sky_adu / f.exposure_time) \
-            if (f.sky_adu and f.exposure_time) else None
+        rate = (f.sky_adu / f.exposure_time) if (f.sky_adu and f.exposure_time) else None
         if mu is None and rate is None:
             continue
-        rows.append((float(f.altitude_deg), float(f.azimuth_deg),
-                     float(mu) if mu is not None else float("nan"),
-                     float(rate) if rate is not None else float("nan")))
+        rows.append(
+            (
+                float(f.altitude_deg),
+                float(f.azimuth_deg),
+                float(mu) if mu is not None else float("nan"),
+                float(rate) if rate is not None else float("nan"),
+            )
+        )
     if len(rows) < 10:
         return None
     alt = np.array([r[0] for r in rows])
@@ -3162,9 +3429,13 @@ def _data_sky_background_altaz(calib: NightCalibration):
             e_lo.append(md - float(np.percentile(v, 16)))
             e_hi.append(float(np.percentile(v, 84)) - md)
     return {
-        "alt": list(alt), "az": list(az), "y": list(y), "has_mu": has_mu,
+        "alt": list(alt),
+        "az": list(az),
+        "y": list(y),
+        "has_mu": has_mu,
         "elev_binned": {"x": ex, "y": ey, "e_lo": e_lo, "e_hi": e_hi},
-        "median": float(np.median(y)), "n": int(len(y)),
+        "median": float(np.median(y)),
+        "n": len(y),
     }
 
 
@@ -3173,8 +3444,7 @@ def _render_sky_background_altaz(d, meta, output_dir, plt, np) -> Path:
     alt = np.array(d["alt"])
     az = np.array(d["az"])
     y = np.array(d["y"])
-    ylabel = "sky surface brightness (mag/arcsec²)" if has_mu \
-        else "sky rate (ADU/s)"
+    ylabel = "sky surface brightness (mag/arcsec²)" if has_mu else "sky rate (ADU/s)"
     # Make contamination (a brighter sky) pop: with μ a *low* value is bright, so
     # reverse the map (magma_r) → bright sky = bright yellow; with the ADU/s
     # fallback a *high* value is bright, so magma already maps bright → yellow.
@@ -3187,37 +3457,43 @@ def _render_sky_background_altaz(d, meta, output_dir, plt, np) -> Path:
     ax1 = fig.add_subplot(1, 2, 1, projection="polar")
     ax1.set_theta_zero_location("N")
     ax1.set_theta_direction(-1)
-    sc1 = ax1.scatter(np.radians(az), 90 - alt, c=y, cmap=sky_cmap, s=24,
-                      alpha=0.85, edgecolors="none")
+    sc1 = ax1.scatter(np.radians(az), 90 - alt, c=y, cmap=sky_cmap, s=24, alpha=0.85, edgecolors="none")
     ax1.set_ylim(0, 90)
     ax1.set_yticks([15, 30, 45, 60, 75])
-    ax1.set_yticklabels([f"{90 - r}°" for r in [15, 30, 45, 60, 75]],
-                        fontsize=8)
+    ax1.set_yticklabels([f"{90 - r}°" for r in [15, 30, 45, 60, 75]], fontsize=8)
     # Keep the cardinal letters for orientation, but also show the azimuth in
     # degrees (every 45°) so the ring lines up with the azimuth colour scale on
     # the elevation panel.
     _az_ticks = list(range(0, 360, 45))
     _cardinal = {0: "N", 90: "E", 180: "S", 270: "W"}
     ax1.set_thetagrids(
-        _az_ticks,
-        labels=[f"{_cardinal[a]}\n{a}°" if a in _cardinal else f"{a}°"
-                for a in _az_ticks],
-        fontsize=8)
+        _az_ticks, labels=[f"{_cardinal[a]}\n{a}°" if a in _cardinal else f"{a}°" for a in _az_ticks], fontsize=8
+    )
     cb1 = fig.colorbar(sc1, ax=ax1, pad=0.10, shrink=0.8)
     cb1.set_label(ylabel + ("  (↓ = brighter sky)" if has_mu else ""))
-    ax1.set_title("all-sky map (zenith at centre, horizon at rim)\n"
-                  "bright lobe near rim = directional light dome", fontsize=10)
+    ax1.set_title(
+        "all-sky map (zenith at centre, horizon at rim)\nbright lobe near rim = directional light dome", fontsize=10
+    )
 
     # Panel 2 — brightness vs elevation: the zenith-darkening trend, coloured by
     # azimuth (cyclic) so a direction that rides systematically bright is visible.
     ax2 = fig.add_subplot(1, 2, 2)
-    sc2 = ax2.scatter(alt, y, c=az, cmap="twilight", s=16, alpha=0.65,
-                      vmin=0, vmax=360)
+    sc2 = ax2.scatter(alt, y, c=az, cmap="twilight", s=16, alpha=0.65, vmin=0, vmax=360)
     b = d["elev_binned"]
     if b["x"]:
-        ax2.errorbar(b["x"], b["y"], yerr=[b["e_lo"], b["e_hi"]], fmt="o-",
-                     color="black", ms=7, capsize=4, capthick=1.5,
-                     elinewidth=1.5, zorder=5, label="binned median ± 16/84%")
+        ax2.errorbar(
+            b["x"],
+            b["y"],
+            yerr=[b["e_lo"], b["e_hi"]],
+            fmt="o-",
+            color="black",
+            ms=7,
+            capsize=4,
+            capthick=1.5,
+            elinewidth=1.5,
+            zorder=5,
+            label="binned median ± 16/84%",
+        )
     if has_mu:
         ax2.invert_yaxis()  # brighter sky (smaller mag) at the top
     cb2 = fig.colorbar(sc2, ax=ax2)
@@ -3229,20 +3505,19 @@ def _render_sky_background_altaz(d, meta, output_dir, plt, np) -> Path:
 
     mi = meta.get("moon_illumination")
     illum = f"Moon {100 * mi:.0f}%" if mi is not None else ""
-    med_txt = (f"median {d['median']:.2f} mag/arcsec²" if has_mu
-               else f"median {d['median']:.0f} ADU/s")
-    fig.suptitle(f"{meta['night_id']}: sky background vs pointing "
-                 f"({d['n']} frames; {illum}; {med_txt})", fontsize=12)
+    med_txt = f"median {d['median']:.2f} mag/arcsec²" if has_mu else f"median {d['median']:.0f} ADU/s"
+    fig.suptitle(f"{meta['night_id']}: sky background vs pointing ({d['n']} frames; {illum}; {med_txt})", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     return _save(fig, output_dir / "sky_background_vs_altaz.png")
 
 
-_PLOT_BUILDERS.update({
-    "fwhm_vs_time": (_data_fwhm, _render_fwhm),
-    "sky_background_vs_moon": (_data_sky_background, _render_sky_background),
-    "sky_background_vs_altaz": (
-        _data_sky_background_altaz, _render_sky_background_altaz),
-})
+_PLOT_BUILDERS.update(
+    {
+        "fwhm_vs_time": (_data_fwhm, _render_fwhm),
+        "sky_background_vs_moon": (_data_sky_background, _render_sky_background),
+        "sky_background_vs_altaz": (_data_sky_background_altaz, _render_sky_background_altaz),
+    }
+)
 
 
 # --- CLI hook -----------------------------------------------------------------
@@ -3255,27 +3530,26 @@ def main(argv: list[str] | None = None) -> int:
 
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Aggregate per-batch SenpaiRun JSONs into a night calibration."
-    )
+    parser = argparse.ArgumentParser(description="Aggregate per-batch SenpaiRun JSONs into a night calibration.")
     parser.add_argument(
         "night_dir",
-        help="Processed-night dir (output of `senpai-burr night ...`); "
-             "must contain manifest.json.",
+        help="Processed-night dir (output of `senpai-burr night ...`); must contain manifest.json.",
     )
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         default=None,
         help="Output dir for calibration JSON + plots (default: <night_dir>/calibration/).",
     )
     parser.add_argument(
-        "--no-plots", action="store_true",
+        "--no-plots",
+        action="store_true",
         help="Skip plot rendering (faster; matplotlib not required).",
     )
     parser.add_argument(
-        "--from-plot-data", action="store_true",
-        help="Skip reprocessing: render plots from an existing "
-             "<output>/plot_data.json instead of the batch JSONs.",
+        "--from-plot-data",
+        action="store_true",
+        help="Skip reprocessing: render plots from an existing <output>/plot_data.json instead of the batch JSONs.",
     )
     args = parser.parse_args(argv)
 
@@ -3295,4 +3569,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

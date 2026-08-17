@@ -134,9 +134,7 @@ def rectangle_pyramoid(
 
 
 @functools.lru_cache(maxsize=256)
-def streak_matched_kernel(
-    fwhm: float, angle_deg: float, length_fwhm: float = 5.0
-) -> np.ndarray:
+def streak_matched_kernel(fwhm: float, angle_deg: float, length_fwhm: float = 5.0) -> np.ndarray:
     """Directional matched filter: Gaussian cross-section extruded along an angle.
 
     Used as part of a filter bank to detect streak-shaped signal in residual

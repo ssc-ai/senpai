@@ -47,9 +47,7 @@ class TestParseBurrFilename:
         assert p.command_verb == "coverage_point_observed"
 
     def test_semantic_photometric_standards(self):
-        p = parse_burr_filename(
-            "20260527T071926_photometric_standards_ICRSTarget_f0.fits"
-        )
+        p = parse_burr_filename("20260527T071926_photometric_standards_ICRSTarget_f0.fits")
         # Multi-word task ('photometric_standards') is preserved verbatim.
         assert p.task == "photometric_standards"
         assert p.target == "ICRSTarget"
@@ -123,13 +121,16 @@ class TestParseBurrFilename:
 
 
 class TestTrackingModeFromTarget:
-    @pytest.mark.parametrize("target,expected", [
-        ("AltAzTarget", "sidereal"),
-        ("ICRSTarget", "sidereal"),
-        ("RateTarget", "rate"),
-        ("41175", None),   # NORAD id — adapter must fall back to command log
-        (None, None),
-    ])
+    @pytest.mark.parametrize(
+        "target,expected",
+        [
+            ("AltAzTarget", "sidereal"),
+            ("ICRSTarget", "sidereal"),
+            ("RateTarget", "rate"),
+            ("41175", None),  # NORAD id — adapter must fall back to command log
+            (None, None),
+        ],
+    )
     def test_mapping(self, target, expected):
         assert _tracking_mode_from_target(target) == expected
 
@@ -193,9 +194,7 @@ class TestRunState:
         c = coll[0]
         assert c.tracking_modes == ["rate", "rate", "rate", "sidereal"]
         assert c.target_label == "norad_32711"
-        assert c.observation_time == datetime(
-            2026, 5, 27, 7, 6, 58, 221203, tzinfo=UTC
-        )
+        assert c.observation_time == datetime(2026, 5, 27, 7, 6, 58, 221203, tzinfo=UTC)
 
     def test_ignores_unknown_top_level_fields(self, tmp_path):
         """Forward compat: burr controller adds fields, RunState shouldn't break."""
@@ -215,8 +214,12 @@ class TestRunState:
 
 def _cmd(verb: str, obs_iso: str, **md) -> ExecutedCommand:
     return ExecutedCommand(
-        timestamp=obs_iso, command=verb, result=None, error=None,
-        stage="setup", metadata={"observation_time": obs_iso, **md},
+        timestamp=obs_iso,
+        command=verb,
+        result=None,
+        error=None,
+        stage="setup",
+        metadata={"observation_time": obs_iso, **md},
     )
 
 
@@ -227,9 +230,7 @@ class TestAttributeCommand:
             _cmd("coverage_point_observed", "2026-05-27T07:21:08+00:00", pixel_id=0),
         ]
         # A frame timestamp inside the first command's window picks the first.
-        parsed = parse_burr_filename(
-            "20260527T071737_coverage_AltAzTarget_f0.fits"
-        )
+        parsed = parse_burr_filename("20260527T071737_coverage_AltAzTarget_f0.fits")
         match = _attribute_command(parsed, cmds, window_s=300.0)
         assert match is cmds[0]
 
@@ -247,9 +248,7 @@ class TestAttributeCommand:
     def test_does_not_cross_command_types(self):
         cmds = [_cmd("calsat_observed", "2026-05-27T07:16:00+00:00", norad_id=1)]
         # A coverage frame must never bind to a calsat_observed command.
-        parsed = parse_burr_filename(
-            "20260527T071737_coverage_AltAzTarget_f0.fits"
-        )
+        parsed = parse_burr_filename("20260527T071737_coverage_AltAzTarget_f0.fits")
         assert _attribute_command(parsed, cmds, window_s=300.0) is None
 
     def test_picks_closer_when_multiple_match(self):
@@ -257,9 +256,7 @@ class TestAttributeCommand:
             _cmd("coverage_point_observed", "2026-05-27T07:00:00+00:00"),
             _cmd("coverage_point_observed", "2026-05-27T07:17:00+00:00"),
         ]
-        parsed = parse_burr_filename(
-            "20260527T071800_coverage_AltAzTarget_f0.fits"
-        )
+        parsed = parse_burr_filename("20260527T071800_coverage_AltAzTarget_f0.fits")
         match = _attribute_command(parsed, cmds, window_s=3600.0)
         assert match is cmds[1]
 
@@ -274,10 +271,9 @@ def _record(ts_seconds: int) -> FrameRecord:
     so we can drive gap-based clustering with arbitrary offsets.
     """
     from dataclasses import replace
+
     base = datetime(2026, 5, 27, 7, 0, 0, tzinfo=UTC)
-    parsed = parse_burr_filename(
-        "20260527T070000_photometric_standards_ICRSTarget_f0.fits"
-    )
+    parsed = parse_burr_filename("20260527T070000_photometric_standards_ICRSTarget_f0.fits")
     parsed = replace(parsed, timestamp=base + timedelta(seconds=ts_seconds))
     return FrameRecord(path=Path(f"x_{ts_seconds}.fits"), parsed=parsed)
 
@@ -315,6 +311,7 @@ def _rec(task: str, target: str, ts_seconds: int) -> FrameRecord:
     """A FrameRecord with a chosen task/target and a timestamp offset, for
     exercising the command-less (task, target) clustering path."""
     from dataclasses import replace
+
     base = datetime(2026, 5, 30, 2, 0, 0, tzinfo=UTC)
     parsed = parse_burr_filename(f"20260530T020000_{task}_{target}_f0.fits")
     parsed = replace(parsed, timestamp=base + timedelta(seconds=ts_seconds))
@@ -430,15 +427,18 @@ def test_burrnight_calsat_batch_grouping(tmp_path):
     assert len(b.frames) == 4
     # f0..f3 → modes from tracking_modes vector for calsats
     assert [f.intended_tracking_mode for f in b.frames] == [
-        "rate", "rate", "rate", "sidereal",
+        "rate",
+        "rate",
+        "rate",
+        "sidereal",
     ]
 
 
 def test_burrnight_coverage_uses_target_token_for_mode(tmp_path):
     files = [
-        "20260527T071737_coverage_AltAzTarget_f0.fits",   # sidereal sub-exposure
-        "20260527T071747_coverage_RateTarget_f0.fits",    # rate, sub-frame 0
-        "20260527T071754_coverage_RateTarget_f1.fits",    # rate, sub-frame 1
+        "20260527T071737_coverage_AltAzTarget_f0.fits",  # sidereal sub-exposure
+        "20260527T071747_coverage_RateTarget_f0.fits",  # rate, sub-frame 0
+        "20260527T071754_coverage_RateTarget_f1.fits",  # rate, sub-frame 1
     ]
     cmd = {
         "timestamp": "2026-05-27T07:17:20+00:00",
@@ -447,7 +447,8 @@ def test_burrnight_coverage_uses_target_token_for_mode(tmp_path):
         "result": "ok",
         "metadata": {
             "observation_time": "2026-05-27T07:17:20+00:00",
-            "map_id": 1, "pixel_id": 7,
+            "map_id": 1,
+            "pixel_id": 7,
             "exposure_times": [1.0, 3.0, 5.0],
             "tracking_modes": ["sidereal", "rate", "rate"],
         },

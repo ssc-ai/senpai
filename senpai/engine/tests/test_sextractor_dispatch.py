@@ -46,12 +46,8 @@ def sextractor_mode(monkeypatch):
     original singleton, which is shared with other test modules.
     """
     base = get_or_initialize_config(CONFIG_DIR / "local.yaml")
-    astrometry = base.astrometry.model_copy(
-        update={"source_extractor": "sextractor", "pipeline_mode": "detect"}
-    )
-    monkeypatch.setattr(
-        cfg_mod, "_config_instance", base.model_copy(update={"astrometry": astrometry})
-    )
+    astrometry = base.astrometry.model_copy(update={"source_extractor": "sextractor", "pipeline_mode": "detect"})
+    monkeypatch.setattr(cfg_mod, "_config_instance", base.model_copy(update={"astrometry": astrometry}))
 
 
 @pytest.fixture
@@ -101,9 +97,7 @@ def test_empty_sextractor_result_keeps_the_point_detector_sources(
     assert "SExtractor found no sources" in caplog.text
 
 
-def test_non_empty_sextractor_result_replaces_the_source_list(
-    sextractor_mode, stubbed_extraction, monkeypatch
-) -> None:
+def test_non_empty_sextractor_result_replaces_the_source_list(sextractor_mode, stubbed_extraction, monkeypatch) -> None:
     """The normal case still replaces: the whole point of the dispatch."""
     monkeypatch.setattr(
         "senpai.engine.detection.point.sextractor.extract_sextractor_sources",

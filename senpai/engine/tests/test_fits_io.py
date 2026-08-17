@@ -87,6 +87,7 @@ def restore_headers():
 # Pure coordinate parsers (no config needed)
 # --------------------------------------------------------------------------
 
+
 def test_sexagesimal_degrees_positive():
     assert fits_io.sexagesimal_to_decimal("+20 44 48.24", "degrees") == pytest.approx(20.746733, abs=1e-5)
 
@@ -161,6 +162,7 @@ def test_extract_header_value_present_and_absent():
 # Exposure time
 # --------------------------------------------------------------------------
 
+
 def test_exposure_time_basic():
     h = Header()
     h["EXPTIME"] = "12.5"
@@ -182,6 +184,7 @@ def test_exposure_time_multiple_candidate_keys(restore_headers):
 # --------------------------------------------------------------------------
 # Observation time
 # --------------------------------------------------------------------------
+
 
 def test_observation_time_iso():
     h = Header()
@@ -211,6 +214,7 @@ def test_observation_time_falls_back_to_broad_parser():
 # --------------------------------------------------------------------------
 # Observing site
 # --------------------------------------------------------------------------
+
 
 def test_site_sexagesimal_lat_lon():
     h = Header()
@@ -257,6 +261,7 @@ def test_site_float_positional_format(restore_headers):
 # Boresight
 # --------------------------------------------------------------------------
 
+
 def test_boresight_ra_dec_sexagesimal_hours():
     h = Header()
     h["OBJCTRA"] = "14 15 39.7"
@@ -290,6 +295,7 @@ def test_boresight_altaz_fallback(restore_headers):
 # --------------------------------------------------------------------------
 # Track rates / mode
 # --------------------------------------------------------------------------
+
 
 def test_track_rates_sidereal_from_mode_string():
     h = Header()
@@ -349,6 +355,7 @@ def test_track_rates_unit_conversion_degrees(restore_headers):
 # --------------------------------------------------------------------------
 # Filter normalization
 # --------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("raw", ["open", "L", "lum", "clear", "none", ""])
 def test_filter_clear_aliases_normalized(raw):

@@ -40,12 +40,8 @@ def solve_sidereal_from_sidereal(
     Returns:
         None.
     """
-    sidereal_source_data, source_is_synthetic = prepare_sidereal_frame(
-        frame_source, allow_synthetic=False
-    )
-    sidereal_target_data, target_is_synthetic = prepare_sidereal_frame(
-        frame_target, allow_synthetic=False
-    )
+    sidereal_source_data, source_is_synthetic = prepare_sidereal_frame(frame_source, allow_synthetic=False)
+    sidereal_target_data, target_is_synthetic = prepare_sidereal_frame(frame_target, allow_synthetic=False)
 
     if source_is_synthetic and target_is_synthetic:
         # both frames have already been fit
@@ -53,14 +49,10 @@ def solve_sidereal_from_sidereal(
         pass
 
     if not source_is_synthetic:
-        sidereal_source_data, _ = remove_near_saturation_streaks(
-            sidereal_source_data, frame_source.frame.data_type
-        )
+        sidereal_source_data, _ = remove_near_saturation_streaks(sidereal_source_data, frame_source.frame.data_type)
 
     if not target_is_synthetic:
-        sidereal_target_data, _ = remove_near_saturation_streaks(
-            sidereal_target_data, frame_target.frame.data_type
-        )
+        sidereal_target_data, _ = remove_near_saturation_streaks(sidereal_target_data, frame_target.frame.data_type)
 
     sidereal_source_data = remove_border_crossing_streaks(sidereal_source_data)
     sidereal_target_data = remove_border_crossing_streaks(sidereal_target_data)

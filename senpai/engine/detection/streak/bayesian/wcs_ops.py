@@ -42,12 +42,8 @@ def shift_wcs_by_pixel_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> 
 
     target_wcs_model = shift_wcs(source_wcs_model, shift_x, shift_y)
 
-    target_stars_astrometry = existing_stars_from_wcs(
-        target_wcs_model, source_frame.starfield.astrometric_fit_stars
-    )
-    target_stars_catalog = catalog_stars_from_wcs(
-        target_wcs_model, source_frame.starfield.limiting_magnitude
-    )
+    target_stars_astrometry = existing_stars_from_wcs(target_wcs_model, source_frame.starfield.astrometric_fit_stars)
+    target_stars_catalog = catalog_stars_from_wcs(target_wcs_model, source_frame.starfield.limiting_magnitude)
     refined_image_metadata = target_stars_catalog.image_metadata
     refined_image_metadata.image_id = source_frame.starfield.image_metadata.image_id
 

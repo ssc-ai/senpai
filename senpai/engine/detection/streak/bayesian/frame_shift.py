@@ -42,14 +42,8 @@ def preprocess_for_shift(frame: ProcessedFitsImage) -> None:
     """
     # Only apply if not already processed. History entries are
     # ProcessingMetadata records (bare ProcessingStep enums tolerated).
-    applied = {
-        step.step_type if hasattr(step, "step_type") else step
-        for step in frame.processing_history
-    }
-    if (
-        ProcessingStep.ROW_MEDIAN_SUBTRACT not in applied
-        or ProcessingStep.COLUMN_MEDIAN_SUBTRACT not in applied
-    ):
+    applied = {step.step_type if hasattr(step, "step_type") else step for step in frame.processing_history}
+    if ProcessingStep.ROW_MEDIAN_SUBTRACT not in applied or ProcessingStep.COLUMN_MEDIAN_SUBTRACT not in applied:
         logger.info("Applying row and column median subtraction")
         # Promote at the configured preprocessing precision: the registration
         # cross-correlation below is sensitive to float32's ~0.005 ADU rounding at

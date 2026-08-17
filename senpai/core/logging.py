@@ -2,7 +2,7 @@ import logging
 import logging.config
 import logging.handlers
 from enum import Enum
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 
 from senpai.core.constants import LOG_PATH
 
@@ -35,7 +35,7 @@ class LogMode(str, Enum):
     LOCAL = "local"
 
 
-def get_local_config() -> Dict[str, Any]:
+def get_local_config() -> dict[str, Any]:
     """Configuration for local development with timestamps and color"""
     return {
         "version": 1,

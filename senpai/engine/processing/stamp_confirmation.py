@@ -88,7 +88,7 @@ def _extract_1d_profile(
 
     # Mask catalog stars: zero out pixels within star_mask_radius
     if star_positions and star_mask_radius:
-        r_sq = star_mask_radius ** 2
+        r_sq = star_mask_radius**2
         for star_x, star_y in star_positions:
             dist_sq = (sx - star_x) ** 2 + (sy - star_y) ** 2
             star_mask = dist_sq < r_sq
@@ -133,9 +133,7 @@ def _profile_snr(profile: np.ndarray, fwhm: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _accumulate_shift(
-    senpai_run: SenpaiRun, from_idx: int, to_idx: int
-) -> tuple[float, float] | None:
+def _accumulate_shift(senpai_run: SenpaiRun, from_idx: int, to_idx: int) -> tuple[float, float] | None:
     """Accumulate pixel shifts from from_idx to to_idx via BFS."""
     if from_idx == to_idx:
         return 0.0, 0.0
@@ -143,12 +141,8 @@ def _accumulate_shift(
     adj: dict[int, list[tuple[int, float, float]]] = {}
     for shift in senpai_run.frame_shifts:
         if shift.is_valid and shift.processed and shift.x_shift is not None:
-            adj.setdefault(shift.source_index, []).append(
-                (shift.target_index, shift.x_shift, shift.y_shift)
-            )
-            adj.setdefault(shift.target_index, []).append(
-                (shift.source_index, -shift.x_shift, -shift.y_shift)
-            )
+            adj.setdefault(shift.source_index, []).append((shift.target_index, shift.x_shift, shift.y_shift))
+            adj.setdefault(shift.target_index, []).append((shift.source_index, -shift.x_shift, -shift.y_shift))
 
     visited = {from_idx: (0.0, 0.0)}
     queue = [from_idx]
@@ -193,9 +187,7 @@ def confirm_streaks_via_stamps(
     min_snr_boost = 1.2  # Require at least 20% SNR improvement from stacking
 
     # Frames with independent streak detections — used as reference frames
-    frames_with_candidates = [
-        f for f in senpai_run.sidereal_frames if f.streak_candidates
-    ]
+    frames_with_candidates = [f for f in senpai_run.sidereal_frames if f.streak_candidates]
     for f in senpai_run.rate_track_frames:
         if f.streak_candidates:
             frames_with_candidates.append(f)
@@ -209,10 +201,7 @@ def confirm_streaks_via_stamps(
     # streaks may only exceed the single-frame threshold in one frame,
     # but the directional excess at the predicted position in other frames
     # still contains matched-filter signal that helps confirmation.
-    all_comparison_frames = [
-        f for f in senpai_run.sidereal_frames
-        if f.starfield is not None
-    ]
+    all_comparison_frames = [f for f in senpai_run.sidereal_frames if f.starfield is not None]
     for f in senpai_run.rate_track_frames:
         if f.streak_candidates and f not in all_comparison_frames:
             all_comparison_frames.append(f)
@@ -230,8 +219,10 @@ def confirm_streaks_via_stamps(
 
     # Single frame total: return all as unconfirmed
     if len(all_comparison_frames) < 2:
-        logger.info("Single frame — returning %d unconfirmed candidates",
-                     sum(len(f.streak_candidates) for f in frames_with_candidates))
+        logger.info(
+            "Single frame — returning %d unconfirmed candidates",
+            sum(len(f.streak_candidates) for f in frames_with_candidates),
+        )
         return _wrap_single_frame(frames_with_candidates)
 
     # Multi-frame confirmation
@@ -251,10 +242,7 @@ def confirm_streaks_via_stamps(
         # Catalog star positions for masking
         ref_stars = []
         if ref_frame.starfield and ref_frame.starfield.catalog_stars:
-            ref_stars = [
-                (s.x, s.y) for s in ref_frame.starfield.catalog_stars
-                if s.x is not None and s.y is not None
-            ]
+            ref_stars = [(s.x, s.y) for s in ref_frame.starfield.catalog_stars if s.x is not None and s.y is not None]
 
         # Use ALL comparison frames (not just those with candidates)
         other_frames_data = []
@@ -262,9 +250,7 @@ def confirm_streaks_via_stamps(
             if other_frame.index == ref_frame.index:
                 continue
 
-            shift = _accumulate_shift(
-                senpai_run, ref_frame.index, other_frame.index
-            )
+            shift = _accumulate_shift(senpai_run, ref_frame.index, other_frame.index)
             if shift is None:
                 continue
 
@@ -275,21 +261,22 @@ def confirm_streaks_via_stamps(
             other_stars = []
             if other_frame.starfield and other_frame.starfield.catalog_stars:
                 other_stars = [
-                    (s.x, s.y) for s in other_frame.starfield.catalog_stars
-                    if s.x is not None and s.y is not None
+                    (s.x, s.y) for s in other_frame.starfield.catalog_stars if s.x is not None and s.y is not None
                 ]
 
             dt = 0.0
             if ref_frame.timestamp and other_frame.timestamp:
                 dt = (other_frame.timestamp - ref_frame.timestamp).total_seconds()
 
-            other_frames_data.append({
-                "frame": other_frame,
-                "image": other_image,
-                "stars": other_stars,
-                "shift": shift,
-                "dt": dt,
-            })
+            other_frames_data.append(
+                {
+                    "frame": other_frame,
+                    "image": other_image,
+                    "stars": other_stars,
+                    "shift": shift,
+                    "dt": dt,
+                }
+            )
 
         if not other_frames_data:
             # No valid other frames to compare against
@@ -331,13 +318,18 @@ def confirm_streaks_via_stamps(
         if not cs.confirmed:
             continue
         _propagate_to_frame_candidates(
-            cs, senpai_run, all_comparison_frames, fwhm,
+            cs,
+            senpai_run,
+            all_comparison_frames,
+            fwhm,
         )
 
     logger.info(
         "Stamp confirmation: %d confirmed (%d deduped), %d rejected, %d total",
-        sum(1 for c in deduped if c.confirmed), n_deduped,
-        n_rejected, len(deduped),
+        sum(1 for c in deduped if c.confirmed),
+        n_deduped,
+        n_rejected,
+        len(deduped),
     )
     return deduped
 
@@ -378,17 +370,26 @@ def _confirm_single_candidate(
     # position in the other frame may be tens of pixels from truth.
     # Use a large stamp so cross-correlation can find the true offset.
     estimated_motion = abs(rate * max(abs(ofd["dt"]) for ofd in other_frames_data)) if other_frames_data else 0
-    half_length = max(
-        candidate.length_pixels,
-        estimated_motion * 0.5,  # Accommodate ±50% rate error
-        10 * fwhm,
-    ) / 2 + 5 * fwhm
+    half_length = (
+        max(
+            candidate.length_pixels,
+            estimated_motion * 0.5,  # Accommodate ±50% rate error
+            10 * fwhm,
+        )
+        / 2
+        + 5 * fwhm
+    )
 
     # Reference profile
     ref_profile = _extract_1d_profile(
-        ref_image, candidate.x, candidate.y,
-        angle_deg, half_length, fwhm,
-        ref_stars, star_mask_radius,
+        ref_image,
+        candidate.x,
+        candidate.y,
+        angle_deg,
+        half_length,
+        fwhm,
+        ref_stars,
+        star_mask_radius,
     )
     if ref_profile is None:
         return _make_unconfirmed(ref_frame, candidate)
@@ -423,9 +424,7 @@ def _confirm_single_candidate(
         # overlap almost entirely and any persistent feature (star residual,
         # hot pixel) would trivially correlate.  Require at least 2*FWHM
         # of motion for the comparison to be meaningful.
-        total_motion = np.sqrt(
-            (motion_dx + dx) ** 2 + (motion_dy + dy) ** 2
-        )
+        total_motion = np.sqrt((motion_dx + dx) ** 2 + (motion_dy + dy) ** 2)
         if total_motion < 2 * fwhm:
             continue
 
@@ -434,9 +433,14 @@ def _confirm_single_candidate(
         fwd_y = base_y + motion_dy
 
         fwd_prof = _extract_1d_profile(
-            ofd["image"], fwd_x, fwd_y,
-            angle_deg, half_length, fwhm,
-            ofd["stars"], star_mask_radius,
+            ofd["image"],
+            fwd_x,
+            fwd_y,
+            angle_deg,
+            half_length,
+            fwhm,
+            ofd["stars"],
+            star_mask_radius,
         )
         if fwd_prof is not None and len(fwd_prof) == len(ref_profile):
             offset, cc_peak = _find_profile_offset(ref_profile, fwd_prof)
@@ -449,9 +453,14 @@ def _confirm_single_candidate(
         rev_y = base_y - motion_dy
 
         rev_prof = _extract_1d_profile(
-            ofd["image"], rev_x, rev_y,
-            angle_deg, half_length, fwhm,
-            ofd["stars"], star_mask_radius,
+            ofd["image"],
+            rev_x,
+            rev_y,
+            angle_deg,
+            half_length,
+            fwhm,
+            ofd["stars"],
+            star_mask_radius,
         )
         if rev_prof is not None and len(rev_prof) == len(ref_profile):
             offset, cc_peak = _find_profile_offset(ref_profile, rev_prof)
@@ -543,10 +552,12 @@ def _confirm_single_candidate(
                 de_confirmed = True
                 de_direction = "forward" if de_snr_fwd >= de_snr_rev else "reverse"
                 logger.info(
-                    "DE confirmation for streak at (%.0f,%.0f): "
-                    "ref_de=%.1f, other_fwd=%.2f, other_rev=%.2f",
-                    candidate.x, candidate.y, ref_de_snr,
-                    de_snr_fwd, de_snr_rev,
+                    "DE confirmation for streak at (%.0f,%.0f): ref_de=%.1f, other_fwd=%.2f, other_rev=%.2f",
+                    candidate.x,
+                    candidate.y,
+                    ref_de_snr,
+                    de_snr_fwd,
+                    de_snr_rev,
                 )
 
     confirmed = cc_confirmed or de_confirmed
@@ -599,13 +610,14 @@ def _confirm_single_candidate(
         best_snr = measured_snr
         logger.debug(
             "DE-confirmed streak at (%.0f,%.0f): using candidate len=%.1f, rate=%.1f",
-            candidate.x, candidate.y, refined_length, refined_rate,
+            candidate.x,
+            candidate.y,
+            refined_length,
+            refined_rate,
         )
     else:
         # CC-confirmed: refine from the boxcar scan on the reference profile
-        center_offset, refined_length, measured_snr = _measure_streak_from_profile(
-            ref_profile, fwhm
-        )
+        center_offset, refined_length, measured_snr = _measure_streak_from_profile(ref_profile, fwhm)
         if exposure_time and exposure_time > 0 and refined_length > 0:
             refined_rate = refined_length / exposure_time
         else:
@@ -613,10 +625,15 @@ def _confirm_single_candidate(
 
         best_snr = measured_snr
         logger.debug(
-            "CC-confirmed streak at (%.0f,%.0f): refined len=%.1f (was %.1f), "
-            "rate=%.1f (was %.1f), snr=%.1f, cc=%.3f",
-            candidate.x, candidate.y, refined_length, candidate.length_pixels,
-            refined_rate, rate, measured_snr, best_cc,
+            "CC-confirmed streak at (%.0f,%.0f): refined len=%.1f (was %.1f), rate=%.1f (was %.1f), snr=%.1f, cc=%.3f",
+            candidate.x,
+            candidate.y,
+            refined_length,
+            candidate.length_pixels,
+            refined_rate,
+            rate,
+            measured_snr,
+            best_cc,
         )
 
         # For CC-confirmed, require minimum boxcar SNR.
@@ -653,7 +670,11 @@ def _confirm_single_candidate(
         if de_data is not None and frame_idx in de_data:
             de_map, _ = de_data[frame_idx]
             refined_pos = _find_de_peak_along_streak(
-                de_map, pred_x, pred_y, angle_deg, fwhm,
+                de_map,
+                pred_x,
+                pred_y,
+                angle_deg,
+                fwhm,
                 search_half=fwhm * 5,
             )
             if refined_pos is not None:
@@ -700,7 +721,7 @@ def _confirm_single_candidate(
                 ddec = (dec_list[-1] - dec_list[0]) * 3600
                 rate_ra = float(dra / dt_total)
                 rate_dec = float(ddec / dt_total)
-                rate_arcsec = float(np.sqrt(dra ** 2 + ddec ** 2) / dt_total)
+                rate_arcsec = float(np.sqrt(dra**2 + ddec**2) / dt_total)
 
                 # Recompute pixel-space rate and direction from RA/Dec rates
                 # by projecting the sky velocity through the reference WCS
@@ -708,8 +729,9 @@ def _confirm_single_candidate(
                     ref_px, ref_py = all_frame_positions[frame_indices[0]]
                     sky0 = wcs_obj.pixel_to_world(ref_px, ref_py)
                     # Offset by the velocity * 1 second in RA/Dec
-                    from astropy.coordinates import SkyCoord
                     import astropy.units as u
+                    from astropy.coordinates import SkyCoord
+
                     sky1 = SkyCoord(
                         ra=sky0.ra + (rate_ra / 3600 / np.cos(np.radians(dec_list[0]))) * u.deg,
                         dec=sky0.dec + (rate_dec / 3600) * u.deg,
@@ -717,7 +739,7 @@ def _confirm_single_candidate(
                     px1 = wcs_obj.all_world2pix([[sky1.ra.deg, sky1.dec.deg]], 0)
                     dx_pix = float(px1[0][0]) - ref_px
                     dy_pix = float(px1[0][1]) - ref_py
-                    refined_rate = float(np.sqrt(dx_pix ** 2 + dy_pix ** 2))
+                    refined_rate = float(np.sqrt(dx_pix**2 + dy_pix**2))
                     # Pixel-space angle of the velocity vector
                     velocity_angle = float(np.degrees(np.arctan2(dy_pix, dx_pix))) % 180
                     direction_deg = float(np.degrees(np.arctan2(dy_pix, dx_pix))) % 360
@@ -728,10 +750,12 @@ def _confirm_single_candidate(
                         refined_length = refined_rate * exposure_time
 
                     logger.info(
-                        "Multi-frame refined: rate=%.1f px/s (%.1f\"/s), "
-                        "angle=%.1f°, direction=%.1f°, length=%.1f px",
-                        refined_rate, rate_arcsec, velocity_angle,
-                        direction_deg, refined_length,
+                        'Multi-frame refined: rate=%.1f px/s (%.1f"/s), angle=%.1f°, direction=%.1f°, length=%.1f px',
+                        refined_rate,
+                        rate_arcsec,
+                        velocity_angle,
+                        direction_deg,
+                        refined_length,
                     )
         except Exception as e:
             logger.debug("RA/Dec rate computation failed: %s", e)
@@ -754,6 +778,7 @@ def _confirm_single_candidate(
         if multiband_raw is not None:
             try:
                 from senpai.engine.photometry.color_terms import MultiBandCalibration
+
                 if isinstance(multiband_raw, dict):
                     multiband = MultiBandCalibration.model_validate(multiband_raw)
                 else:
@@ -761,30 +786,36 @@ def _confirm_single_candidate(
             except Exception:
                 pass
         if zp is not None:
+            from senpai.core.config import get_config
             from senpai.engine.detection.streak.sidereal_streak import (
                 measure_streak_candidate_photometry,
             )
-            from senpai.core.config import get_config
 
             config = get_config()
             obs_filter = ref_frame.frame_metadata.observation_filter if ref_frame.frame_metadata else None
 
             # Build a temporary candidate with refined measurements for photometry
             from senpai.engine.detection.streak.sidereal_streak import StreakCandidate
+
             phot_candidate = StreakCandidate(
-                x=float(refined_cx), y=float(refined_cy),
+                x=float(refined_cx),
+                y=float(refined_cy),
                 angle_deg=float(angle_deg),
                 length_pixels=float(refined_length),
                 width_pixels=float(fwhm),
                 peak_snr=float(best_snr),
-                directional_excess=0.0, fractional_excess=0.0,
+                directional_excess=0.0,
+                fractional_excess=0.0,
             )
             try:
                 measure_streak_candidate_photometry(
-                    ref_frame.frame, [phot_candidate],
-                    zero_point=zp, zero_point_err=zp_err,
+                    ref_frame.frame,
+                    [phot_candidate],
+                    zero_point=zp,
+                    zero_point_err=zp_err,
                     exposure_time=exposure_time,
-                    fwhm=fwhm, gain=config.photometry.gain,
+                    fwhm=fwhm,
+                    gain=config.photometry.gain,
                     multiband_calibration=multiband,
                     observation_filter=obs_filter,
                 )
@@ -1000,10 +1031,7 @@ def _de_multiframe_snr(
         if fwd_total_motion >= min_motion_pixels:
             fwd_x = candidate.x + dx + motion_dx
             fwd_y = candidate.y + dy + motion_dy
-            near_star = any(
-                (fwd_x - sx) ** 2 + (fwd_y - sy) ** 2 < star_proximity_sq
-                for sx, sy in other_stars
-            )
+            near_star = any((fwd_x - sx) ** 2 + (fwd_y - sy) ** 2 < star_proximity_sq for sx, sy in other_stars)
             if not near_star:
                 fwd_val = _sample_de_at_position(de_map, fwd_x, fwd_y)
         fwd_de_vals.append(fwd_val)
@@ -1013,10 +1041,7 @@ def _de_multiframe_snr(
         if rev_total_motion >= min_motion_pixels:
             rev_x = candidate.x + dx - motion_dx
             rev_y = candidate.y + dy - motion_dy
-            near_star = any(
-                (rev_x - sx) ** 2 + (rev_y - sy) ** 2 < star_proximity_sq
-                for sx, sy in other_stars
-            )
+            near_star = any((rev_x - sx) ** 2 + (rev_y - sy) ** 2 < star_proximity_sq for sx, sy in other_stars)
             if not near_star:
                 rev_val = _sample_de_at_position(de_map, rev_x, rev_y)
         rev_de_vals.append(rev_val)
@@ -1092,6 +1117,7 @@ def _find_de_peak_along_streak(
         return None
 
     from scipy.ndimage import map_coordinates
+
     profile = map_coordinates(de_map, [sy[valid], sx[valid]], order=1)
     t_valid = t_values[valid]
 
@@ -1145,7 +1171,7 @@ def _find_de_peak_near(
     peak_y = float(y_lo + by)
 
     # Only use the peak if it's within the search radius
-    if (peak_x - pred_x) ** 2 + (peak_y - pred_y) ** 2 > search_radius ** 2:
+    if (peak_x - pred_x) ** 2 + (peak_y - pred_y) ** 2 > search_radius**2:
         return float(pred_x), float(pred_y)  # Fall back to prediction
 
     return peak_x, peak_y
@@ -1208,12 +1234,8 @@ def _deduplicate_confirmed(
         is_dup = False
         for existing in kept:
             # Check if they share a frame with nearby positions
-            for fi, px, py in zip(
-                cs.frame_indices, cs.positions_x, cs.positions_y
-            ):
-                for efi, epx, epy in zip(
-                    existing.frame_indices, existing.positions_x, existing.positions_y
-                ):
+            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y):
+                for efi, epx, epy in zip(existing.frame_indices, existing.positions_x, existing.positions_y):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2
                         if dist_sq < match_radius_sq:
@@ -1335,11 +1357,13 @@ def _propagate_to_frame_candidates(
             zp = phot_summary.get("zero_point")
             zp_err = phot_summary.get("zero_point_err")
             if zp is not None:
+                from senpai.core.config import get_config
                 from senpai.engine.detection.streak.sidereal_streak import (
                     StreakCandidate as SC,
+                )
+                from senpai.engine.detection.streak.sidereal_streak import (
                     measure_streak_candidate_photometry,
                 )
-                from senpai.core.config import get_config
 
                 config = get_config()
                 obs_filter = frame.frame_metadata.observation_filter if frame.frame_metadata else None
@@ -1351,20 +1375,33 @@ def _propagate_to_frame_candidates(
                 if multiband_raw:
                     try:
                         from senpai.engine.photometry.color_terms import MultiBandCalibration
-                        multiband = MultiBandCalibration.model_validate(multiband_raw) if isinstance(multiband_raw, dict) else multiband_raw
+
+                        multiband = (
+                            MultiBandCalibration.model_validate(multiband_raw)
+                            if isinstance(multiband_raw, dict)
+                            else multiband_raw
+                        )
                     except Exception:
                         pass
 
                 tmp = SC(
-                    x=float(streak_x), y=float(streak_y),
-                    angle_deg=float(angle), length_pixels=float(length),
-                    width_pixels=float(fwhm), peak_snr=0.0,
-                    directional_excess=0.0, fractional_excess=0.0,
+                    x=float(streak_x),
+                    y=float(streak_y),
+                    angle_deg=float(angle),
+                    length_pixels=float(length),
+                    width_pixels=float(fwhm),
+                    peak_snr=0.0,
+                    directional_excess=0.0,
+                    fractional_excess=0.0,
                 )
                 try:
                     measure_streak_candidate_photometry(
-                        frame.frame, [tmp], zero_point=zp, zero_point_err=zp_err,
-                        exposure_time=exp_time, fwhm=fwhm,
+                        frame.frame,
+                        [tmp],
+                        zero_point=zp,
+                        zero_point_err=zp_err,
+                        exposure_time=exp_time,
+                        fwhm=fwhm,
                         gain=config.photometry.gain,
                         multiband_calibration=multiband,
                         observation_filter=obs_filter,
@@ -1403,6 +1440,7 @@ def _propagate_to_frame_candidates(
             if img_meta is None:
                 continue
             frame.detections = SatelliteListImage(
-                detections=[], image_metadata=img_meta,
+                detections=[],
+                image_metadata=img_meta,
             )
         frame.detections.detections.append(detection)

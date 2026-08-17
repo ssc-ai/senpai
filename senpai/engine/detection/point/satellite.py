@@ -4,7 +4,6 @@ Satellite point source detection in rate track, assuming WCS already fit
 
 import logging
 import warnings
-from typing import List, Tuple
 
 import cv2
 import matplotlib.pyplot as plt
@@ -60,9 +59,7 @@ def _local_maxima_above(
     # non-maximum candidate is beaten by an immediate neighbor, so the
     # candidate set collapses within the first ring and the remaining
     # offsets scan a tiny survivor list.
-    offsets = sorted(
-        zip(fy - cy, fx - cx, strict=True), key=lambda d: max(abs(d[0]), abs(d[1]))
-    )
+    offsets = sorted(zip(fy - cy, fx - cx, strict=True), key=lambda d: max(abs(d[0]), abs(d[1])))
     for dy, dx in offsets:
         if (dy == 0 and dx == 0) or ys.size == 0:
             continue
@@ -122,9 +119,7 @@ def _dao_sources_at_threshold(
     return catalog.to_table()
 
 
-def cutout_gauss(
-    sub_image: np.ndarray, pixel_seeing: float, plot: bool = False
-) -> Tuple[float, float, float]:
+def cutout_gauss(sub_image: np.ndarray, pixel_seeing: float, plot: bool = False) -> tuple[float, float, float]:
     """
     Fit a 2D Gaussian to a sub-image and return FWHM measurements.
 
@@ -190,7 +185,7 @@ def cutout_gauss(
                     f"y_stddev={fitted_p.y_stddev.value:.2f}"
                 )
     except Exception as e:
-        raise ValueError(f"Gaussian fit failed: {str(e)}") from e
+        raise ValueError(f"Gaussian fit failed: {e!s}") from e
 
     sub_img_fit = fitted_p(x, y)
 
@@ -213,7 +208,7 @@ def cutout_gauss(
 
 def find_two_brightest_points(
     arr: np.ndarray,
-) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+) -> tuple[tuple[int, int], tuple[int, int]]:
     """
     Find the coordinates of the two brightest points in a 2D array.
 
@@ -236,7 +231,7 @@ def find_two_brightest_points(
     return brightest_point_1, brightest_point_2
 
 
-def euclidean_distance(point1: Tuple[int, int], point2: Tuple[int, int]) -> float:
+def euclidean_distance(point1: tuple[int, int], point2: tuple[int, int]) -> float:
     """
     Calculate the Euclidean distance between two points.
 
@@ -250,9 +245,7 @@ def euclidean_distance(point1: Tuple[int, int], point2: Tuple[int, int]) -> floa
     return np.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2)
 
 
-def generate_cutout(
-    frame: np.ndarray, detection: Tuple[float, float], side: int, plot: bool = False
-) -> np.ndarray:
+def generate_cutout(frame: np.ndarray, detection: tuple[float, float], side: int, plot: bool = False) -> np.ndarray:
     """
     Generate a square cutout centered on a detection.
 
@@ -281,10 +274,10 @@ def generate_cutout(
 
 def filter_point_sources(
     frame: RateTrackFrame,
-    detections: List[Tuple[float, float]],
+    detections: list[tuple[float, float]],
     pixel_seeing: float,
     hot_pixel_threshold: float = 0.35,
-) -> List[Tuple[float, float, float]]:
+) -> list[tuple[float, float, float]]:
     """
     Filter out hot pixels, extended sources, and other non-point-like detections.
 
@@ -387,16 +380,13 @@ def filter_point_sources(
             if fwhm_ratio > 2.0:
                 if config.detection.verbose:
                     logger.warning(
-                        f"[{idx + 1}] [FILTERING] PSF aspect ratio too high (ratio={fwhm_ratio:.2f}, "
-                        f"likely a streak)"
+                        f"[{idx + 1}] [FILTERING] PSF aspect ratio too high (ratio={fwhm_ratio:.2f}, likely a streak)"
                     )
                 continue
 
         except Exception as e:
             if config.detection.verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] Failed to fit Gaussian: {str(e)}"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] Failed to fit Gaussian: {e!s}")
             continue
 
         if config.plotting.debug:
@@ -484,16 +474,8 @@ def veto_catalog_star_detections(
 
     # Stars with unknown magnitude are kept in the veto list: unknown could
     # be bright, and a missed veto costs more than a slightly wider net.
-    placed = [
-        star
-        for star in starfield.catalog_stars
-        if star.x is not None and star.y is not None
-    ]
-    veto_stars = [
-        star
-        for star in placed
-        if depth is None or star.magnitude is None or star.magnitude <= depth
-    ]
+    placed = [star for star in starfield.catalog_stars if star.x is not None and star.y is not None]
+    veto_stars = [star for star in placed if depth is None or star.magnitude is None or star.magnitude <= depth]
 
     # Floor the veto list at the brightest 2x-the-candidate-count stars. The
     # limiting-magnitude estimate this depth cut rides on comes from early
@@ -583,17 +565,11 @@ def veto_catalog_star_detections(
             # brightness, that star cannot be what we detected — a bright
             # tracked target must not be vetoed by a faint trail sweeping
             # past it.
-            det_peak = _peak_snr_at(
-                detection[0], detection[1], max(2, int(round(pixel_seeing / 2)))
-            )
+            det_peak = _peak_snr_at(detection[0], detection[1], max(2, int(round(pixel_seeing / 2))))
             veto_this = False
             for si in near_idx:
                 sx, sy = star_xy[si]
-                offsets = (
-                    [-half_trail, -half_trail / 2, 0.0, half_trail / 2, half_trail]
-                    if trailed
-                    else [0.0]
-                )
+                offsets = [-half_trail, -half_trail / 2, 0.0, half_trail / 2, half_trail] if trailed else [0.0]
                 ref_peaks = []
                 for t_off in offsets:
                     px, py = sx + t_off * ux, sy + t_off * uy
@@ -703,9 +679,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
         nonlocal gathered_floor, cand_xy, cand_vals
         if gathered_floor is not None and gathered_floor <= min_threshold:
             return
-        ys, xs, vals = _local_maxima_above(
-            convolved, kernel.mask.astype(bool), min_threshold * kernel.relerr
-        )
+        ys, xs, vals = _local_maxima_above(convolved, kernel.mask.astype(bool), min_threshold * kernel.relerr)
         cand_xy = np.column_stack((xs, ys))
         cand_vals = vals
         gathered_floor = min_threshold
@@ -726,9 +700,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
         )
 
         source_count = 0 if sources is None else len(sources)
-        logger.info(
-            f"Attempt {attempts + 1}: threshold={threshold:.2f}, found {source_count} sources"
-        )
+        logger.info(f"Attempt {attempts + 1}: threshold={threshold:.2f}, found {source_count} sources")
 
         # Binary search adjustment
         if sources is None or source_count < min_sources:
@@ -740,9 +712,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
             # Too many sources, increase threshold
             threshold_min = threshold
             threshold = (threshold + threshold_max) / 2
-            logger.info(
-                f"Too many sources ({source_count}), increasing threshold to {threshold:.2f}"
-            )
+            logger.info(f"Too many sources ({source_count}), increasing threshold to {threshold:.2f}")
         else:
             # Good number of sources
             logger.info(f"Found {source_count} sources with threshold {threshold:.2f}")
@@ -758,16 +728,10 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     # If no sources found after all attempts, return empty list
     if sources is None:
         logger.info("No sources detected by DAOStarFinder")
-        return SatelliteListImage(
-            detections=[], image_metadata=frame.starfield.image_metadata
-        )
+        return SatelliteListImage(detections=[], image_metadata=frame.starfield.image_metadata)
 
     # Extract initial detections
-    initial_detections = [
-        (float(src["xcentroid"]), float(src["ycentroid"]))
-        for src in sources
-        if src["flux"] > 0
-    ]
+    initial_detections = [(float(src["xcentroid"]), float(src["ycentroid"])) for src in sources if src["flux"] > 0]
     logger.info(f"Initial detection found {len(initial_detections)} potential sources")
 
     """
@@ -846,9 +810,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
                 output_file=config.runtime.output_dir / "detections_initial.png",
                 scale=True,
             )
-            logger.info(
-                f"Plotted {len(all_detections)} initial detections to detections_initial.png"
-            )
+            logger.info(f"Plotted {len(all_detections)} initial detections to detections_initial.png")
         except Exception as e:
             logger.warning(f"Failed to plot initial detections: {e}")
 
@@ -857,14 +819,15 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     # shape filter below).  The image and noise enable the brightness gate:
     # position alone must not veto a bright target under a faint star trail.
     all_detections = veto_catalog_star_detections(
-        frame, all_detections, pixel_seeing,
-        image_sub=image_data_sub, noise_std=float(std),
+        frame,
+        all_detections,
+        pixel_seeing,
+        image_sub=image_data_sub,
+        noise_std=float(std),
     )
 
     # Filter out non-point sources
-    filtered_detections = filter_point_sources(
-        frame=frame, detections=all_detections, pixel_seeing=pixel_seeing
-    )
+    filtered_detections = filter_point_sources(frame=frame, detections=all_detections, pixel_seeing=pixel_seeing)
 
     logger.info(f"After filtering, {len(filtered_detections)} point sources remain")
 
@@ -874,9 +837,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
         # Check if this detection is a duplicate (within 1 pixel of an existing detection)
         is_duplicate = False
         for existing in deduplicated_detections:
-            distance = np.sqrt(
-                (detection[0] - existing[0]) ** 2 + (detection[1] - existing[1]) ** 2
-            )
+            distance = np.sqrt((detection[0] - existing[0]) ** 2 + (detection[1] - existing[1]) ** 2)
             if distance < 1.0:  # 1 pixel threshold for considering as duplicate
                 is_duplicate = True
                 break
@@ -885,9 +846,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
             deduplicated_detections.append(detection)
 
     if len(deduplicated_detections) < len(filtered_detections):
-        logger.info(
-            f"After deduplication, {len(deduplicated_detections)} detections remain"
-        )
+        logger.info(f"After deduplication, {len(deduplicated_detections)} detections remain")
 
     # Convert to StarInImage objects
     from senpai.engine.detection.point.sidereal import validate_point_detection
@@ -901,7 +860,8 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
         if not validate_point_detection(image_data, x, y, pixel_seeing):
             logger.debug(
                 "Rejected detection at (%.1f, %.1f): fails local-significance/shape validation",
-                x, y,
+                x,
+                y,
             )
             continue
 
@@ -932,6 +892,4 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     if config.detection.snr_threshold:
         logger.info(f"After SNR filtering, {len(stars)} detections remain")
 
-    return SatelliteListImage(
-        detections=stars, image_metadata=frame.starfield.image_metadata
-    )
+    return SatelliteListImage(detections=stars, image_metadata=frame.starfield.image_metadata)

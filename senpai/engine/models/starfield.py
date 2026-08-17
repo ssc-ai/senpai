@@ -94,9 +94,7 @@ class StarInSpace(BaseModel):
         return round(v, 4)
 
     @field_serializer("magnitudes")
-    def serialize_magnitudes(
-        self, v: dict[str, float] | None
-    ) -> dict[str, float] | None:
+    def serialize_magnitudes(self, v: dict[str, float] | None) -> dict[str, float] | None:
         if v is None or len(v) == 0:
             # If magnitudes is empty but magnitude is set, create magnitudes with primary magnitude
             if self.magnitude is not None:
@@ -111,13 +109,7 @@ class StarListSpace(BaseModel):
 
     def centers_radec(self) -> np.ndarray:
         # Get all valid RA/Dec pairs
-        return np.array(
-            [
-                [star.ra, star.dec]
-                for star in self.stars
-                if star.ra is not None and star.dec is not None
-            ]
-        )
+        return np.array([[star.ra, star.dec] for star in self.stars if star.ra is not None and star.dec is not None])
 
 
 class SatelliteListImage(BaseModel):
@@ -125,12 +117,7 @@ class SatelliteListImage(BaseModel):
     image_metadata: ImageMetadata
 
     def centers_xy(self) -> np.ndarray:
-        return np.array(
-            [
-                [satellite.x, satellite.y, satellite.pixel_fwhm]
-                for satellite in self.detections
-            ]
-        )
+        return np.array([[satellite.x, satellite.y, satellite.pixel_fwhm] for satellite in self.detections])
 
 
 class StarListImage(BaseModel):
@@ -192,22 +179,10 @@ class StarField(BaseModel):
         return self
 
     def centers_radec(self, centers: list[StarInSpace]) -> np.ndarray:
-        return np.array(
-            [
-                [star.ra, star.dec]
-                for star in centers
-                if star.ra is not None and star.dec is not None
-            ]
-        )
+        return np.array([[star.ra, star.dec] for star in centers if star.ra is not None and star.dec is not None])
 
     def centers_xy(self, centers: list[StarInSpace]) -> np.ndarray:
-        return np.array(
-            [
-                [star.x, star.y]
-                for star in centers
-                if star.x is not None and star.y is not None
-            ]
-        )
+        return np.array([[star.x, star.y] for star in centers if star.x is not None and star.y is not None])
 
     def astrometric_centers_radec(self) -> np.ndarray:
         return self.centers_radec(self.astrometric_fit_stars)
@@ -233,8 +208,7 @@ class StarField(BaseModel):
                 [
                     star
                     for star in self.catalog_stars
-                    if star.magnitude is not None
-                    and star.magnitude <= limiting_magnitude
+                    if star.magnitude is not None and star.magnitude <= limiting_magnitude
                 ]
             )
 

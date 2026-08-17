@@ -51,12 +51,16 @@ if __name__ == "__main__":
     group.add_argument("-f", "--fits", help="Path to input FITS file", type=str)
     group.add_argument("-j", "--json", help="Path to input JSON file", type=str)
     parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         help=f"Config file, defaults to {LOCAL_APP_CONFIG_OVERRIDE}",
-        type=str, default=LOCAL_APP_CONFIG_OVERRIDE,
+        type=str,
+        default=LOCAL_APP_CONFIG_OVERRIDE,
     )
     parser.add_argument("-o", "--output_dir", help="Output directory", type=str, default=default_output_dir)
-    parser.add_argument("-P", "--photometry", help="Perform photometry (default: True)", action="store_true", default=None)
+    parser.add_argument(
+        "-P", "--photometry", help="Perform photometry (default: True)", action="store_true", default=None
+    )
     parser.add_argument("-S", "--detect_streaks", help="Detect streaks", action="store_true", default=False)
     parser.add_argument("--profile", help="Profile the processing run", action="store_true", default=False)
     args = parser.parse_args()
@@ -99,9 +103,7 @@ if __name__ == "__main__":
 
         cfg.runtime.run_id = Path(args.fits).stem
         # CLI declares sidereal mode regardless of header
-        senpai_run = process_senpai_collect(
-            [image], id=Path(args.fits).stem, force_track_mode=TrackMode.SIDEREAL
-        )
+        senpai_run = process_senpai_collect([image], id=Path(args.fits).stem, force_track_mode=TrackMode.SIDEREAL)
 
         # Write results
         result = senpai_run.to_result()

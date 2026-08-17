@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -46,6 +46,6 @@ class StarListImageExample(BaseModel):
             )
         return self._value
 
-    def get_openapi_examples(self) -> Dict[str, Dict[str, Any]]:
+    def get_openapi_examples(self) -> dict[str, dict[str, Any]]:
         """Convert to OpenAPI examples format"""
         return [self.value]

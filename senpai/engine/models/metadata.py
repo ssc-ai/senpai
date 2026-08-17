@@ -144,34 +144,44 @@ class FrameMetadata(BaseModel):
         """
         gaps: list[tuple[str, str]] = []
         if self.observation_time is None:
-            gaps.append((
-                "observation time (e.g. DATE-OBS)",
-                "multi-frame time ordering falls back to input order; "
-                "time-based streak/rate correlation is disabled",
-            ))
+            gaps.append(
+                (
+                    "observation time (e.g. DATE-OBS)",
+                    "multi-frame time ordering falls back to input order; "
+                    "time-based streak/rate correlation is disabled",
+                )
+            )
         if self.exposure_time_seconds is None:
-            gaps.append((
-                "exposure time (e.g. EXPTIME)",
-                "exposure-normalized photometry (per-second magnitudes in "
-                "detection/forced photometry) and rate conversion (pixels/s -> "
-                "arcsec/s) are disabled; the catalog zero-point and limiting "
-                "magnitude are still computed (instrumental, count-based)",
-            ))
+            gaps.append(
+                (
+                    "exposure time (e.g. EXPTIME)",
+                    "exposure-normalized photometry (per-second magnitudes in "
+                    "detection/forced photometry) and rate conversion (pixels/s -> "
+                    "arcsec/s) are disabled; the catalog zero-point and limiting "
+                    "magnitude are still computed (instrumental, count-based)",
+                )
+            )
         if self.boresight_ra_degrees is None or self.boresight_dec_degrees is None:
-            gaps.append((
-                "boresight pointing (RA/DEC or AZ/ALT)",
-                "plate solve runs blind (no RA/Dec hint) — slower, no constrained refine tier",
-            ))
+            gaps.append(
+                (
+                    "boresight pointing (RA/DEC or AZ/ALT)",
+                    "plate solve runs blind (no RA/Dec hint) — slower, no constrained refine tier",
+                )
+            )
         if self.site is None:
-            gaps.append((
-                "observing site (lat/long/elev)",
-                "airmass / observability metrics are disabled",
-            ))
+            gaps.append(
+                (
+                    "observing site (lat/long/elev)",
+                    "airmass / observability metrics are disabled",
+                )
+            )
         if self.observation_filter is None:
-            gaps.append((
-                "filter (e.g. FILTER)",
-                "band-specific photometric calibration falls back to a generic band",
-            ))
+            gaps.append(
+                (
+                    "filter (e.g. FILTER)",
+                    "band-specific photometric calibration falls back to a generic band",
+                )
+            )
         return gaps
 
     def log_missing_capabilities(self, logger, label: str = "frame") -> None:
@@ -179,9 +189,7 @@ class FrameMetadata(BaseModel):
         gaps = self.missing_capabilities()
         if not gaps:
             return
-        logger.warning(
-            "%s: %d header value(s) missing — degrading gracefully:", label, len(gaps)
-        )
+        logger.warning("%s: %d header value(s) missing — degrading gracefully:", label, len(gaps))
         for missing, disabled in gaps:
             logger.warning("  - missing %s -> %s", missing, disabled)
 

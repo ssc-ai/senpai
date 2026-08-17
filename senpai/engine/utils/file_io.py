@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def load_senpai_run(json_path: Path | str) -> SenpaiRunResult:
     """Load a SENPAI run from JSON file."""
     try:
-        with open(json_path, "r") as f:
+        with open(json_path) as f:
             data = json.load(f)
         return SenpaiRunResult.model_validate(data)
     except Exception as e:

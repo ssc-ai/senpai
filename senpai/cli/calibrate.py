@@ -34,26 +34,27 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     parser = argparse.ArgumentParser(
-        description="Build a per-night calibration (JSON + plots) from processed "
-                    "batches.",
+        description="Build a per-night calibration (JSON + plots) from processed batches.",
     )
     parser.add_argument(
         "processed_night_dir",
-        help="Processed-night dir (must contain manifest.json), e.g. the output "
-             "of a senpai night run.",
+        help="Processed-night dir (must contain manifest.json), e.g. the output of a senpai night run.",
     )
     parser.add_argument(
-        "-o", "--output_dir", default=None,
-        help="Output dir for calibration JSON + plots "
-             "(default: <night_dir>/calibration/).",
+        "-o",
+        "--output_dir",
+        default=None,
+        help="Output dir for calibration JSON + plots (default: <night_dir>/calibration/).",
     )
     parser.add_argument(
-        "--no-plots", action="store_true", help="Skip plot rendering.",
+        "--no-plots",
+        action="store_true",
+        help="Skip plot rendering.",
     )
     parser.add_argument(
-        "--from-plot-data", action="store_true",
-        help="Skip reprocessing: render plots from an existing "
-             "<output>/plot_data.json instead of the batch JSONs.",
+        "--from-plot-data",
+        action="store_true",
+        help="Skip reprocessing: render plots from an existing <output>/plot_data.json instead of the batch JSONs.",
     )
     args = parser.parse_args(argv)
 

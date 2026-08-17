@@ -53,8 +53,8 @@ def test_partial_overlap_fetches_only_sliver(_calls):
     assert len(_calls) == 2
     # the sliver is a thin RA strip on the right, NOT a ~2° full box
     smin_ra, smax_ra, smin_dec, smax_dec = _calls[1]
-    assert (smax_ra - smin_ra) < 1.0       # thin in RA
-    assert (smax_dec - smin_dec) > 1.5     # full height
+    assert (smax_ra - smin_ra) < 1.0  # thin in RA
+    assert (smax_dec - smin_dec) > 1.5  # full height
     # one region, coverage grew to span both
     assert len(runner._GAIA_SKY_CACHE) == 1
     cov = runner._GAIA_SKY_CACHE[0]["box"]
@@ -62,8 +62,8 @@ def test_partial_overlap_fetches_only_sliver(_calls):
 
 
 def test_diagonal_shift_fetches_two_slivers(_calls):
-    runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)   # call 0
-    runner._query_gaia_sky(255.5, 257.5, 43.5, 45.5, 21, -32)   # RA+Dec shift
+    runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)  # call 0
+    runner._query_gaia_sky(255.5, 257.5, 43.5, 45.5, 21, -32)  # RA+Dec shift
     # box-difference of grown bbox vs prior coverage = an L = 2 strips
     assert len(_calls) == 3  # initial + 2 slivers
     assert len(runner._GAIA_SKY_CACHE) == 1

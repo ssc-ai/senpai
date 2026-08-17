@@ -4,14 +4,14 @@ import time
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 from astropy.wcs import WCS
 
-from senpai.catalog import sstrc7_source as sstr7
-import senpai.catalog.sdss as sdss
 import senpai.catalog.gaia as gaia
+import senpai.catalog.sdss as sdss
+from senpai.catalog import sstrc7_source as sstr7
 from senpai.catalog.constants import CatalogType
 from senpai.core.config import get_config, get_or_initialize_config, settings
 from senpai.engine.models.astrometry import WCSModel
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_catalog_coverage(
-    stars_from_catalog: List[Dict[str, Any]],
-    star_list: List[StarInSpace],
+    stars_from_catalog: list[dict[str, Any]],
+    star_list: list[StarInSpace],
     pixel_width: float,
     pixel_height: float,
     catalog_type: str,
@@ -69,9 +69,7 @@ def _validate_catalog_coverage(
 
     # Typical star densities: ~1000-10000 stars/deg² at magnitude ~20
     # Warn if density is very low (< 10 stars/deg²)
-    if (
-        stars_per_deg2 < 10 and field_area_deg2 > 0.01
-    ):  # Only warn for fields > 0.01 deg²
+    if stars_per_deg2 < 10 and field_area_deg2 > 0.01:  # Only warn for fields > 0.01 deg²
         logger.warning(
             f"{catalog_type} catalog returned very sparse coverage: "
             f"{len(stars_from_catalog)} stars ({stars_per_deg2:.1f} stars/deg²) "
@@ -105,7 +103,7 @@ def _validate_catalog_coverage(
         if coverage_fraction < 0.25 and len(star_list) > 5:
             logger.warning(
                 f"{catalog_type} catalog stars are clustered in only "
-                f"{cells_with_stars}/{total_cells} grid cells ({coverage_fraction*100:.0f}% coverage). "
+                f"{cells_with_stars}/{total_cells} grid cells ({coverage_fraction * 100:.0f}% coverage). "
                 f"This may indicate incomplete catalog coverage or query bounds issues."
             )
 
@@ -114,7 +112,7 @@ def _validate_catalog_coverage(
         in_bounds_fraction = len(star_list) / len(stars_from_catalog)
         if in_bounds_fraction < 0.1 and len(stars_from_catalog) > 10:
             logger.warning(
-                f"Only {len(star_list)}/{len(stars_from_catalog)} ({in_bounds_fraction*100:.0f}%) "
+                f"Only {len(star_list)}/{len(stars_from_catalog)} ({in_bounds_fraction * 100:.0f}%) "
                 f"{catalog_type} catalog stars are within image bounds. "
                 f"This may indicate WCS transformation issues or query bounds are too large."
             )
@@ -177,11 +175,7 @@ def _query_catalog_sstr7_cached(
     astropy_wcs = WCS(header)
     wcs = WCSModel.from_astropy_wcs(astropy_wcs)
 
-    proper_motion_date = (
-        datetime.fromtimestamp(proper_motion_date_timestamp)
-        if proper_motion_date_timestamp
-        else None
-    )
+    proper_motion_date = datetime.fromtimestamp(proper_motion_date_timestamp) if proper_motion_date_timestamp else None
 
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
@@ -204,9 +198,7 @@ def _query_catalog_sstr7_cached(
     # then centers the box off-frame, leaving part of the image outside the queried region
     # with its stars simply absent.
     header = astropy_wcs.to_header()
-    center_ra, center_dec = astropy_wcs.wcs_pix2world(
-        [[pixel_width / 2, pixel_height / 2]], 0
-    )[0]
+    center_ra, center_dec = astropy_wcs.wcs_pix2world([[pixel_width / 2, pixel_height / 2]], 0)[0]
 
     # Extract rotation from WCS
     rotation = 0.0
@@ -309,9 +301,7 @@ def query_catalog_sstr7(
     # Convert inputs to hashable types
     wcs_tuple = _make_wcs_hashable(wcs)
     catalog_path_str = str(catalog_path)
-    proper_motion_timestamp = (
-        proper_motion_date.timestamp() if proper_motion_date else None
-    )
+    proper_motion_timestamp = proper_motion_date.timestamp() if proper_motion_date else None
 
     logger.info("building SENPAI catalog")
     start_time = time.time()
@@ -330,9 +320,7 @@ def query_catalog_sstr7(
         max_stars,
     )
 
-    logger.info(
-        f"Found {len(star_list)} stars in catalog in {time.time() - start_time:.2f} seconds"
-    )
+    logger.info(f"Found {len(star_list)} stars in catalog in {time.time() - start_time:.2f} seconds")
 
     # Calculate bounds for validation
     astropy_wcs = wcs.to_astropy_wcs()
@@ -390,9 +378,7 @@ def query_catalog_sdss(
 
     # Get center coordinates
     header = astropy_wcs.to_header()
-    center_ra, center_dec = astropy_wcs.wcs_pix2world(
-        [[header["CRPIX1"], header["CRPIX2"]]], 0
-    )[0]
+    center_ra, center_dec = astropy_wcs.wcs_pix2world([[header["CRPIX1"], header["CRPIX2"]]], 0)[0]
 
     logger.info("Querying SDSS catalog online")
     start_time = time.time()
@@ -486,9 +472,7 @@ def query_catalog_sdss(
                 )
             )
 
-    logger.info(
-        f"Found {len(star_list)} stars in SDSS catalog in {time.time() - start_time:.2f} seconds"
-    )
+    logger.info(f"Found {len(star_list)} stars in SDSS catalog in {time.time() - start_time:.2f} seconds")
 
     # Validate catalog coverage
     _validate_catalog_coverage(
@@ -553,9 +537,9 @@ def _trim_sky_cache() -> None:
         total -= len(dropped["stars"])
         logger.info(
             "Gaia sky-cache EVICT: region %.0f deg² / %d stars (total now %d)",
-            (dropped["box"][1] - dropped["box"][0])
-            * (dropped["box"][3] - dropped["box"][2]),
-            len(dropped["stars"]), total,
+            (dropped["box"][1] - dropped["box"][0]) * (dropped["box"][3] - dropped["box"][2]),
+            len(dropped["stars"]),
+            total,
         )
 
 
@@ -564,8 +548,7 @@ def _box_overlap(a, b) -> bool:
 
 
 def _box_contains(outer, inner) -> bool:
-    return (outer[0] <= inner[0] and outer[1] >= inner[1]
-            and outer[2] <= inner[2] and outer[3] >= inner[3])
+    return outer[0] <= inner[0] and outer[1] >= inner[1] and outer[2] <= inner[2] and outer[3] >= inner[3]
 
 
 def _box_difference_strips(C, U):
@@ -592,8 +575,12 @@ def _sky_dedup_key(s):
 
 
 def _query_gaia_sky(
-    min_ra: float, max_ra: float, min_dec: float, max_dec: float,
-    faint_lim: float | None, bright_lim: float | None,
+    min_ra: float,
+    max_ra: float,
+    min_dec: float,
+    max_dec: float,
+    faint_lim: float | None,
+    bright_lim: float | None,
 ) -> list[dict[str, Any]]:
     """Online Gaia query with a growing sky-region cache (see note above).
 
@@ -610,12 +597,21 @@ def _query_gaia_sky(
             from senpai.catalog import gaia_local
 
             return gaia_local.query_by_ra_dec_bounds(
-                box[0], box[1], box[2], box[3],
-                faint_lim=faint_lim, bright_lim=bright_lim, mirror_dir=sc.path,
+                box[0],
+                box[1],
+                box[2],
+                box[3],
+                faint_lim=faint_lim,
+                bright_lim=bright_lim,
+                mirror_dir=sc.path,
             )
         return gaia.query_by_ra_dec_bounds(
-            min_ra=box[0], max_ra=box[1], min_dec=box[2], max_dec=box[3],
-            faint_lim=faint_lim, bright_lim=bright_lim,
+            min_ra=box[0],
+            max_ra=box[1],
+            min_dec=box[2],
+            max_dec=box[3],
+            faint_lim=faint_lim,
+            bright_lim=bright_lim,
         )
 
     def _within_B(stars):
@@ -623,16 +619,14 @@ def _query_gaia_sky(
         # would return (radians stored on each star).
         lo_ra, hi_ra = np.deg2rad(min_ra), np.deg2rad(max_ra)
         lo_dec, hi_dec = np.deg2rad(min_dec), np.deg2rad(max_dec)
-        return [s for s in stars
-                if lo_ra <= s["ra"] <= hi_ra and lo_dec <= s["dec"] <= hi_dec]
+        return [s for s in stars if lo_ra <= s["ra"] <= hi_ra and lo_dec <= s["dec"] <= hi_dec]
 
     # RA-wrap fields: skip the cache rather than handle 0/360 seam geometry.
     if min_ra < 0.0 or max_ra > 360.0 or min_ra >= max_ra:
         return _online(B)
 
     pad = _GAIA_SKY_PAD_DEG
-    Bp = (min_ra - pad, max_ra + pad,
-          max(-90.0, min_dec - pad), min(90.0, max_dec + pad))
+    Bp = (min_ra - pad, max_ra + pad, max(-90.0, min_dec - pad), min(90.0, max_dec + pad))
 
     for region in _GAIA_SKY_CACHE:
         if region["fb"] != key_fb or not _box_overlap(region["box"], B):
@@ -660,9 +654,13 @@ def _query_gaia_sky(
                     added += 1
         region["box"] = U
         logger.info(
-            "Gaia sky-cache PARTIAL: %d sliver(s), +%d stars (reused overlap); "
-            "coverage now [%.3f,%.3f]x[%.3f,%.3f]",
-            len(strips), added, U[0], U[1], U[2], U[3],
+            "Gaia sky-cache PARTIAL: %d sliver(s), +%d stars (reused overlap); coverage now [%.3f,%.3f]x[%.3f,%.3f]",
+            len(strips),
+            added,
+            U[0],
+            U[1],
+            U[2],
+            U[3],
         )
         _trim_sky_cache()
         return _within_B(region["stars"])
@@ -714,19 +712,13 @@ def _query_catalog_gaia_cached(
     astropy_wcs = WCS(header)
     wcs = WCSModel.from_astropy_wcs(astropy_wcs)
 
-    proper_motion_date = (
-        datetime.fromtimestamp(proper_motion_date_timestamp)
-        if proper_motion_date_timestamp
-        else None
-    )
+    proper_motion_date = datetime.fromtimestamp(proper_motion_date_timestamp) if proper_motion_date_timestamp else None
 
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
     header = astropy_wcs.to_header()
-    center_ra, center_dec = astropy_wcs.wcs_pix2world(
-        [[header["CRPIX1"], header["CRPIX2"]]], 0
-    )[0]
+    center_ra, center_dec = astropy_wcs.wcs_pix2world([[header["CRPIX1"], header["CRPIX2"]]], 0)[0]
 
     # Use WCS to transform image corners to world coordinates
     corners_pix = np.array(
@@ -761,9 +753,7 @@ def _query_catalog_gaia_cached(
     # the same pointing reuses the prior online fetch instead of re-querying the
     # overlapping field. Returns a superset of the box; the in-frame pixel filter
     # below trims it.
-    stars_from_catalog = _query_gaia_sky(
-        min_ra, max_ra, min_dec, max_dec, faint_lim, bright_lim
-    )
+    stars_from_catalog = _query_gaia_sky(min_ra, max_ra, min_dec, max_dec, faint_lim, bright_lim)
 
     # Limit number of stars if requested
     if max_stars is not None and len(stars_from_catalog) > max_stars:
@@ -778,12 +768,8 @@ def _query_catalog_gaia_cached(
         logger.info(f"Applying proper motion for {proper_motion_date}")
         j2000 = datetime(2000, 1, 1)
         seconds_elapsed = (proper_motion_date - j2000).total_seconds()
-        ra_rad = ra_rad + np.array(
-            [s["ra_pm"] for s in stars_from_catalog], dtype=float
-        ) * seconds_elapsed
-        dec_rad = dec_rad + np.array(
-            [s["dec_pm"] for s in stars_from_catalog], dtype=float
-        ) * seconds_elapsed
+        ra_rad = ra_rad + np.array([s["ra_pm"] for s in stars_from_catalog], dtype=float) * seconds_elapsed
+        dec_rad = dec_rad + np.array([s["dec_pm"] for s in stars_from_catalog], dtype=float) * seconds_elapsed
 
     # Vectorize the coordinate transformation
     ra_deg = np.rad2deg(ra_rad)
@@ -844,9 +830,7 @@ def query_catalog_gaia(
 
     # Convert WCS to hashable tuple and timestamp for caching
     wcs_tuple = _make_wcs_hashable(wcs)
-    proper_motion_timestamp = (
-        proper_motion_date.timestamp() if proper_motion_date else None
-    )
+    proper_motion_timestamp = proper_motion_date.timestamp() if proper_motion_date else None
 
     stars_from_catalog, image_metadata = _query_catalog_gaia_cached(
         wcs_tuple, faint_lim, bright_lim, proper_motion_timestamp, max_stars
@@ -909,9 +893,7 @@ def query_catalog_gaia(
             )
         )
 
-    logger.info(
-        f"Found {len(star_list)} stars in Gaia catalog in {time.time() - start_time:.2f} seconds"
-    )
+    logger.info(f"Found {len(star_list)} stars in Gaia catalog in {time.time() - start_time:.2f} seconds")
 
     # Validate catalog coverage
     _validate_catalog_coverage(
@@ -978,18 +960,18 @@ def _examine_gaia_local_catalog(catalog_path: str) -> bool:
         return False
     try:
         with open(index_path) as fh:
-            tiles = (json.load(fh).get("tiles") or {})
+            tiles = json.load(fh).get("tiles") or {}
     except Exception as e:
         logger.error("gaia_local index unreadable: %s", e)
         return False
     if not tiles:
         logger.error("gaia_local index has no tiles")
         return False
-    missing = [m["file"] for m in tiles.values()
-               if not os.path.isfile(os.path.join(catalog_path, m["file"]))]
+    missing = [m["file"] for m in tiles.values() if not os.path.isfile(os.path.join(catalog_path, m["file"]))]
     if missing:
-        logger.error("gaia_local mirror incomplete: %d/%d tiles missing (e.g. %s)",
-                     len(missing), len(tiles), missing[0])
+        logger.error(
+            "gaia_local mirror incomplete: %d/%d tiles missing (e.g. %s)", len(missing), len(tiles), missing[0]
+        )
         return False
     logger.info("gaia_local mirror OK: %d tiles at %s", len(tiles), catalog_path)
     return True
@@ -1052,8 +1034,7 @@ def enforce_catalog():
 
         if catalog_type == "sstrc7" and catalog_path:
             raise RuntimeError(
-                f"Catalog {catalog_type} is missing or incomplete. "
-                f"Run: python -m sstrc7 get --path {catalog_path}"
+                f"Catalog {catalog_type} is missing or incomplete. Run: python -m sstrc7 get --path {catalog_path}"
             )
         else:
             raise RuntimeError(f"Catalog {catalog_type} is missing or incomplete")
@@ -1087,24 +1068,16 @@ def query_catalog(
     catalog_path = config.star_catalog.path
 
     if catalog == "sstrc7":
-        result = query_catalog_sstr7(
-            wcs, catalog_path, faint_lim, bright_lim, proper_motion_date, max_stars
-        )
+        result = query_catalog_sstr7(wcs, catalog_path, faint_lim, bright_lim, proper_motion_date, max_stars)
     elif catalog == "sdss":
-        result = query_catalog_sdss(
-            wcs, faint_lim, bright_lim, proper_motion_date, max_stars
-        )
+        result = query_catalog_sdss(wcs, faint_lim, bright_lim, proper_motion_date, max_stars)
     elif catalog in ("gaia", "gaia_local"):
         # gaia_local reuses the whole gaia path (projection, SIP, sliver cache);
         # only the underlying fetch swaps online TAP for the local mirror (see
         # _query_gaia_sky / gaia_local).
-        result = query_catalog_gaia(
-            wcs, faint_lim, bright_lim, proper_motion_date, max_stars
-        )
+        result = query_catalog_gaia(wcs, faint_lim, bright_lim, proper_motion_date, max_stars)
     else:
-        raise ValueError(
-            f"Catalog type {catalog} not supported, choose from: sstrc7, sdss, gaia, gaia_local"
-        )
+        raise ValueError(f"Catalog type {catalog} not supported, choose from: sstrc7, sdss, gaia, gaia_local")
 
     # Bound dense fields for full-catalog callers (max_stars=None): a galactic-
     # plane frame can return 70k+ stars, and every downstream structure (pydantic
@@ -1117,8 +1090,10 @@ def query_catalog(
         n_before = len(result.stars)
         result.stars = _stratified_mag_cap(result.stars, cap)
         logger.info(
-            "Capped catalog %d -> %d stars (magnitude-stratified; "
-            "star_catalog.max_stars_per_frame=%d)", n_before, len(result.stars), cap,
+            "Capped catalog %d -> %d stars (magnitude-stratified; star_catalog.max_stars_per_frame=%d)",
+            n_before,
+            len(result.stars),
+            cap,
         )
 
     if apply_sip and result.stars:

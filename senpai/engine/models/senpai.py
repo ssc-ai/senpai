@@ -38,9 +38,9 @@ def _starfield_for_output(sf: StarField | None) -> StarField | None:
     full list."""
     if sf is None or not sf.catalog_stars or len(sf.catalog_stars) <= MAX_SERIALIZED_CATALOG_STARS:
         return sf
-    brightest = sorted(
-        sf.catalog_stars, key=lambda s: (s.magnitude is None, s.magnitude or 0.0)
-    )[:MAX_SERIALIZED_CATALOG_STARS]
+    brightest = sorted(sf.catalog_stars, key=lambda s: (s.magnitude is None, s.magnitude or 0.0))[
+        :MAX_SERIALIZED_CATALOG_STARS
+    ]
     return sf.model_copy(update={"catalog_stars": brightest})
 
 
@@ -200,9 +200,14 @@ class CorrelatedStreak(BaseModel):
         return round(v, 2)
 
     @field_serializer(
-        "direction_deg", "rate_pixels_per_sec", "rate_arcsec_per_sec",
-        "rate_ra_arcsec_per_sec", "rate_dec_arcsec_per_sec",
-        "length_pixels", "best_snr", "best_flux",
+        "direction_deg",
+        "rate_pixels_per_sec",
+        "rate_arcsec_per_sec",
+        "rate_ra_arcsec_per_sec",
+        "rate_dec_arcsec_per_sec",
+        "length_pixels",
+        "best_snr",
+        "best_flux",
     )
     def _round_optional(self, v: float | None) -> float | None:
         return round(v, 3) if v is not None else None
@@ -299,9 +304,9 @@ class SenpaiRun(BaseModel):
                 untimed.append(frame)
 
         timed.sort(key=lambda x: x[1])
-        ordered: list[tuple[ProcessedFitsImage, datetime | None]] = (
-            [(f, t) for f, t in timed] + [(f, None) for f in untimed]
-        )
+        ordered: list[tuple[ProcessedFitsImage, datetime | None]] = [(f, t) for f, t in timed] + [
+            (f, None) for f in untimed
+        ]
 
         # Process frames in time order and assign sequential indexes
         for index, (frame, timestamp) in enumerate(ordered):
@@ -314,11 +319,14 @@ class SenpaiRun(BaseModel):
             header_track_type = frame_metadata.track_mode
             fname = Path(frame.file_path).name if frame.file_path else "?"
             if force_track_mode is not None:
-                if (header_track_type not in (None, TrackMode.UNKNOWN)
-                        and header_track_type != force_track_mode):
+                if header_track_type not in (None, TrackMode.UNKNOWN) and header_track_type != force_track_mode:
                     logger.warning(
                         "Frame %d (%s): header reports %s but CLI forced %s — processing as %s",
-                        index, fname, header_track_type.value, force_track_mode.value, force_track_mode.value,
+                        index,
+                        fname,
+                        header_track_type.value,
+                        force_track_mode.value,
+                        force_track_mode.value,
                     )
                 track_type, src, detail = force_track_mode, "forced", ""
             else:
@@ -337,9 +345,14 @@ class SenpaiRun(BaseModel):
             # Surface anything that didn't come straight from TRKMODE, so a
             # rate/pixel-derived routing is visible in the log.
             if src != "trkmode":
-                logger.info("Frame %d (%s): track mode -> %s via %s%s",
-                            index, fname, track_type.value, src,
-                            f" [{detail}]" if detail else "")
+                logger.info(
+                    "Frame %d (%s): track mode -> %s via %s%s",
+                    index,
+                    fname,
+                    track_type.value,
+                    src,
+                    f" [{detail}]" if detail else "",
+                )
 
             if track_type == TrackMode.RATE:
                 model = RateTrackFrame
@@ -370,12 +383,19 @@ class SenpaiRun(BaseModel):
             rate_ra = rf.frame_metadata.track_rate_ra_arcsec_per_second if rf.frame_metadata else None
             rate_dec = rf.frame_metadata.track_rate_dec_arcsec_per_second if rf.frame_metadata else None
             logger.info(
-                "Frame %d: RATE      %s  exp=%.1fs  time=%s  rate=(%.1f,%.1f)\"/s",
-                rf.index, fname, exp or 0, ts, rate_ra or 0, rate_dec or 0,
+                'Frame %d: RATE      %s  exp=%.1fs  time=%s  rate=(%.1f,%.1f)"/s',
+                rf.index,
+                fname,
+                exp or 0,
+                ts,
+                rate_ra or 0,
+                rate_dec or 0,
             )
         logger.info(
             "Organized %d frames: %d sidereal + %d rate",
-            len(frames), len(sidereal_frames), len(rate_track_frames),
+            len(frames),
+            len(sidereal_frames),
+            len(rate_track_frames),
         )
 
         return cls(

@@ -277,7 +277,9 @@ def test_run_result_records_aperture_policy():
         photometry_summary={"n_stars": 3, "aperture_geometry": {"shape": "circle"}},
     )
     run = SenpaiRun(
-        id="t", num_frames=1, collect_metadata=CollectionMetadata(),
+        id="t",
+        num_frames=1,
+        collect_metadata=CollectionMetadata(),
         sidereal_frames=[frame],
     )
     block = run.to_result().photometry
@@ -296,7 +298,9 @@ def test_run_result_omits_photometry_block_without_photometry():
 
     frame = SiderealFrame(frame=_image(np.zeros((50, 50))), index=0, photometry_summary=None)
     run = SenpaiRun(
-        id="t", num_frames=1, collect_metadata=CollectionMetadata(),
+        id="t",
+        num_frames=1,
+        collect_metadata=CollectionMetadata(),
         sidereal_frames=[frame],
     )
     assert run.to_result().photometry is None
@@ -488,9 +492,15 @@ def test_compute_completeness_curve_rolls_over():
             star = StarInSpace(ra=0, dec=0, x=50.0, y=50.0, magnitude=float(mag), magnitudes={"Johnson_V": float(mag)})
             results.append(
                 SimplePhotometryResult(
-                    star=star, flux=max(snr, 0.1), flux_err=1.0, snr=snr,
-                    background_level=0.0, background_std=1.0, aperture_radius=7.0,
-                    crowding_factor=0.0, quality_flag=snr >= 3.0,
+                    star=star,
+                    flux=max(snr, 0.1),
+                    flux_err=1.0,
+                    snr=snr,
+                    background_level=0.0,
+                    background_std=1.0,
+                    aperture_radius=7.0,
+                    crowding_factor=0.0,
+                    quality_flag=snr >= 3.0,
                 )
             )
     sf = _starfield([r.star for r in results])
@@ -505,8 +515,15 @@ def test_compute_completeness_curve_empty_when_too_few():
     star = StarInSpace(ra=0, dec=0, x=50, y=50, magnitude=14.0, magnitudes={"Johnson_V": 14.0})
     res = [
         SimplePhotometryResult(
-            star=star, flux=100.0, flux_err=1.0, snr=50.0, background_level=0.0,
-            background_std=1.0, aperture_radius=7.0, crowding_factor=0.0, quality_flag=True,
+            star=star,
+            flux=100.0,
+            flux_err=1.0,
+            snr=50.0,
+            background_level=0.0,
+            background_std=1.0,
+            aperture_radius=7.0,
+            crowding_factor=0.0,
+            quality_flag=True,
         )
     ]
     sf = _starfield([star])

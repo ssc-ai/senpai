@@ -145,7 +145,7 @@ class StarCatalogConfig(BaseModel):
     """Star catalog configuration"""
 
     type: str = Field(description="Star catalog type")
-    path: Optional[str] = Field(
+    path: str | None = Field(
         default=None,
         description="Star catalog path (required for local catalogs like SSTRC7, not needed for online catalogs like SDSS)",
     )
@@ -317,13 +317,11 @@ class StreakDetectionConfig(BaseModel):
     )
     reconcile_length_tolerance: float = Field(
         default=0.5,
-        description="Fractional disagreement with rate x exposure beyond which "
-        "the extracted streak length is replaced",
+        description="Fractional disagreement with rate x exposure beyond which the extracted streak length is replaced",
     )
     reconcile_angle_tolerance_deg: float = Field(
         default=25.0,
-        description="Misalignment between streak axis and drift axis beyond "
-        "which the extracted angle is replaced",
+        description="Misalignment between streak axis and drift axis beyond which the extracted angle is replaced",
     )
 
 
@@ -408,12 +406,8 @@ class WCSValidationConfig(BaseModel):
         default=0.10,
         description="Pass additionally requires frac_significant >= control fraction + this margin",
     )
-    control_offset_px: int = Field(
-        default=300, description="Pixel offset applied to predictions for the control grid"
-    )
-    background_block_px: int = Field(
-        default=32, description="Block size for the coarse median background model"
-    )
+    control_offset_px: int = Field(default=300, description="Pixel offset applied to predictions for the control grid")
+    background_block_px: int = Field(default=32, description="Block size for the coarse median background model")
 
 
 class ChainGateConfig(BaseModel):
@@ -427,9 +421,7 @@ class ChainGateConfig(BaseModel):
     """
 
     enable: bool = Field(default=True, description="Enable the shift-chain consistency gate")
-    min_history_hops: int = Field(
-        default=2, description="Accepted rate-rate hops required before the gate activates"
-    )
+    min_history_hops: int = Field(default=2, description="Accepted rate-rate hops required before the gate activates")
     max_rate_deviation_fraction: float = Field(
         default=0.5,
         description="Reject a hop whose drift rate deviates from the chain median by more than "

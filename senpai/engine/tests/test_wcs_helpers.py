@@ -63,10 +63,7 @@ def _match_reference(stars, detected_points, max_distance=20):
 
 def test_match_stars_to_detections_matches_reference():
     rng = np.random.default_rng(9)
-    stars = [
-        StarInImage(x=float(x), y=float(y), counts=1.0)
-        for x, y in rng.uniform(0, 2000, (300, 2))
-    ]
+    stars = [StarInImage(x=float(x), y=float(y), counts=1.0) for x, y in rng.uniform(0, 2000, (300, 2))]
     stars[7] = None  # None stars get infinite-cost rows
     # Detections: noisy copies of a subset of stars plus a few spurious points
     dets = [(s.y + rng.normal(0, 2), s.x + rng.normal(0, 2)) for s in stars[:40] if s]

@@ -2,7 +2,6 @@ import base64
 import logging
 from enum import Enum
 from io import BytesIO
-from typing import Dict, List, Optional, Union
 
 import numpy as np
 from astropy.io import fits
@@ -29,7 +28,7 @@ class ProcessingStep(Enum):
 
 class ProcessingMetadata(BaseModel):
     step_type: ProcessingStep
-    parameters: Dict[str, Union[float, str, int]]  # Store relevant parameters for each step
+    parameters: dict[str, float | str | int]  # Store relevant parameters for each step
 
 
 class ProcessedFitsImage(BaseModel):
@@ -40,17 +39,17 @@ class ProcessedFitsImage(BaseModel):
     header: fits.Header
 
     # List of processing steps applied, in order
-    processing_history: List[ProcessingMetadata] = []
+    processing_history: list[ProcessingMetadata] = []
 
     # Optional storage of intermediate data (like flat frames, background models, etc.)
     # Keys are ProcessingStep values, values are the corresponding correction arrays
-    correction_frames: Optional[Dict[ProcessingStep, np.ndarray]] = None
+    correction_frames: dict[ProcessingStep, np.ndarray] | None = None
 
     # processed data to store if FWHM_OPTIMIZATION is applied
-    processed_unscaled_data: Optional[np.ndarray] = None
+    processed_unscaled_data: np.ndarray | None = None
 
     # Original raw data (optional)
-    original_data: Optional[np.ndarray] = None
+    original_data: np.ndarray | None = None
 
     # data_type for input image
     data_type: np.dtype

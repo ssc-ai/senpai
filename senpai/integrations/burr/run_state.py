@@ -15,13 +15,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Commands that produced one or more FITS frames. Everything else (run started,
 # catalog updates, map creation, rejected flats) is purely bookkeeping.
-COLLECTION_COMMANDS: frozenset[str] = frozenset({
-    "calsat_observed",
-    "coverage_point_observed",
-    "flat_field_saved",
-    "photometric_standards_observed",  # not yet observed in logs but allowed
-    "lunar_background_observed",
-})
+COLLECTION_COMMANDS: frozenset[str] = frozenset(
+    {
+        "calsat_observed",
+        "coverage_point_observed",
+        "flat_field_saved",
+        "photometric_standards_observed",  # not yet observed in logs but allowed
+        "lunar_background_observed",
+    }
+)
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
@@ -125,7 +127,7 @@ class RunState(BaseModel):
     executed_commands: list[ExecutedCommand] = Field(default_factory=list)
 
     @classmethod
-    def load(cls, path: str | Path) -> "RunState":
+    def load(cls, path: str | Path) -> RunState:
 
         text = Path(path).read_text()
         return cls.model_validate_json(text)

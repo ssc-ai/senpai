@@ -56,9 +56,7 @@ def _use_pipeline_mode(monkeypatch, mode: str):
     """
     base = get_or_initialize_config(CONFIG_DIR / "local.yaml")
     astrometry = base.astrometry.model_copy(update={"pipeline_mode": mode})
-    monkeypatch.setattr(
-        cfg_mod, "_config_instance", base.model_copy(update={"astrometry": astrometry})
-    )
+    monkeypatch.setattr(cfg_mod, "_config_instance", base.model_copy(update={"astrometry": astrometry}))
 
 
 def _fake_image(width: int = 64, height: int = 64) -> ProcessedFitsImage:
@@ -135,9 +133,7 @@ def stubbed_stages(monkeypatch):
 
     def fake_catalog(wcs, max_stars=None, **kwargs):
         calls["catalog"] += 1
-        return StarListSpace(
-            stars=[], image_metadata=ImageMetadata(width=64, height=64)
-        )
+        return StarListSpace(stars=[], image_metadata=ImageMetadata(width=64, height=64))
 
     def fake_catalog_fwhm(*args, **kwargs):
         calls["catalog_fwhm"] += 1
@@ -159,12 +155,8 @@ def stubbed_stages(monkeypatch):
     monkeypatch.setattr(sidereal_mod, "solve_field", fake_solve)
     monkeypatch.setattr(sidereal_mod, "refine_sidereal_frame", fake_refine)
     monkeypatch.setattr(sidereal_mod, "query_catalog", fake_catalog)
-    monkeypatch.setattr(
-        sidereal_mod, "measure_fwhm_from_catalog_stars", fake_catalog_fwhm
-    )
-    monkeypatch.setattr(
-        sidereal_mod, "extract_boresight_from_header", lambda header: (None, None)
-    )
+    monkeypatch.setattr(sidereal_mod, "measure_fwhm_from_catalog_stars", fake_catalog_fwhm)
+    monkeypatch.setattr(sidereal_mod, "extract_boresight_from_header", lambda header: (None, None))
     return calls
 
 
@@ -294,19 +286,13 @@ def stubbed_collect(monkeypatch):
             id=id,
             num_frames=len(frames),
             collect_metadata=CollectionMetadata(),
-            sidereal_frames=[
-                SiderealFrame(frame=frame, index=i) for i, frame in enumerate(frames)
-            ],
+            sidereal_frames=[SiderealFrame(frame=frame, index=i) for i, frame in enumerate(frames)],
         )
 
-    monkeypatch.setattr(
-        SenpaiRun, "organize_senpai_frames", classmethod(fake_organize)
-    )
+    monkeypatch.setattr(SenpaiRun, "organize_senpai_frames", classmethod(fake_organize))
 
 
-def test_collect_detect_mode_completes_without_a_wcs(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+def test_collect_detect_mode_completes_without_a_wcs(monkeypatch, stubbed_stages, stubbed_collect):
     """fit=False must not land the run in the 'No valid WCS solution found' state."""
     _use_pipeline_mode(monkeypatch, "detect")
 
@@ -317,9 +303,7 @@ def test_collect_detect_mode_completes_without_a_wcs(
     monkeypatch.setattr(collect_mod, "solve_shift", _unreachable)
     monkeypatch.setattr(collect_mod, "refine_sidereal_frame", _unreachable)
 
-    senpai_run = collect_mod.process_senpai_collect(
-        [_fake_image(), _fake_image()], id="focus-sweep"
-    )
+    senpai_run = collect_mod.process_senpai_collect([_fake_image(), _fake_image()], id="focus-sweep")
 
     assert senpai_run.completed is True
     assert senpai_run.error_message is None
@@ -343,9 +327,7 @@ def test_collect_detect_mode_completes_without_a_wcs(
         assert frame.photometry_summary is None
 
 
-def test_collect_detect_solve_mode_completes_with_a_wcs(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+def test_collect_detect_solve_mode_completes_with_a_wcs(monkeypatch, stubbed_stages, stubbed_collect):
     _use_pipeline_mode(monkeypatch, "detect_solve")
 
     senpai_run = collect_mod.process_senpai_collect([_fake_image()], id="focus-sweep")
@@ -361,9 +343,7 @@ def test_collect_detect_solve_mode_completes_with_a_wcs(
     assert starfield.fwhm_stats.median_fwhm == DETECTION_FWHM
 
 
-def test_collect_full_mode_unsolved_frame_still_errors(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+def test_collect_full_mode_unsolved_frame_still_errors(monkeypatch, stubbed_stages, stubbed_collect):
     """Regression guard: a genuine solve failure in full mode is still an error."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -401,9 +381,7 @@ def test_sidereal_override_beats_configured_full(monkeypatch, stubbed_stages):
     """config=full, call=detect -> no solve for that call."""
     _use_pipeline_mode(monkeypatch, "full")
 
-    starfield = sidereal_mod.process_astrometry_fits_sidereal(
-        _fake_image(), pipeline_mode="detect"
-    )
+    starfield = sidereal_mod.process_astrometry_fits_sidereal(_fake_image(), pipeline_mode="detect")
 
     assert stubbed_stages["solve"] == 0
     assert starfield.fit is False
@@ -429,9 +407,7 @@ def test_omitting_the_override_uses_configured_mode(monkeypatch, stubbed_stages)
     assert stubbed_stages["solve"] == 0
 
 
-def test_collect_override_runs_a_sweep_while_config_stays_full(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+def test_collect_override_runs_a_sweep_while_config_stays_full(monkeypatch, stubbed_stages, stubbed_collect):
     """The autofocus case end-to-end: science config untouched, sweep batch reduced."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -457,9 +433,7 @@ def test_override_does_not_leak_into_config(monkeypatch, stubbed_stages, stubbed
     """A reduced-mode batch must not degrade the science batch that follows it."""
     _use_pipeline_mode(monkeypatch, "full")
 
-    collect_mod.process_senpai_collect(
-        [_fake_image()], id="focus-sweep", pipeline_mode="detect"
-    )
+    collect_mod.process_senpai_collect([_fake_image()], id="focus-sweep", pipeline_mode="detect")
     assert stubbed_stages["solve"] == 0
     assert get_or_initialize_config().astrometry.pipeline_mode == "full"
 

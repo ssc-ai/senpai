@@ -608,9 +608,7 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
             rate_dec = (fm.track_rate_dec_arcsec_per_second or 0) if fm else 0
             if rate_ra or rate_dec:
                 fallback_rates = [
-                    (sr * rate_ra / 3600.0, sd * rate_dec / 3600.0)
-                    for sr in (1.0, -1.0)
-                    for sd in (1.0, -1.0)
+                    (sr * rate_ra / 3600.0, sd * rate_dec / 3600.0) for sr in (1.0, -1.0) for sd in (1.0, -1.0)
                 ]
 
         rate_hypotheses = [measured_rate] if measured_rate else fallback_rates
@@ -639,9 +637,7 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
                 continue
 
             ifov = None
-            if sid_frame.starfield.wcs_metadata and hasattr(
-                sid_frame.starfield.wcs_metadata, "x_ifov_arcsec"
-            ):
+            if sid_frame.starfield.wcs_metadata and hasattr(sid_frame.starfield.wcs_metadata, "x_ifov_arcsec"):
                 ifov = sid_frame.starfield.wcs_metadata.x_ifov_arcsec
 
             best = None  # (dist, sc, rate, pred_x, pred_y)
@@ -674,9 +670,7 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
             # direction mapped through the WCS
             try:
                 step = 1.0  # seconds of motion for the direction vector
-                px2 = sid_wcs.all_world2pix(
-                    [[ra_pred + rate[0] * step, dec_pred + rate[1] * step]], 0
-                )
+                px2 = sid_wcs.all_world2pix([[ra_pred + rate[0] * step, dec_pred + rate[1] * step]], 0)
                 dx = float(px2[0][0]) - pred_x
                 dy = float(px2[0][1]) - pred_y
                 motion_angle = float(np.degrees(np.arctan2(dy, dx)))

@@ -36,6 +36,7 @@ def _write_fits(path: Path, header_items: dict | None = None) -> Path:
 # extract_uct_time_from_header
 # --------------------------------------------------------------------------
 
+
 def test_uct_time_from_combined_date_obs():
     header = {"DATE-OBS": "2023-05-01T03:22:11.5"}
     t = fo.extract_uct_time_from_header(header)
@@ -79,6 +80,7 @@ def test_uct_time_prefers_date_time_over_separate():
 # internal date/time string parsers
 # --------------------------------------------------------------------------
 
+
 def test_parse_date_string_iso():
     a = fo._parse_date_string("2021-07-04")
     assert (a.year, a.month, a.day) == (2021, 7, 4)
@@ -104,6 +106,7 @@ def test_parse_time_string_invalid_returns_none():
 # --------------------------------------------------------------------------
 # imageset selection by filename
 # --------------------------------------------------------------------------
+
 
 def test_get_imageset_by_filename_matches_substring(tmp_path):
     _write_fits(tmp_path / "targetA_001.fits")
@@ -142,6 +145,7 @@ def test_get_all_images_in_directory_empty(tmp_path):
 # --------------------------------------------------------------------------
 # header ID extraction / matching
 # --------------------------------------------------------------------------
+
 
 def test_extract_id_from_header_plain_key(tmp_path):
     f = _write_fits(tmp_path / "img.fits", {"IMAGESET": "abc123"})

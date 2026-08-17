@@ -186,9 +186,7 @@ class TestFindBestDarkForExposure:
     def test_rejects_when_ratio_too_high(self, tmp_path):
         # Only a 5s dark; target 100s -> ratio 20 > max 3 -> no match.
         _write_fits(tmp_path / "dark_5s.fits", np.full((8, 8), 100.0), EXPTIME=5.0)
-        result = find_best_dark_for_exposure(
-            tmp_path, target_exptime=100.0, matching_headers=[], max_exptime_ratio=3.0
-        )
+        result = find_best_dark_for_exposure(tmp_path, target_exptime=100.0, matching_headers=[], max_exptime_ratio=3.0)
         assert result is None
 
     def test_missing_directory_returns_none(self, tmp_path):

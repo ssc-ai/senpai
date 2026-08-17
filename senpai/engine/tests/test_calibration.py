@@ -5,12 +5,10 @@ plus the aggregation engine (ZP percentiles + Bouguer extinction fit).
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
-
-from datetime import datetime, timedelta, timezone
-
-from types import SimpleNamespace
 
 from senpai.engine.observability.calibration import (
     FramePhoto,
@@ -58,15 +56,22 @@ class TestExtractFramePhoto:
                 "observation_filter": "V",
                 "track_mode": "sidereal",
             },
-            "starfield": {"wcs_metadata": {
-                "RA_center_deg": 180.0, "Dec_center_deg": 30.0,
-            }},
+            "starfield": {
+                "wcs_metadata": {
+                    "RA_center_deg": 180.0,
+                    "Dec_center_deg": 30.0,
+                }
+            },
             "photometry_summary": {
-                "n_stars": 100, "n_quality": 80,
-                "median_snr": 12.0, "median_background": 50.0,
+                "n_stars": 100,
+                "n_quality": 80,
+                "median_snr": 12.0,
+                "median_background": 50.0,
                 "limiting_magnitude": 19.0,
-                "limiting_magnitude_50": 19.0, "limiting_magnitude_90": 18.0,
-                "zero_point": 24.5, "zero_point_err": 0.03,
+                "limiting_magnitude_50": 19.0,
+                "limiting_magnitude_90": 18.0,
+                "zero_point": 24.5,
+                "zero_point_err": 0.03,
             },
         }
         base.update(overrides)
@@ -123,8 +128,11 @@ class TestExtractFramePhoto:
     def test_aperture_geometry_lifted_from_summary(self):
         frame = self._frame()
         frame["photometry_summary"]["aperture_geometry"] = {
-            "shape": "circle", "fwhm_px": 3.5,
-            "aperture_radius_px": 7.0, "bg_inner_px": 10.5, "bg_outer_px": 17.5,
+            "shape": "circle",
+            "fwhm_px": 3.5,
+            "aperture_radius_px": 7.0,
+            "bg_inner_px": 10.5,
+            "bg_outer_px": 17.5,
         }
         fp = _extract_frame_photo(frame, "b", None, "sidereal")
         assert fp.aperture_geometry["shape"] == "circle"
@@ -152,6 +160,7 @@ class TestPercentile:
 
     def test_empty_returns_nan(self):
         import math
+
         assert math.isnan(_percentile([], 0.5))
 
 
@@ -159,15 +168,22 @@ def _fp(filter_name: str | None, zp: float | None, **kw) -> FramePhoto:
     # ZP/extinction aggregation is sidereal-only, so fixtures default to
     # sidereal; pass track_mode="rate" to exercise the exclusion.
     return FramePhoto(
-        batch_id="b", frame_index=0, timestamp=None,
+        batch_id="b",
+        frame_index=0,
+        timestamp=None,
         track_mode=kw.get("track_mode", "sidereal"),
-        filter_name=filter_name, exposure_time=None,
-        zero_point=zp, zero_point_err=kw.get("zp_err"),
+        filter_name=filter_name,
+        exposure_time=None,
+        zero_point=zp,
+        zero_point_err=kw.get("zp_err"),
         limiting_magnitude_50=kw.get("lim50"),
         limiting_magnitude_90=kw.get("lim90"),
-        median_snr=None, median_background=None,
-        n_stars=None, n_quality=None,
-        ra_center_deg=None, dec_center_deg=None,
+        median_snr=None,
+        median_background=None,
+        n_stars=None,
+        n_quality=None,
+        ra_center_deg=None,
+        dec_center_deg=None,
         altitude_deg=kw.get("alt"),
         azimuth_deg=None,
         airmass=kw.get("airmass"),
@@ -177,8 +193,11 @@ def _fp(filter_name: str | None, zp: float | None, **kw) -> FramePhoto:
 class TestSummarizeZP:
     def test_groups_by_filter(self):
         frames = [
-            _fp("V", 24.1), _fp("V", 24.5), _fp("V", 24.3),
-            _fp("B", 23.0), _fp("B", 23.4),
+            _fp("V", 24.1),
+            _fp("V", 24.5),
+            _fp("V", 24.3),
+            _fp("B", 23.0),
+            _fp("B", 23.4),
             _fp("V", None),  # ignored
         ]
         out = _summarize_zp(frames)
@@ -319,7 +338,7 @@ class TestExtractFrameTiming:
         assert timing.exposure_time == 5.0
         assert timing.track_mode == "rate"
         assert timing.altitude_deg is None  # filled later, vectorized
-        assert timing.fov_sq_deg is None    # no WCS solve → no measured FoV
+        assert timing.fov_sq_deg is None  # no WCS solve → no measured FoV
 
     def test_none_without_boresight(self):
         frame = self._frame()
@@ -335,8 +354,7 @@ class TestExtractFrameTiming:
         # Only when a WCS solved does the record carry a (measured) FoV — used
         # for the contiguous-grid step, which must come from good frames only.
         frame = self._frame()
-        frame["starfield"] = {"wcs_metadata": {
-            "x_fov_degrees": 2.0, "y_fov_degrees": 1.5}}
+        frame["starfield"] = {"wcs_metadata": {"x_fov_degrees": 2.0, "y_fov_degrees": 1.5}}
         timing, _ra, _dec = _extract_frame_timing(frame, "sidereal")
         assert timing.fov_sq_deg == pytest.approx(3.0)
 
@@ -344,8 +362,11 @@ class TestExtractFrameTiming:
 def _timing(t0, secs, exposure, alt, az, fov=None):
     return FrameTiming(
         timestamp=t0 + timedelta(seconds=secs),
-        exposure_time=exposure, track_mode="sidereal",
-        altitude_deg=alt, azimuth_deg=az, fov_sq_deg=fov,
+        exposure_time=exposure,
+        track_mode="sidereal",
+        altitude_deg=alt,
+        azimuth_deg=az,
+        fov_sq_deg=fov,
     )
 
 
@@ -361,7 +382,7 @@ class TestEmpiricalOverhead:
         # A run that parks on two fields, alternating with a big (~90°) slew at a
         # steady ~9 s overhead. Too few distinct distances for the line fit, but
         # the median slewed-pair overhead is exactly what we want as a fallback.
-        t0 = datetime(2026, 5, 27, 7, tzinfo=timezone.utc)
+        t0 = datetime(2026, 5, 27, 7, tzinfo=UTC)
         timings, t = [], 0.0
         for i in range(20):
             alt, az = (60.0, 10.0) if i % 2 == 0 else (60.0, 100.0)
@@ -373,7 +394,7 @@ class TestEmpiricalOverhead:
 
     def test_full_fit_unusable_falls_back_not_crashes(self):
         # Same single-distance data: the strict fit can't constrain the slope.
-        t0 = datetime(2026, 5, 27, 7, tzinfo=timezone.utc)
+        t0 = datetime(2026, 5, 27, 7, tzinfo=UTC)
         timings, t = [], 0.0
         for i in range(20):
             alt, az = (60.0, 10.0) if i % 2 == 0 else (60.0, 100.0)
@@ -392,7 +413,7 @@ class TestFitSlewModelOnTimings:
         # is in ALTITUDE at fixed azimuth, where Δalt equals the on-sky
         # separation exactly (no cos(alt) compression), and the slew time goes in
         # the gap BEFORE the slewed frame — Δt(i→i+1)=exposure+readout+slew.
-        t0 = datetime(2026, 5, 27, 7, tzinfo=timezone.utc)
+        t0 = datetime(2026, 5, 27, 7, tzinfo=UTC)
         rate, readout, exposure, az = 10.0, 2.0, 5.0, 10.0  # deg/s, s, s, deg
         base, seps = 45.0, [0.5, 1.0, 3.0, 6.0, 12.0, 30.0]
         # alt sequence: two repeats at base (a readout-only pair to anchor the
@@ -428,8 +449,7 @@ class TestGainPlotData:
         return SimpleNamespace(frames=frames)
 
     def test_collects_pairs_and_summarizes(self):
-        frames = [self._frame(s, g) for s, g in
-                  [(400.0, 2.0), (800.0, 2.1), (1200.0, 1.9), (1600.0, 2.0)]]
+        frames = [self._frame(s, g) for s, g in [(400.0, 2.0), (800.0, 2.1), (1200.0, 1.9), (1600.0, 2.0)]]
         d = _data_gain(self._calib(frames))
         assert d["n"] == 4
         assert len(d["sky_adu"]) == 4 and len(d["gain"]) == 4
@@ -439,8 +459,8 @@ class TestGainPlotData:
     def test_skips_frames_missing_gain_or_sky(self):
         frames = [
             self._frame(500.0, 2.0),
-            self._frame(600.0, None),   # no gain -> skipped
-            self._frame(None, 2.1),     # no sky  -> skipped
+            self._frame(600.0, None),  # no gain -> skipped
+            self._frame(None, 2.1),  # no sky  -> skipped
             self._frame(700.0, 1.9),
             self._frame(800.0, 2.2),
         ]

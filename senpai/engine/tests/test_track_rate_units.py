@@ -7,21 +7,23 @@ classifier and downstream code assume arcsec/s. The helper normalizes so the
 upstream unit convention.
 """
 
-
 import pytest
 
 from senpai.engine.utils.fits_io import _to_arcsec_per_second
 
 
-@pytest.mark.parametrize("unit,value,expected", [
-    ("arcseconds/second", 5.0, 5.0),
-    ("arcsec/second", 5.0, 5.0),
-    ("arcsec/s", 5.0, 5.0),
-    ("degrees/second", 0.0112, 40.32),   # burr's calsat rate
-    ("deg/second", 1.0, 3600.0),
-    ("deg/s", 0.001, 3.6),
-    ("radians/second", 1e-5, pytest.approx(2.063, abs=1e-3)),
-])
+@pytest.mark.parametrize(
+    "unit,value,expected",
+    [
+        ("arcseconds/second", 5.0, 5.0),
+        ("arcsec/second", 5.0, 5.0),
+        ("arcsec/s", 5.0, 5.0),
+        ("degrees/second", 0.0112, 40.32),  # burr's calsat rate
+        ("deg/second", 1.0, 3600.0),
+        ("deg/s", 0.001, 3.6),
+        ("radians/second", 1e-5, pytest.approx(2.063, abs=1e-3)),
+    ],
+)
 def test_known_units(unit, value, expected):
     assert _to_arcsec_per_second(value, unit) == pytest.approx(expected, rel=1e-6)
 
@@ -33,6 +35,7 @@ def test_case_insensitive():
 
 def test_unknown_unit_passes_through_with_warning(caplog):
     import logging
+
     with caplog.at_level(logging.WARNING):
         v = _to_arcsec_per_second(42.0, "furlongs/fortnight")
     assert v == 42.0

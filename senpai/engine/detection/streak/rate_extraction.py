@@ -46,9 +46,7 @@ def extract_rate_streak_measurement(
 
     # Refine using the two-stage robust refiner when we have a PSF cutout.
     if psf is not None:
-        measurement, measured_fwhm = refine_robust_streak(
-            psf, measurement, frame_index=rate_frame.index
-        )
+        measurement, measured_fwhm = refine_robust_streak(psf, measurement, frame_index=rate_frame.index)
 
     return measurement, psf, measured_fwhm
 
@@ -138,8 +136,7 @@ def extract_streak_centers_as_sources(
     # Detection threshold
     threshold = median + threshold_sigma * std
     logger.info(
-        f"Detection threshold: {threshold:.1f} (median={median:.1f}, std={std:.1f}, "
-        f"sigma={threshold_sigma:.1f})"
+        f"Detection threshold: {threshold:.1f} (median={median:.1f}, std={std:.1f}, sigma={threshold_sigma:.1f})"
     )
 
     # Find local maxima above threshold. Same predicate as a full-frame
@@ -190,9 +187,7 @@ def extract_streak_centers_as_sources(
     detections: list[StarInImage] = []
     seen_positions: list[tuple[float, float]] = []
 
-    for i in range(
-        min(len(y_coords), max_sources * 3)
-    ):  # Check more candidates than needed
+    for i in range(min(len(y_coords), max_sources * 3)):  # Check more candidates than needed
         if len(detections) >= max_sources:
             break
 

@@ -27,13 +27,11 @@ class TestParseAndPair:
 
     def test_does_not_pair_repeated_f0_tiles(self):
         # Two coverage tiles, both _f0 at different times: different fields.
-        names = ["/x/20260613T041148_coverage_11_f0.fits",
-                 "/x/20260613T041219_coverage_11_f0.fits"]
+        names = ["/x/20260613T041148_coverage_11_f0.fits", "/x/20260613T041219_coverage_11_f0.fits"]
         assert find_burst_pairs(names) == []
 
     def test_does_not_pair_across_fields(self):
-        names = ["/x/20260613T041107_satA_f0.fits",
-                 "/x/20260613T041115_satB_f1.fits"]
+        names = ["/x/20260613T041107_satA_f0.fits", "/x/20260613T041115_satB_f1.fits"]
         assert find_burst_pairs(names) == []
 
 
@@ -68,8 +66,7 @@ class TestPtcPoint:
 
 class TestFitGain:
     def _ptc(self, gain, levels, seed=0):
-        return [ptc_point(*_sky_pair(L, gain, seed=seed + i))
-                for i, L in enumerate(levels)]
+        return [ptc_point(*_sky_pair(L, gain, seed=seed + i)) for i, L in enumerate(levels)]
 
     def test_recovers_known_gain(self):
         gain = 1.6

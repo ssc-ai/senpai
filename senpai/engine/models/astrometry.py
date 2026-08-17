@@ -38,16 +38,12 @@ class WCSQualityMetrics(BaseModel):
     method: str = "flux_at_catalog_positions"
     n_stars_tested: int
     box_radius_px: int
-    frac_significant: float = Field(
-        description="Fraction of tested stars whose flux exceeds the null p-th percentile"
-    )
+    frac_significant: float = Field(description="Fraction of tested stars whose flux exceeds the null p-th percentile")
     control_frac_significant: float = Field(
         description="Same fraction for the control grid (predictions offset by control_offset_px)"
     )
     null_percentile: float
-    passed: bool | None = Field(
-        description="True/False = validation verdict; None = too few testable stars to judge"
-    )
+    passed: bool | None = Field(description="True/False = validation verdict; None = too few testable stars to judge")
     # Residuals of the WCS refit against the star positions it was fitted to
     # (absent when refinement fell back to the propagated WCS).
     refit_rms_px: float | None = None
@@ -513,5 +509,3 @@ class WCSMetadata(BaseModel):
     @classmethod
     def from_wcsmodel(cls, wcs_model: WCSModel) -> "WCSMetadata":
         return cls.from_wcs(wcs_model.to_astropy_wcs())
-
-

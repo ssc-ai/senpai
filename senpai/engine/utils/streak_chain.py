@@ -98,13 +98,9 @@ def reconcile_streak_with_chain(
     length = streak.pixel_length
     fwhm = streak.fwhm
 
-    degenerate = (
-        length is not None and fwhm is not None and abs(length - fwhm) < 0.01
-    )
+    degenerate = length is not None and fwhm is not None and abs(length - fwhm) < 0.01
     length_off = (
-        length is None
-        or not np.isfinite(length)
-        or abs(length - expected_length) > length_tolerance * expected_length
+        length is None or not np.isfinite(length) or abs(length - expected_length) > length_tolerance * expected_length
     )
     if degenerate or length_off:
         changes.append(f"length {length}->{expected_length:.1f}")
@@ -122,17 +118,14 @@ def reconcile_streak_with_chain(
         # sign-agnostic: a streak axis has a 180-degree ambiguity
         cos_mis = abs(ca * axis[0] + sa * axis[1]) / max(np.hypot(ca, sa), 1e-9)
         if cos_mis < np.cos(np.deg2rad(angle_tolerance_deg)):
-            changes.append(
-                f"angle ({ca:.2f},{sa:.2f})->({axis[0]:.2f},{axis[1]:.2f})"
-            )
+            changes.append(f"angle ({ca:.2f},{sa:.2f})->({axis[0]:.2f},{axis[1]:.2f})")
             streak.cosine_angle = float(axis[0])
             streak.sine_angle = float(axis[1])
 
     if changes:
         msg = "; ".join(changes)
         logger.info(
-            "Reconciled streak model for frame %s with solved chain "
-            "(rate=%.1f px/s): %s",
+            "Reconciled streak model for frame %s with solved chain (rate=%.1f px/s): %s",
             getattr(frame, "index", "?"),
             rate_mag,
             msg,
@@ -141,8 +134,7 @@ def reconcile_streak_with_chain(
     return None
 
 
-def reconcile_run_streaks(senpai_run, length_tolerance: float = 0.5,
-                          angle_tolerance_deg: float = 25.0) -> int:
+def reconcile_run_streaks(senpai_run, length_tolerance: float = 0.5, angle_tolerance_deg: float = 25.0) -> int:
     """Reconcile every rate frame of a (possibly serialized) run in memory.
 
     Used at coco-export time so training labels get physical streak geometry
@@ -154,8 +146,6 @@ def reconcile_run_streaks(senpai_run, length_tolerance: float = 0.5,
         return 0
     n = 0
     for frame in getattr(senpai_run, "rate_track_frames", None) or []:
-        if reconcile_streak_with_chain(
-            frame, rates, length_tolerance, angle_tolerance_deg
-        ):
+        if reconcile_streak_with_chain(frame, rates, length_tolerance, angle_tolerance_deg):
             n += 1
     return n

@@ -37,15 +37,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a single FITS or JSON file")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-i", "--id", help="ID of the imageset to process", type=str)
-    group.add_argument(
-        "-s", "--string_match", help="Regex to match imageset to process", type=str
-    )
-    group.add_argument(
-        "-a", "--all", help="Process all images in data_directory", action="store_true"
-    )
-    parser.add_argument(
-        "-d", "--data_directory", help="Path to input directory", type=str
-    )
+    group.add_argument("-s", "--string_match", help="Regex to match imageset to process", type=str)
+    group.add_argument("-a", "--all", help="Process all images in data_directory", action="store_true")
+    parser.add_argument("-d", "--data_directory", help="Path to input directory", type=str)
     parser.add_argument(
         "-D",
         "--detect",
@@ -68,9 +62,7 @@ if __name__ == "__main__":
         type=str,
         default=default_output_dir,
     )
-    parser.add_argument(
-        "-k", "--header_id_key", help="Header ID key", type=str, default=None
-    )
+    parser.add_argument("-k", "--header_id_key", help="Header ID key", type=str, default=None)
 
     args = parser.parse_args()
 
@@ -102,9 +94,7 @@ if __name__ == "__main__":
     elif args.id:
         run_id = args.id
         if not args.header_id_key:
-            raise ValueError(
-                "Header ID key is required for ID-based collection (-k/--header_id_key)"
-            )
+            raise ValueError("Header ID key is required for ID-based collection (-k/--header_id_key)")
         files = get_imageset_by_id(data_directory, args.id, args.header_id_key)
     elif args.all:
         files = get_all_images_in_directory(data_directory)
@@ -114,17 +104,13 @@ if __name__ == "__main__":
     if args.header_id_key:
         ids = [extract_id_from_header(file, args.header_id_key) for file in files]
         if len(ids) == 0:
-            raise ValueError(
-                f"No ID found in the header for the key {args.header_id_key}"
-            )
+            raise ValueError(f"No ID found in the header for the key {args.header_id_key}")
         if len(set(ids)) > 1:
             raise ValueError(f"All files must have the same ID, I found: {set(ids)}")
 
         id_value = ids[0]
         if args.id is not None and args.id != id_value:
-            raise ValueError(
-                f"ID mismatch, I found: {id_value} but you requested: {args.id}"
-            )
+            raise ValueError(f"ID mismatch, I found: {id_value} but you requested: {args.id}")
         run_id = id_value
 
     file_list: list[ProcessedFitsImage] = load_fits_files(files)

@@ -5,7 +5,6 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from senpai.engine.models.senpai import SenpaiRunResult
 from senpai.engine.utils.file_io import load_senpai_run
@@ -32,7 +31,7 @@ def setup_logging(verbose: bool = False) -> None:
 def export_single_run(
     run_path: str,
     output_dir: str,
-    collect_id: Optional[str] = None,
+    collect_id: str | None = None,
     write_png: bool = False,
     write_fits: bool = True,
     save_annotated_images: bool = False,
@@ -40,8 +39,8 @@ def export_single_run(
     snr_cut: float = 0.5,
     box_size: int = 4,
     streak_box_size: int = 10,
-    mask_radius: Optional[float] = None,
-    max_streak_length: Optional[float] = None,
+    mask_radius: float | None = None,
+    max_streak_length: float | None = None,
     apply_calibrations: bool = True,
     verbose: bool = False,
 ) -> None:
@@ -134,7 +133,7 @@ def _export_run_worker(args):
 def export_folder(
     folder_path: str,
     output_dir: str,
-    max_runs: Optional[int] = None,
+    max_runs: int | None = None,
     workers: int = 1,
     write_png: bool = False,
     write_fits: bool = True,
@@ -143,8 +142,8 @@ def export_folder(
     snr_cut: float = 0.5,
     box_size: int = 4,
     streak_box_size: int = 10,
-    mask_radius: Optional[float] = None,
-    max_streak_length: Optional[float] = None,
+    mask_radius: float | None = None,
+    max_streak_length: float | None = None,
     apply_calibrations: bool = True,
     verbose: bool = False,
 ) -> None:
@@ -250,7 +249,7 @@ def split_dataset(
     train_ratio: float = 0.7,
     val_ratio: float = 0.2,
     test_ratio: float = 0.1,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
     image_pattern: str = "*.fits",
     verbose: bool = False,
 ) -> None:

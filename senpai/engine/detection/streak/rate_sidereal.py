@@ -31,9 +31,7 @@ from senpai.engine.plotting.images import plot_single_frame
 logger = logging.getLogger(__name__)
 
 
-def solve_rate_from_sidereal(
-    sidereal_frame: SiderealFrame, rate_frame: RateTrackFrame, frame_shift: FrameShift
-):
+def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrackFrame, frame_shift: FrameShift):
     config = get_config()
 
     # A fully-cloudy anchor gets no WCS, so its starfield (and detection
@@ -41,20 +39,18 @@ def solve_rate_from_sidereal(
     # Mark the shift processed-but-invalid and skip, like solve_rate_from_rate,
     # so the loop makes progress and the batch completes gracefully instead of
     # failing (the frame is unusable without a WCS anyway).
-    if (sidereal_frame.starfield is None
-            or sidereal_frame.starfield.detection_metadata is None):
+    if sidereal_frame.starfield is None or sidereal_frame.starfield.detection_metadata is None:
         logger.warning(
             "Skipping sidereal-rate shift %d->%d: missing starfield/WCS.",
-            frame_shift.source_index, frame_shift.target_index,
+            frame_shift.source_index,
+            frame_shift.target_index,
         )
         frame_shift.processed = True
         frame_shift.is_valid = False
         frame_shift.error_message = "Missing starfield (no WCS solution)"
         return
 
-    frame_exposure_gap_seconds = abs(
-        (sidereal_frame.timestamp - rate_frame.timestamp).total_seconds()
-    )
+    frame_exposure_gap_seconds = abs((sidereal_frame.timestamp - rate_frame.timestamp).total_seconds())
     # FITS headers can store EXPTIME as a string; coerce to float so the exposure arithmetic
     # below does not crash on a string value (observed on some collects).
     rate_exposure_time = float(rate_frame.frame.header.get("EXPTIME", 1))
@@ -101,14 +97,9 @@ def solve_rate_from_sidereal(
         )
     if streak_measurements.frame_extraction is not None:
         fe = streak_measurements.frame_extraction
-        logger.info(
-            f"Rate-frame streak: length={fe.length:.1f}px, rotation={fe.rotation:.1f}°, "
-            f"fwhm={fe.fwhm:.1f}"
-        )
+        logger.info(f"Rate-frame streak: length={fe.length:.1f}px, rotation={fe.rotation:.1f}°, fwhm={fe.fwhm:.1f}")
     else:
-        logger.warning(
-            "Could not extract rate-frame streak, proceeding without masking"
-        )
+        logger.warning("Could not extract rate-frame streak, proceeding without masking")
 
     logger.info("Cross correlating rate and sidereal frames")
 
@@ -116,10 +107,7 @@ def solve_rate_from_sidereal(
     cross_correlated_image = cross_corr(sidereal_data, rate_data)
 
     # After getting initial measurements, mask the cross-correlation frame based on expected shift
-    if (
-        streak_measurements.frame_extraction is not None
-        and streak_measurements.frame_extraction.length > 10
-    ):
+    if streak_measurements.frame_extraction is not None and streak_measurements.frame_extraction.length > 10:
         # Only apply masking if we have a reasonable length estimate (> 10 pixels)
         # Calculate maximum expected shift from streak measurements
         streak_rate = streak_measurements.frame_extraction.length / rate_exposure_time
@@ -156,13 +144,10 @@ def solve_rate_from_sidereal(
             plot_single_frame(
                 cross_correlated_image,
                 scale=False,
-                output_file=config.runtime.output_dir
-                / f"masked_cc_{sidereal_frame.index}-{rate_frame.index}.png",
+                output_file=config.runtime.output_dir / f"masked_cc_{sidereal_frame.index}-{rate_frame.index}.png",
             )
     else:
-        logger.info(
-            "Skipping cross-correlation masking (no reliable initial estimate or length too short)"
-        )
+        logger.info("Skipping cross-correlation masking (no reliable initial estimate or length too short)")
 
     # cross_correlated_image = background_subtract(cross_correlated_image, box_size=100)
 
@@ -199,14 +184,8 @@ def solve_rate_from_sidereal(
         # The cross-correlation of point sources with streaks produces a streak
         # Calculate expected shift distance from streak measurements
         if streak_measurements.frame_extraction is not None:
-            streak_rate = (
-                streak_measurements.frame_extraction.length / rate_exposure_time
-            )
-            total_shift_time = (
-                frame_exposure_gap_seconds
-                + 0.5 * sidereal_exposure_time
-                + 0.5 * rate_exposure_time
-            )
+            streak_rate = streak_measurements.frame_extraction.length / rate_exposure_time
+            total_shift_time = frame_exposure_gap_seconds + 0.5 * sidereal_exposure_time + 0.5 * rate_exposure_time
             expected_distance = streak_rate * total_shift_time
             logger.info(
                 f"Expected shift distance: {expected_distance:.1f}px "
@@ -260,16 +239,14 @@ def solve_rate_from_sidereal(
         if streak_measurements.frame_extraction is not None:
             streak_rotation = streak_measurements.frame_extraction.rotation
 
-        valid, correlation_score, streak_measurements.validation, shift_correction = (
-            validate_proposed_shift(
-                rate_frame,
-                sidereal_frame,
-                pixel_shift_rate_to_sidereal_xy[0],
-                pixel_shift_rate_to_sidereal_xy[1],
-                sidereal_frame.starfield.catalog_stars,
-                trials,
-                fwhm_exclusion=3 * (sidereal_frame.seeing.pixel_fwhm if sidereal_frame.seeing else 4.0),
-            )
+        valid, correlation_score, streak_measurements.validation, shift_correction = validate_proposed_shift(
+            rate_frame,
+            sidereal_frame,
+            pixel_shift_rate_to_sidereal_xy[0],
+            pixel_shift_rate_to_sidereal_xy[1],
+            sidereal_frame.starfield.catalog_stars,
+            trials,
+            fwhm_exclusion=3 * (sidereal_frame.seeing.pixel_fwhm if sidereal_frame.seeing else 4.0),
         )
 
         # Track the best correlation score and corresponding shift
@@ -279,9 +256,7 @@ def solve_rate_from_sidereal(
 
         # Log the shift correction for analysis
         if shift_correction != (0.0, 0.0):
-            logger.info(
-                f"Trial {trials}: Shift correction = ({shift_correction[0]:.2f}, {shift_correction[1]:.2f})"
-            )
+            logger.info(f"Trial {trials}: Shift correction = ({shift_correction[0]:.2f}, {shift_correction[1]:.2f})")
 
         if not valid:
             x, y = pixel_shift_rate_to_sidereal_xy.astype(int)
@@ -295,9 +270,7 @@ def solve_rate_from_sidereal(
             shifted_y = center_y - y
 
             logger.info(
-                f"Shift calculation: x={x}, y={y}, "
-                f"center=({center_y}, {center_x}), "
-                f"shifted=({shifted_y}, {shifted_x})"
+                f"Shift calculation: x={x}, y={y}, center=({center_y}, {center_x}), shifted=({shifted_y}, {shifted_x})"
             )
 
             # Use robust streak removal that finds contiguous regions
@@ -311,9 +284,7 @@ def solve_rate_from_sidereal(
                 and rate_frame.pixel_track_rate_per_second is not None
             ):
                 # Use known track rate * exposure time
-                streak_length_expected = (
-                    rate_frame.pixel_track_rate_per_second * rate_exposure_time
-                )
+                streak_length_expected = rate_frame.pixel_track_rate_per_second * rate_exposure_time
                 logger.info(
                     f"Using streak length from track rate: {streak_length_expected:.1f}px "
                     f"(rate={rate_frame.pixel_track_rate_per_second:.1f}px/s * exp={rate_exposure_time:.1f}s)"
@@ -330,17 +301,14 @@ def solve_rate_from_sidereal(
                     )
                 else:
                     streak_length_expected = 20  # Conservative fallback
-                    logger.warning(
-                        f"Using fallback streak length: {streak_length_expected}px"
-                    )
+                    logger.warning(f"Using fallback streak length: {streak_length_expected}px")
 
             # Box size should be just large enough for the streak plus small margin
             # Keep it tight to avoid picking up background structure
             box_size = int(max(streak_length_expected * 0.75, 10 * pixel_fwhm))
 
             logger.info(
-                f"Using box_size={box_size} (streak_length={streak_length_expected:.1f}px, "
-                f"FWHM={pixel_fwhm:.1f}px)"
+                f"Using box_size={box_size} (streak_length={streak_length_expected:.1f}px, FWHM={pixel_fwhm:.1f}px)"
             )
 
             cross_correlated_image, removal_info = remove_streak_at_point_robust(
@@ -373,9 +341,7 @@ def solve_rate_from_sidereal(
             )
             frame_shift.processed = True
             frame_shift.is_valid = False
-            frame_shift.error_message = (
-                "Could not validate shift between sidereal and rate frames"
-            )
+            frame_shift.error_message = "Could not validate shift between sidereal and rate frames"
             return
 
     pixel_shift_rate_to_sidereal = np.linalg.norm(best_shift)
@@ -387,15 +353,11 @@ def solve_rate_from_sidereal(
     # (header track rates are unreliable). So we DON'T use it for the reported rate —
     # the streak length does that (model-free; see below). Kept only as a cross-check.
     shift_rate_per_second_suspect = (
-        2
-        * pixel_shift_rate_to_sidereal
-        / (frame_exposure_gap_seconds + 0.5 * rate_exposure_time)
+        2 * pixel_shift_rate_to_sidereal / (frame_exposure_gap_seconds + 0.5 * rate_exposure_time)
     )
 
     # Streak direction from the (star-validated) shift vector.
-    rotation_estimate_frame_to_frame = np.rad2deg(
-        np.arctan2(best_shift[1], best_shift[0])
-    )
+    rotation_estimate_frame_to_frame = np.rad2deg(np.arctan2(best_shift[1], best_shift[0]))
 
     streak_measurements.frame_to_frame = StreakMeasurement(
         rotation=rotation_estimate_frame_to_frame,
@@ -405,9 +367,7 @@ def solve_rate_from_sidereal(
 
     # If we couldn't extract a valid streak from the frame, mark as invalid
     if streak_measurements.frame_extraction is None:
-        logger.warning(
-            f"Failed to extract streak from rate frame {rate_frame.index} - marking shift as invalid"
-        )
+        logger.warning(f"Failed to extract streak from rate frame {rate_frame.index} - marking shift as invalid")
         frame_shift.processed = True
         frame_shift.is_valid = False
         frame_shift.error_message = "Could not extract valid streak from rate frame"
@@ -417,8 +377,7 @@ def solve_rate_from_sidereal(
         plot_single_frame(
             psf,
             scale=False,
-            output_file=config.runtime.output_dir
-            / f"{rate_frame.index}_streak_psf.png",
+            output_file=config.runtime.output_dir / f"{rate_frame.index}_streak_psf.png",
         )
 
     # The reported rate comes from the streak length — model-free, no cross-frame
@@ -431,9 +390,7 @@ def solve_rate_from_sidereal(
     rate_from_streak = streak.length / rate_exposure_time if rate_exposure_time else 0.0
     if rate_from_streak > 0:
         shift_streak_ratio = shift_rate_per_second_suspect / rate_from_streak
-        angle_disagreement = angular_difference(
-            streak.rotation, rotation_estimate_frame_to_frame
-        )
+        angle_disagreement = angular_difference(streak.rotation, rotation_estimate_frame_to_frame)
         logger.info(
             f"Rate (frame {rate_frame.index}): {rate_from_streak:.2f}px/s from streak "
             f"(len={streak.length:.1f}px / exp={rate_exposure_time:.1f}s); "

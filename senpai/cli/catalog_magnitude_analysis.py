@@ -49,9 +49,7 @@ def sample_random_sky_positions(num_samples: int) -> list[tuple[float, float]]:
     return positions
 
 
-def query_stars_for_sample(
-    ra: float, dec: float, fov_size: float, catalog_path: str
-) -> list[dict]:
+def query_stars_for_sample(ra: float, dec: float, fov_size: float, catalog_path: str) -> list[dict]:
     """
     Query catalog stars for a given sky position.
 
@@ -248,9 +246,7 @@ def analyze_catalog_magnitudes(
 
 def main():
     """Main CLI function."""
-    parser = argparse.ArgumentParser(
-        description="Analyze magnitude distribution of stars in the SSTR7 catalog"
-    )
+    parser = argparse.ArgumentParser(description="Analyze magnitude distribution of stars in the SSTR7 catalog")
     parser.add_argument(
         "--config",
         type=str,
@@ -332,6 +328,3 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
-
-
-

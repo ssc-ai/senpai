@@ -33,12 +33,12 @@ from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 
-SAT_PEAK = 40000.0      # raw ADU; reject saturated stars (below the 65535 clip)
-MAX_STARS = 200         # stamps to stack
-MIN_STAMPS = 15         # min stacked stars for a usable panel
-MIN_PEAK_SNR = 20.0     # preferred per-stamp peak/noise; used when enough stars clear it
+SAT_PEAK = 40000.0  # raw ADU; reject saturated stars (below the 65535 clip)
+MAX_STARS = 200  # stamps to stack
+MIN_STAMPS = 15  # min stacked stars for a usable panel
+MIN_PEAK_SNR = 20.0  # preferred per-stamp peak/noise; used when enough stars clear it
 MIN_PEAK_SNR_FLOOR = 5.0  # detection-grade floor; fall back to these on low-SNR frames
-SIDEREAL_HALF = 30      # sidereal stamp is (2*half+1)^2 px
+SIDEREAL_HALF = 30  # sidereal stamp is (2*half+1)^2 px
 _GAUSS_W25_OVER_W50 = math.sqrt(math.log(4) / math.log(2))  # = sqrt(2)
 
 
@@ -53,11 +53,16 @@ def cut_width(profile, level: float = 0.5) -> float:
     if len(above) < 2:
         return float("nan")
     lo, hi = int(above[0]), int(above[-1])
-    left = (lo - (profile[lo] - thr) / (profile[lo] - profile[lo - 1])
-            if lo > 0 and profile[lo] != profile[lo - 1] else float(lo))
-    right = (hi + (profile[hi] - thr) / (profile[hi] - profile[hi + 1])
-             if hi < len(profile) - 1 and profile[hi] != profile[hi + 1]
-             else float(hi))
+    left = (
+        lo - (profile[lo] - thr) / (profile[lo] - profile[lo - 1])
+        if lo > 0 and profile[lo] != profile[lo - 1]
+        else float(lo)
+    )
+    right = (
+        hi + (profile[hi] - thr) / (profile[hi] - profile[hi + 1])
+        if hi < len(profile) - 1 and profile[hi] != profile[hi + 1]
+        else float(hi)
+    )
     return float(right - left)
 
 
@@ -102,8 +107,7 @@ def sky_axes(astropy_wcs):
         ra0, dec0 = (float(c) for c in astropy_wcs.all_pix2world(x0, y0, 0))
         dd = 1.0 / 3600.0
         xn, yn = (float(c) for c in astropy_wcs.all_world2pix(ra0, dec0 + dd, 0))
-        xe, ye = (float(c) for c in astropy_wcs.all_world2pix(
-            ra0 + dd / math.cos(math.radians(dec0)), dec0, 0))
+        xe, ye = (float(c) for c in astropy_wcs.all_world2pix(ra0 + dd / math.cos(math.radians(dec0)), dec0, 0))
         north = np.array([xn - x0, yn - y0])
         east = np.array([xe - x0, ye - y0])
         nn, ne = np.linalg.norm(north), np.linalg.norm(east)
@@ -116,9 +120,9 @@ def sky_axes(astropy_wcs):
 
 def _sample_line(stamp, half, unit):
     from scipy.ndimage import map_coordinates
+
     t = np.arange(-half, half + 1.0)
-    return map_coordinates(stamp, [half + t * unit[1], half + t * unit[0]],
-                           order=1, mode="constant", cval=0.0)
+    return map_coordinates(stamp, [half + t * unit[1], half + t * unit[0]], order=1, mode="constant", cval=0.0)
 
 
 # --------------------------------------------------------------------------
@@ -153,8 +157,7 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
     """Median-stacked, peak-normalized point-source PSF (sidereal).
 
     ``stars`` is a list of (x, y, mag). Returns (stamp, n) or (None, 0)."""
-    keep = [(s[0], s[1], s[2] if s[2] is not None else np.inf) for s in stars
-            if s[0] is not None and s[1] is not None]
+    keep = [(s[0], s[1], s[2] if s[2] is not None else np.inf) for s in stars if s[0] is not None and s[1] is not None]
     if len(keep) < 20:
         return None, 0
     # The stamp must hold the whole PSF *plus* a clean sky border, because the
@@ -180,11 +183,10 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
         if not (half + 2 < x < w - half - 2 and half + 2 < y < h - half - 2):
             continue
         xi, yi = int(round(x)), int(round(y))
-        st = data[yi - half:yi + half + 1, xi - half:xi + half + 1].astype(float)
+        st = data[yi - half : yi + half + 1, xi - half : xi + half + 1].astype(float)
         if st.shape != (n, n):
             continue
-        ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(),
-                               st[:, 0:4].ravel(), st[:, -4:].ravel()])
+        ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(), st[:, 0:4].ravel(), st[:, -4:].ravel()])
         noise = _ring_noise(ring)
         st = st - np.median(ring)
         sm = ndimage.median_filter(st, size=3)
@@ -212,8 +214,9 @@ def stack_stars(data, stars, fwhm, half=None, max_stars=MAX_STARS):
     if len(chosen) < MIN_STAMPS:
         return None, 0
     if len(strong) < MIN_STAMPS:
-        logger.info("psf: sidereal stack from %d low-SNR stars (only %d >= SNR %g)",
-                    len(chosen), len(strong), MIN_PEAK_SNR)
+        logger.info(
+            "psf: sidereal stack from %d low-SNR stars (only %d >= SNR %g)", len(chosen), len(strong), MIN_PEAK_SNR
+        )
     stamp = np.median(np.stack(chosen), axis=0)
     if stamp.max() > 0:
         stamp = stamp / stamp.max()
@@ -224,13 +227,14 @@ def _oriented_stamp(data, x, y, cos_a, sin_a, half_a, half_p):
     """Sample a streak-aligned stamp (rows = perpendicular, cols = along) at
     (x, y). Returns the float stamp or None if out of bounds."""
     from scipy.ndimage import map_coordinates
+
     ta = np.arange(-half_a, half_a + 1.0)
     tp = np.arange(-half_p, half_p + 1.0)
     TA, TP = np.meshgrid(ta, tp)
     sx = x + TA * cos_a - TP * sin_a
     sy = y + TA * sin_a + TP * cos_a
     h, w = data.shape
-    if (sx.min() < 1 or sx.max() > w - 2 or sy.min() < 1 or sy.max() > h - 2):
+    if sx.min() < 1 or sx.max() > w - 2 or sy.min() < 1 or sy.max() > h - 2:
         return None
     return map_coordinates(data, [sy.ravel(), sx.ravel()], order=1).reshape(TA.shape)
 
@@ -248,8 +252,7 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
     # pathologically long streaks, set far above the typical footprint.
     half_a = int(min(400, max(20, round(length / 2 + 6 * fwhm))))
     half_p = int(min(120, max(12, round(5 * fwhm))))
-    keep = [(s[0], s[1], s[2] if s[2] is not None else np.inf) for s in stars
-            if s[0] is not None and s[1] is not None]
+    keep = [(s[0], s[1], s[2] if s[2] is not None else np.inf) for s in stars if s[0] is not None and s[1] is not None]
     if len(keep) < 20:
         return None, half_a, half_p, 0
     xy = np.array([(s[0], s[1]) for s in keep])
@@ -288,8 +291,9 @@ def stack_streaks(data, stars, fwhm, length, angle_deg, max_stars=MAX_STARS):
     if len(chosen) < MIN_STAMPS:
         return None, half_a, half_p, 0
     if len(strong) < MIN_STAMPS:
-        logger.info("psf: streak stack from %d low-SNR streaks (only %d >= SNR %g)",
-                    len(chosen), len(strong), MIN_PEAK_SNR)
+        logger.info(
+            "psf: streak stack from %d low-SNR streaks (only %d >= SNR %g)", len(chosen), len(strong), MIN_PEAK_SNR
+        )
     stamp = np.median(np.stack(chosen), axis=0)
     if stamp.max() > 0:
         stamp = stamp / stamp.max()
@@ -303,6 +307,7 @@ def paper_ready_enabled() -> bool:
     """True when ``config.plotting.paper_ready`` is set — emit title-less copies."""
     try:
         from senpai.core.config import get_config
+
         return bool(getattr(get_config().plotting, "paper_ready", False))
     except Exception:
         return False
@@ -356,16 +361,17 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
     fig = Figure(figsize=(13, 4.6))
     ax0, ax1, ax2 = fig.subplots(1, 3)
     grid = np.linspace(-half, half, stamp.shape[0])
-    ax0.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower",
-               extent=[-half, half, -half, half], cmap="inferno")
+    ax0.imshow(
+        np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower", extent=[-half, half, -half, half], cmap="inferno"
+    )
     ax0.contour(grid, grid, stamp, levels=[0.5], colors="cyan", linewidths=0.9)
     if axes is not None:
         for u, name, col in ((north, "N", "white"), (east, "E", "deepskyblue")):
             L = 0.7 * stamp_view
-            ax0.annotate("", xy=(L * u[0], L * u[1]), xytext=(0, 0),
-                         arrowprops=dict(arrowstyle="->", color=col, lw=1.4))
-            ax0.text(L * 1.13 * u[0], L * 1.13 * u[1], name, color=col, fontsize=9,
-                     ha="center", va="center")
+            ax0.annotate(
+                "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=col, lw=1.4)
+            )
+            ax0.text(L * 1.13 * u[0], L * 1.13 * u[1], name, color=col, fontsize=9, ha="center", va="center")
     ax0.set_xlim(-stamp_view, stamp_view)
     ax0.set_ylim(-stamp_view, stamp_view)
     ax0.set_title("stacked PSF (50% contour)")
@@ -381,10 +387,15 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
     ax1.set_title("radial profile")
     ax1.grid(True, which="both", alpha=0.3)
 
-    ax2.plot(np.arange(stamp.shape[0]) - half, cut_ra, color="tab:red", lw=2,
-             label=f"{a} FWHM {sh_ra['fwhm']:.1f}px")
-    ax2.plot(np.arange(stamp.shape[0]) - half, cut_dec, color="tab:blue", lw=1.6,
-             ls="--", label=f"{b} FWHM {sh_dec['fwhm']:.1f}px")
+    ax2.plot(np.arange(stamp.shape[0]) - half, cut_ra, color="tab:red", lw=2, label=f"{a} FWHM {sh_ra['fwhm']:.1f}px")
+    ax2.plot(
+        np.arange(stamp.shape[0]) - half,
+        cut_dec,
+        color="tab:blue",
+        lw=1.6,
+        ls="--",
+        label=f"{b} FWHM {sh_dec['fwhm']:.1f}px",
+    )
     for lv in (0.25, 0.5, 0.75):
         ax2.axhline(lv, color="gray", ls=":", lw=0.7, alpha=0.6)
     ax2.set_xlim(-stamp_view, stamp_view)  # TEMP: match the locked stamp window
@@ -395,47 +406,48 @@ def render_sidereal_psf(stamp, n_stars, axes, meta, png_path):
     ax2.grid(True, alpha=0.3)
 
     spike = max(sh_ra["spike_index"], sh_dec["spike_index"])
-    sec = f", {sh_ra['fwhm'] * psc:.1f}\"" if psc else ""
+    sec = f', {sh_ra["fwhm"] * psc:.1f}"' if psc else ""
     n_txt = n_stars if n_stars is not None else "?"
-    fig.suptitle(f"frame {meta.get('index', '?')} sidereal PSF — "
-                 f"{meta.get('exposure', '?')}s, n={n_txt}, "
-                 f"{a}/{b} FWHM={sh_ra['fwhm']:.1f}/{sh_dec['fwhm']:.1f}px{sec}"
-                 f"{'  ⚠spike' if spike >= 1.3 else ''}", fontsize=11)
+    fig.suptitle(
+        f"frame {meta.get('index', '?')} sidereal PSF — "
+        f"{meta.get('exposure', '?')}s, n={n_txt}, "
+        f"{a}/{b} FWHM={sh_ra['fwhm']:.1f}/{sh_dec['fwhm']:.1f}px{sec}"
+        f"{'  ⚠spike' if spike >= 1.3 else ''}",
+        fontsize=11,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     _save(fig, png_path)
 
 
-def render_streak_psf(stamp, half_a, half_p, n_stars, length, fwhm, sky_in_streak,
-                      meta, png_path):
+def render_streak_psf(stamp, half_a, half_p, n_stars, length, fwhm, sky_in_streak, meta, png_path):
     """Rate per-frame streak panel: oriented 2D stamp (+box, contour, N/E) +
     along-streak and across-streak profiles."""
     psc = meta.get("pixel_scale_arcsec")
-    along = stamp.sum(axis=0)        # collapse perpendicular
+    along = stamp.sum(axis=0)  # collapse perpendicular
     along = along / along.max() if along.max() > 0 else along
-    across = stamp[:, stamp.shape[1] // 2 - 2: stamp.shape[1] // 2 + 3].sum(axis=1)
+    across = stamp[:, stamp.shape[1] // 2 - 2 : stamp.shape[1] // 2 + 3].sum(axis=1)
     across = across / across.max() if across.max() > 0 else across
     sh_across = profile_shape(across)
 
     fig = Figure(figsize=(13, 4.6))
     ax0, ax1, ax2 = fig.subplots(1, 3)
     ext = [-half_a, half_a, -half_p, half_p]
-    ax0.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower",
-               extent=ext, aspect="auto", cmap="inferno")
+    ax0.imshow(np.arcsinh(np.clip(stamp, 0, None) / 0.02), origin="lower", extent=ext, aspect="auto", cmap="inferno")
     gx = np.linspace(-half_a, half_a, stamp.shape[1])
     gy = np.linspace(-half_p, half_p, stamp.shape[0])
     ax0.contour(gx, gy, stamp, levels=[0.5], colors="cyan", linewidths=0.9)
     # fitted length x width box (streak-aligned frame: along = x, perp = y)
     from matplotlib.patches import Rectangle
-    ax0.add_patch(Rectangle((-length / 2, -fwhm / 2), length, fwhm, fill=False,
-                            edgecolor="lime", lw=1.4, ls="--"))
+
+    ax0.add_patch(Rectangle((-length / 2, -fwhm / 2), length, fwhm, fill=False, edgecolor="lime", lw=1.4, ls="--"))
     if sky_in_streak is not None:
         east_s, north_s = sky_in_streak
         for u, name, col in ((north_s, "N", "white"), (east_s, "E", "deepskyblue")):
             L = 0.6 * half_p
-            ax0.annotate("", xy=(L * u[0], L * u[1]), xytext=(0, 0),
-                         arrowprops=dict(arrowstyle="->", color=col, lw=1.3))
-            ax0.text(L * 1.2 * u[0], L * 1.2 * u[1], name, color=col, fontsize=9,
-                     ha="center", va="center")
+            ax0.annotate(
+                "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=col, lw=1.3)
+            )
+            ax0.text(L * 1.2 * u[0], L * 1.2 * u[1], name, color=col, fontsize=9, ha="center", va="center")
     ax0.set_xlabel("along streak (px)")
     ax0.set_ylabel("across (px)")
     ax0.set_title("stacked streak (lime = fitted L×W)")
@@ -457,12 +469,14 @@ def render_streak_psf(stamp, half_a, half_p, n_stars, length, fwhm, sky_in_strea
     ax2.set_title(f"across-streak profile (FWHM={sh_across['fwhm']:.1f}px)")
     ax2.grid(True, alpha=0.3)
 
-    sec = f", {fwhm * psc:.1f}\"" if psc else ""
+    sec = f', {fwhm * psc:.1f}"' if psc else ""
     n_txt = n_stars if n_stars is not None else "?"
-    fig.suptitle(f"frame {meta.get('index', '?')} rate streak PSF — "
-                 f"{meta.get('exposure', '?')}s, n={n_txt}, "
-                 f"length={length:.1f}px, width(FWHM)={sh_across['fwhm']:.1f}px{sec}",
-                 fontsize=11)
+    fig.suptitle(
+        f"frame {meta.get('index', '?')} rate streak PSF — "
+        f"{meta.get('exposure', '?')}s, n={n_txt}, "
+        f"length={length:.1f}px, width(FWHM)={sh_across['fwhm']:.1f}px{sec}",
+        fontsize=11,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     _save(fig, png_path)
 
@@ -481,8 +495,7 @@ def make_sidereal_psf(data, stars, astropy_wcs, fwhm, meta, png_path, npy_path=N
     return True
 
 
-def make_streak_psf(data, stars, astropy_wcs, fwhm, length, angle_deg, meta,
-                    png_path, npy_path=None):
+def make_streak_psf(data, stars, astropy_wcs, fwhm, length, angle_deg, meta, png_path, npy_path=None):
     stamp, half_a, half_p, n = stack_streaks(data, stars, fwhm, length, angle_deg)
     if stamp is None:
         logger.info("psf: frame %s too few streaks for streak PSF", meta.get("index"))
@@ -519,6 +532,7 @@ def _plate_scale(astropy_wcs):
         return None
     try:
         from astropy.wcs.utils import proj_plane_pixel_scales
+
         return float(np.mean(proj_plane_pixel_scales(astropy_wcs)) * 3600.0)
     except Exception:
         return None
@@ -534,12 +548,13 @@ def plot_sidereal_frame(frame, png_path, npy_path=None) -> bool:
     if sf is None or not sf.catalog_stars:
         return False
     wcs = _astropy_wcs(sf)
-    fwhm = (getattr(getattr(frame, "seeing", None), "pixel_fwhm", None)
-            or (sf.fwhm_stats.median_fwhm if sf.fwhm_stats else None) or 4.0)
-    meta = {"index": frame.index, "exposure": _exposure(frame),
-            "pixel_scale_arcsec": _plate_scale(wcs)}
-    return make_sidereal_psf(frame.frame.data, _stars(sf), wcs, float(fwhm), meta,
-                             png_path, npy_path)
+    fwhm = (
+        getattr(getattr(frame, "seeing", None), "pixel_fwhm", None)
+        or (sf.fwhm_stats.median_fwhm if sf.fwhm_stats else None)
+        or 4.0
+    )
+    meta = {"index": frame.index, "exposure": _exposure(frame), "pixel_scale_arcsec": _plate_scale(wcs)}
+    return make_sidereal_psf(frame.frame.data, _stars(sf), wcs, float(fwhm), meta, png_path, npy_path)
 
 
 def plot_rate_frame(frame, png_path, npy_path=None) -> bool:
@@ -548,11 +563,18 @@ def plot_rate_frame(frame, png_path, npy_path=None) -> bool:
     if sf is None or not sf.catalog_stars or st is None or not st.pixel_length:
         return False
     wcs = _astropy_wcs(sf)
-    meta = {"index": frame.index, "exposure": _exposure(frame),
-            "pixel_scale_arcsec": _plate_scale(wcs)}
-    return make_streak_psf(frame.frame.data, _stars(sf), wcs, float(st.fwhm),
-                           float(st.pixel_length), float(st.degree_angle()), meta,
-                           png_path, npy_path)
+    meta = {"index": frame.index, "exposure": _exposure(frame), "pixel_scale_arcsec": _plate_scale(wcs)}
+    return make_streak_psf(
+        frame.frame.data,
+        _stars(sf),
+        wcs,
+        float(st.fwhm),
+        float(st.pixel_length),
+        float(st.degree_angle()),
+        meta,
+        png_path,
+        npy_path,
+    )
 
 
 # --------------------------------------------------------------------------

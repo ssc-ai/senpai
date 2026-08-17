@@ -9,9 +9,7 @@ from senpai.engine.models.astrometry import WCSModel
 logger = logging.getLogger(__name__)
 
 
-def calculate_residual_errors(
-    wcs_model: WCSModel, stars_with_radec_xy: list[tuple]
-) -> dict:
+def calculate_residual_errors(wcs_model: WCSModel, stars_with_radec_xy: list[tuple]) -> dict:
     """Calculate residual errors between detected and WCS-predicted positions.
 
     Args:

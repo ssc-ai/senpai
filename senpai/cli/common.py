@@ -32,15 +32,17 @@ def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
 # Per-star / completeness arrays are dropped from the per-frame quick-look
 # files; they stay in the run summary and full result JSONs. The quick-look is
 # for eyeballing detections + WCS, not photometric analysis.
-_QUICKLOOK_PHOTOMETRY_DROP = frozenset({
-    "stars_mag",
-    "stars_snr",
-    "stars_zp_offset",
-    "stars_isolated",
-    "stars_catalog_id",
-    "completeness_mag",
-    "completeness_pct",
-})
+_QUICKLOOK_PHOTOMETRY_DROP = frozenset(
+    {
+        "stars_mag",
+        "stars_snr",
+        "stars_zp_offset",
+        "stars_isolated",
+        "stars_catalog_id",
+        "completeness_mag",
+        "completeness_pct",
+    }
+)
 
 
 def write_frame_quicklooks(summary, output_dir: Path) -> None:
@@ -53,9 +55,7 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
         data = fs.model_dump(mode="json")
         ps = data.get("photometry_summary")
         if ps:
-            data["photometry_summary"] = {
-                k: v for k, v in ps.items() if k not in _QUICKLOOK_PHOTOMETRY_DROP
-            }
+            data["photometry_summary"] = {k: v for k, v in ps.items() if k not in _QUICKLOOK_PHOTOMETRY_DROP}
         mode = fs.track_mode or "frame"
         with open(Path(output_dir) / f"frame_{fs.index}_{mode}.json", "w") as f:
             json.dump(data, f)

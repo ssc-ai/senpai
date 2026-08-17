@@ -118,8 +118,7 @@ def test_streak_candidate_objs_wraps_dicts():
     assert _streak_candidate_objs(None) is None
     assert _streak_candidate_objs([]) is None
     objs = _streak_candidate_objs(
-        [{"x": 7603.4, "y": 3818.5, "angle_deg": 80.0, "length_pixels": 40.0,
-          "width_pixels": 12.7}]
+        [{"x": 7603.4, "y": 3818.5, "angle_deg": 80.0, "length_pixels": 40.0, "width_pixels": 12.7}]
     )
     assert objs[0].x == 7603.4
     assert objs[0].length_pixels == 40.0
@@ -135,13 +134,12 @@ def test_replot_review_with_dict_candidates(tmp_path):
         index=0,
         timestamp="2026-05-30T02:24:35",
         processed_frame_path=str(fpath),
-        streak_candidates=[
-            {"x": 24.0, "y": 24.0, "angle_deg": 30.0, "length_pixels": 10.0,
-             "width_pixels": 3.0}
-        ],
+        streak_candidates=[{"x": 24.0, "y": 24.0, "angle_deg": 30.0, "length_pixels": 10.0, "width_pixels": 3.0}],
     )
     result = SenpaiRunResult(
-        id="def67890", num_frames=1, collect_metadata=CollectionMetadata(),
+        id="def67890",
+        num_frames=1,
+        collect_metadata=CollectionMetadata(),
         sidereal_frames=[sid],
     )
     (batch / "senpai_def67890.json").write_text(json.dumps(result.model_dump()))

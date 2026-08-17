@@ -392,7 +392,7 @@ def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
             y0, x0 = iy + by, ix + bx
             my, mx = mdata.shape
             if y0 >= 0 and x0 >= 0 and y0 + my <= h and x0 + mx <= w:
-                out[i] = float((data[y0:y0 + my, x0:x0 + mx] * mdata).sum())
+                out[i] = float((data[y0 : y0 + my, x0 : x0 + mx] * mdata).sum())
                 continue
             # Partially off-frame (callers margin-filter, so this is
             # belt-and-braces): use only the overlapping region, as
@@ -402,12 +402,7 @@ def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
             if cy0 >= cy1 or cx0 >= cx1:
                 out[i] = 0.0
                 continue
-            out[i] = float(
-                (
-                    data[cy0:cy1, cx0:cx1]
-                    * mdata[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
-                ).sum()
-            )
+            out[i] = float((data[cy0:cy1, cx0:cx1] * mdata[cy0 - y0 : cy1 - y0, cx0 - x0 : cx1 - x0]).sum())
     return sums
 
 
@@ -701,17 +696,13 @@ def measure_simple_starfield_photometry(
     # (estimate_limiting_magnitude_from_photometry); sidereal frames never go
     # through that path, so without this they'd silently skip the plot even
     # with ``plotting.photometry`` on. Same axes/lines as the rate version.
-    if (
-        frame_index is not None
-        and get_config().plotting.photometry
-        and summary.stars_mag and summary.stars_snr
-    ):
+    if frame_index is not None and get_config().plotting.photometry and summary.stars_mag and summary.stars_snr:
         _save_simple_limiting_mag_plot(
-            mags=summary.stars_mag, snrs=summary.stars_snr,
+            mags=summary.stars_mag,
+            snrs=summary.stars_snr,
             limiting_mag=summary.limiting_magnitude_50 or summary.limiting_magnitude,
             min_snr=float(get_config().photometry.limiting_snr or 3.0),
-            output_path=get_config().runtime.output_dir
-                       / f"frame_{frame_index}_limiting_mag.png",
+            output_path=get_config().runtime.output_dir / f"frame_{frame_index}_limiting_mag.png",
         )
 
     return results, summary
@@ -737,13 +728,12 @@ def _save_simple_limiting_mag_plot(
         return
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(mags_arr[valid], np.log10(snrs_arr[valid]),
-               c="blue", alpha=0.4, s=14, label=f"Stars (n={int(valid.sum())})")
-    ax.axhline(y=np.log10(min_snr), color="g", linestyle=":",
-               label=f"SNR={min_snr} threshold")
+    ax.scatter(
+        mags_arr[valid], np.log10(snrs_arr[valid]), c="blue", alpha=0.4, s=14, label=f"Stars (n={int(valid.sum())})"
+    )
+    ax.axhline(y=np.log10(min_snr), color="g", linestyle=":", label=f"SNR={min_snr} threshold")
     if limiting_mag is not None:
-        ax.axvline(x=limiting_mag, color="k", linestyle="--",
-                   label=f"Limiting mag = {limiting_mag:.2f}")
+        ax.axvline(x=limiting_mag, color="k", linestyle="--", label=f"Limiting mag = {limiting_mag:.2f}")
     ax.set_xlabel("magnitude")
     ax.set_ylabel("log10(SNR)")
     ax.set_title("Sidereal limiting magnitude estimation")
@@ -1442,9 +1432,7 @@ def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: l
     for filter_name in preferred_filters:
         count = 0
         for star in stars:
-            has_dict = (
-                hasattr(star, "magnitudes") and star.magnitudes is not None and len(star.magnitudes) > 0
-            )
+            has_dict = hasattr(star, "magnitudes") and star.magnitudes is not None and len(star.magnitudes) > 0
             if has_dict and filter_name in star.magnitudes:
                 count += 1
         coverage = count / n_stars
@@ -1603,14 +1591,18 @@ def _isolated_result_mask(
     for s in catalog:
         if s.x is None or s.y is None or s.magnitude is None:
             continue
-        cx.append(s.x); cy.append(s.y); cm.append(s.magnitude)
+        cx.append(s.x)
+        cy.append(s.y)
+        cm.append(s.magnitude)
     n = len(results)
     if len(cx) < 2:
         return [True] * n
 
     from scipy.spatial import cKDTree
 
-    cx = np.asarray(cx); cy = np.asarray(cy); cm = np.asarray(cm)
+    cx = np.asarray(cx)
+    cy = np.asarray(cy)
+    cm = np.asarray(cm)
     tree = cKDTree(np.column_stack([cx, cy]))
 
     keep: list[bool] = []
@@ -1710,7 +1702,8 @@ def compute_completeness_curve(
         isolated = _isolated_result_mask(results, starfield)
         logger.info(
             "Completeness sample: %d/%d isolated stars (brighter-neighbor cut)",
-            int(np.sum(isolated)), len(results),
+            int(np.sum(isolated)),
+            len(results),
         )
     else:
         isolated = [True] * len(results)
@@ -1809,27 +1802,24 @@ def _calculate_simple_photometry_summary(
     # an isotonic smooth + threshold crossing — robust to spiky bins and to a
     # residual faint tail (no parametric shape imposed). The crossing happens on
     # the roll-off, before any contamination floor.
-    comp_mag, comp_pct = compute_completeness_curve(
-        results, starfield, config, isolate=config.completeness_isolate
-    )
+    comp_mag, comp_pct = compute_completeness_curve(results, starfield, config, isolate=config.completeness_isolate)
     completeness_target = float(config.limiting_completeness_fraction)
-    lim_target, lim_50, lim_90 = _completeness_limits(
-        comp_mag, comp_pct, target=completeness_target
-    )
+    lim_target, lim_50, lim_90 = _completeness_limits(comp_mag, comp_pct, target=completeness_target)
     if lim_50 is not None:
         limiting_magnitude = round(lim_target, 3)
         limiting_magnitude_50 = round(lim_50, 3)
         limiting_magnitude_90 = round(lim_90, 3) if lim_90 is not None else None
         logger.info(
-            "Limiting mag from completeness curve (isotonic crossing): "
-            "target(%.2f)=%.2f, 50%%=%.2f, 90%%=%s",
-            completeness_target, lim_target, lim_50,
+            "Limiting mag from completeness curve (isotonic crossing): target(%.2f)=%.2f, 50%%=%.2f, 90%%=%s",
+            completeness_target,
+            lim_target,
+            lim_50,
             f"{lim_90:.2f}" if lim_90 is not None else "n/a",
         )
     else:
         logger.info(
-            "Completeness curve never crosses target; keeping scan/SNR-fit "
-            "limiting mag (50%%=%s)", limiting_magnitude_50,
+            "Completeness curve never crosses target; keeping scan/SNR-fit limiting mag (50%%=%s)",
+            limiting_magnitude_50,
         )
 
     # Always emit the completeness diagnostic when we have a curve — so the
@@ -1837,8 +1827,11 @@ def _calculate_simple_photometry_summary(
     # plotting flag (the photometry `config` here has no `.plotting`).
     if comp_mag and frame_index is not None and get_config().plotting.photometry:
         _save_completeness_plot(
-            comp_mag, comp_pct,
-            lim_target, lim_50 or limiting_magnitude_50, lim_90 or limiting_magnitude_90,
+            comp_mag,
+            comp_pct,
+            lim_target,
+            lim_50 or limiting_magnitude_50,
+            lim_90 or limiting_magnitude_90,
             get_config().runtime.output_dir / f"frame_{frame_index}_completeness.png",
         )
 
@@ -1860,8 +1853,7 @@ def _calculate_simple_photometry_summary(
         stars_mag.append(round(float(mag), 3))
         stars_snr.append(round(float(r.snr), 3))
         stars_zp_offset.append(
-            round(float(mag) - r.instrumental_magnitude, 3)
-            if r.instrumental_magnitude is not None else None
+            round(float(mag) - r.instrumental_magnitude, 3) if r.instrumental_magnitude is not None else None
         )
         stars_isolated.append(bool(iso))
         stars_catalog_id.append(getattr(r.star, "catalog_id", None))
@@ -2463,8 +2455,13 @@ def _calculate_simple_zero_point(
                 continue
             if iso_radius_pix is not None and catalog_stars:
                 if _has_bright_neighbor(
-                    r.star, mag, catalog_stars, iso_radius_pix,
-                    config.isolation_delta_mag, mag_cache=mag_cache, kdtree=kdtree,
+                    r.star,
+                    mag,
+                    catalog_stars,
+                    iso_radius_pix,
+                    config.isolation_delta_mag,
+                    mag_cache=mag_cache,
+                    kdtree=kdtree,
                 ):
                     continue
             sel.append((mag, r.flux))
@@ -2565,7 +2562,8 @@ def calculate_star_snrs_with_aperture_photometry(
         # (a bulk photutils call here peaked ~42 GB → OOM, _full7) and one
         # cached mask per fractional offset across all catalog stars.
         aper_sum_0, aper_sum_1 = _shared_shape_aperture_sums(
-            counts_array, positions,
+            counts_array,
+            positions,
             lambda p: [
                 CircularAperture(p, r=radius),
                 CircularAnnulus(p, r_in=radius * 1.5, r_out=radius * 2.5),
@@ -2619,7 +2617,8 @@ def calculate_star_snrs_with_aperture_photometry(
         # otherwise materialize tens of GB of masks at once) and one cached
         # mask per fractional offset.
         aper_sum_0, aper_sum_1 = _shared_shape_aperture_sums(
-            counts_array, positions,
+            counts_array,
+            positions,
             lambda p: [
                 RectangularAperture(p, w=width_pixels, h=length_pixels, theta=theta),
                 RectangularAnnulus(
@@ -2819,9 +2818,7 @@ def estimate_limiting_magnitude_from_photometry(
         if cfg.photometry.refinement_limiting_magnitude_method == "completeness_hybrid":
             data_faint_edge = float(np.max(filtered_magnitudes))
             comp = completeness_limit
-            limiting_mag = (
-                comp if comp is not None and comp < data_faint_edge - 0.5 else fit_limiting_mag
-            )
+            limiting_mag = comp if comp is not None and comp < data_faint_edge - 0.5 else fit_limiting_mag
         else:
             limiting_mag = fit_limiting_mag
 

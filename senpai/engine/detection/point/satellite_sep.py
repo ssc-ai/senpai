@@ -207,12 +207,7 @@ def psf_flux_concentration(cutout: np.ndarray, pixel_fwhm: float) -> float:
 
     cy, cx = np.array(cutout.shape) // 2
     # The cutout must be large enough to contain the full outer aperture.
-    if (
-        cy - r_out < 0
-        or cx - r_out < 0
-        or cy + r_out >= cutout.shape[0]
-        or cx + r_out >= cutout.shape[1]
-    ):
+    if cy - r_out < 0 or cx - r_out < 0 or cy + r_out >= cutout.shape[0] or cx + r_out >= cutout.shape[1]:
         return 0.0
 
     y, x = np.mgrid[: cutout.shape[0], : cutout.shape[1]]
@@ -265,9 +260,7 @@ def measured_pixel_fwhm(frame: RateTrackFrame) -> float:
     return _DEFAULT_PIXEL_FWHM
 
 
-def _simple_mask(
-    shape: tuple[int, int], center_yx: tuple[float, float], radius: int
-) -> np.ndarray:
+def _simple_mask(shape: tuple[int, int], center_yx: tuple[float, float], radius: int) -> np.ndarray:
     """Create a boolean mask with a rectangular aperture around a centre.
 
     Args:
@@ -399,8 +392,7 @@ def filter_point_sources(
         if hot_pixel_concentration > hot_pixel_threshold:
             if verbose:
                 logger.warning(
-                    f"[{idx + 1}] [FILTERING] Brightest pixel contains "
-                    f"{hot_pixel_concentration:.2f} of total flux"
+                    f"[{idx + 1}] [FILTERING] Brightest pixel contains {hot_pixel_concentration:.2f} of total flux"
                 )
             continue
 
@@ -435,26 +427,17 @@ def filter_point_sources(
 
         if fx < pixel_seeing / 2.5 or fy < pixel_seeing / 2.5:
             if verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] PSF too narrow (FWHM={fcomb:.2f}, "
-                    f"seeing={pixel_seeing:.2f})"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] PSF too narrow (FWHM={fcomb:.2f}, seeing={pixel_seeing:.2f})")
             continue
 
         if fx > pixel_seeing * 3 or fy > pixel_seeing * 3:
             if verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] PSF too wide (FWHM={fcomb:.2f}, "
-                    f"seeing={pixel_seeing:.2f})"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] PSF too wide (FWHM={fcomb:.2f}, seeing={pixel_seeing:.2f})")
             continue
 
         if percent_difference(fx, fy) > 55:
             if verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] PSF non-circular "
-                    f"(Δ={percent_difference(fx, fy):.1f}%)"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] PSF non-circular (Δ={percent_difference(fx, fy):.1f}%)")
             continue
 
         # (7) Report position: the sub-pixel SEP centroid, with a PSF-relative
@@ -596,10 +579,7 @@ def extract_point_sources_sep(frame: RateTrackFrame) -> SatelliteListImage:
             pixel_fwhm=float(pixel_fwhm),
         )
 
-        if (
-            settings.detection.snr_threshold is not None
-            and star.snr > settings.detection.snr_threshold
-        ):
+        if settings.detection.snr_threshold is not None and star.snr > settings.detection.snr_threshold:
             stars.append(star)
 
     if settings.detection.snr_threshold:

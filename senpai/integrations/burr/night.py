@@ -24,7 +24,7 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -86,6 +86,7 @@ def _tracking_mode_from_target(target: str | None) -> str | None:
     if target in _RATE_TARGET_TOKENS:
         return "rate"
     return None
+
 
 # Night-id pattern: <Sensor>_YYYYMMDD (sensor may contain hyphens, e.g. DAO-01)
 _NIGHT_DIR_RE = re.compile(r"^(?P<sensor>[A-Za-z][A-Za-z0-9-]*)_(?P<date>\d{8})$")
@@ -176,7 +177,7 @@ class BurrNight(BaseModel):
         night_dir: str | Path,
         burr_root: str | Path | None = None,
         data_dir: str | Path | None = None,
-    ) -> "BurrNight":
+    ) -> BurrNight:
         """Build a BurrNight from a path like ``/burr/burr/Hornet_20260527``.
 
         ``burr_root`` defaults to ``night_dir.parent.parent`` (the burr tree root
@@ -187,10 +188,7 @@ class BurrNight(BaseModel):
         night_dir = Path(night_dir).resolve()
         m = _NIGHT_DIR_RE.match(night_dir.name)
         if not m:
-            raise ValueError(
-                f"Night directory name {night_dir.name!r} does not match "
-                "<Sensor>_YYYYMMDD"
-            )
+            raise ValueError(f"Night directory name {night_dir.name!r} does not match <Sensor>_YYYYMMDD")
         sensor = m["sensor"]
         date_str = m["date"]
 
@@ -227,7 +225,7 @@ class BurrNight(BaseModel):
         sensor: str | None = None,
         gap_hours: float = 3.0,
         pad_seconds: float = 120.0,
-    ) -> list["BurrNight"]:
+    ) -> list[BurrNight]:
         """Split a flat FITS dir into one :class:`BurrNight` per observing night.
 
         Burr is supposed to write one night per directory + run_state, but a
@@ -293,7 +291,9 @@ class BurrNight(BaseModel):
             )
         logger.info(
             "auto_nights: %s → %d night(s): %s",
-            data_dir, len(nights), ", ".join(n.night_id for n in nights),
+            data_dir,
+            len(nights),
+            ", ".join(n.night_id for n in nights),
         )
         return nights
 
@@ -318,7 +318,7 @@ class BurrNight(BaseModel):
             return start, end
 
         # Fallback: dawn-to-dawn UTC window around the burr-named date.
-        d = datetime.strptime(self.date_str, "%Y%m%d").replace(tzinfo=timezone.utc)
+        d = datetime.strptime(self.date_str, "%Y%m%d").replace(tzinfo=UTC)
         return d - timedelta(hours=6), d + timedelta(hours=30)
 
     # --- frame indexing -------------------------------------------------------
@@ -381,11 +381,7 @@ class BurrNight(BaseModel):
             # NORAD id) fall back to the command's tracking_modes vector
             # indexed by frame_index.
             intended_mode = _tracking_mode_from_target(parsed.target)
-            if (
-                intended_mode is None
-                and command is not None
-                and parsed.frame_index is not None
-            ):
+            if intended_mode is None and command is not None and parsed.frame_index is not None:
                 modes = command.tracking_modes
                 if 0 <= parsed.frame_index < len(modes):
                     intended_mode = modes[parsed.frame_index]
@@ -412,16 +408,22 @@ class BurrNight(BaseModel):
                     n_missing += 1
             if n_missing:
                 logger.warning(
-                    "BurrNight %s: %d/%d frames missing seq_key %s "
-                    "(they fall back to command/orphan batching)",
-                    self.night_id, n_missing, len(records), seq_key,
+                    "BurrNight %s: %d/%d frames missing seq_key %s (they fall back to command/orphan batching)",
+                    self.night_id,
+                    n_missing,
+                    len(records),
+                    seq_key,
                 )
 
         logger.info(
             "BurrNight %s: indexed %d frames (%d in-window semantic + %d uuid), "
             "skipped %d out-of-window, %d unrecognized",
-            self.night_id, len(records), kept, uuid_count,
-            skipped_out_of_window, skipped_unrecognized,
+            self.night_id,
+            len(records),
+            kept,
+            uuid_count,
+            skipped_out_of_window,
+            skipped_unrecognized,
         )
         return records
 
@@ -469,10 +471,16 @@ class BurrNight(BaseModel):
 
         def _min_ts(rs: list[FrameRecord]) -> datetime:
             stamps = [r.parsed.timestamp for r in rs if r.parsed.timestamp]
-            return min(stamps) if stamps else datetime.min.replace(tzinfo=timezone.utc)
+            return min(stamps) if stamps else datetime.min.replace(tzinfo=UTC)
 
         for seq_id, rs in sorted(by_seq.items(), key=lambda kv: _min_ts(kv[1])):
-            rs.sort(key=lambda r: (r.parsed.timestamp or datetime.min.replace(tzinfo=timezone.utc), r.parsed.frame_index or 0, r.path.name))
+            rs.sort(
+                key=lambda r: (
+                    r.parsed.timestamp or datetime.min.replace(tzinfo=UTC),
+                    r.parsed.frame_index or 0,
+                    r.path.name,
+                )
+            )
             _infer_intended_modes(rs)
             head = rs[0]
             ts_tag = _min_ts(rs).strftime("%Y%m%dT%H%M%S")
@@ -485,9 +493,7 @@ class BurrNight(BaseModel):
                 frames=rs,
             )
 
-    def _emit_command_and_orphan_batches(
-        self, records: list[FrameRecord]
-    ) -> Iterator[FrameBatch]:
+    def _emit_command_and_orphan_batches(self, records: list[FrameRecord]) -> Iterator[FrameBatch]:
         """Batch frames from the run_state command log where available, and
         otherwise by clustering orphan frames per ``(task, pointing)`` and time
         proximity. UUID-named / unparseable frames emit as singletons so they
@@ -505,7 +511,7 @@ class BurrNight(BaseModel):
         # Emit attributed batches in command-time order.
         attributed = sorted(
             by_command.values(),
-            key=lambda rs: rs[0].command.observation_time or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda rs: rs[0].command.observation_time or datetime.min.replace(tzinfo=UTC),
         )
         for rs in attributed:
             rs.sort(key=lambda r: (r.parsed.frame_index or 0, r.path.name))
@@ -533,9 +539,7 @@ class BurrNight(BaseModel):
 
         for task, rs in sorted(timed_by_task.items(), key=lambda kv: kv[0] or ""):
             rs.sort(key=lambda r: (r.parsed.timestamp, r.path.name))
-            for cluster in _cluster_by_time_gap(
-                rs, _ORPHAN_CLUSTER_GAP_S, key=_pointing_key
-            ):
+            for cluster in _cluster_by_time_gap(rs, _ORPHAN_CLUSTER_GAP_S, key=_pointing_key):
                 head = cluster[0]
                 ts_tag = head.parsed.timestamp.strftime("%Y%m%dT%H%M%S")
                 target = head.parsed.target or "unknown"
@@ -616,7 +620,7 @@ def _infer_intended_modes(frames: list[FrameRecord]) -> None:
     calsats = [f for f in frames if f.parsed.task == "calsats"]
     if len(calsats) < 2:
         return
-    anchor = max(calsats, key=lambda f: (f.parsed.frame_index or 0))
+    anchor = max(calsats, key=lambda f: f.parsed.frame_index or 0)
     for f in calsats:
         if f.intended_tracking_mode is None:
             f.intended_tracking_mode = "sidereal" if f is anchor else "rate"

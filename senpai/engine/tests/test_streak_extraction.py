@@ -25,8 +25,7 @@ def _config():
     get_config().plotting.debug = False  # skip the debug plot in the refiner
 
 
-def _streak(length: int, fwhm: float = 8.0, *, dip: bool = False,
-            hot: bool = False, rot: float = 0.0) -> np.ndarray:
+def _streak(length: int, fwhm: float = 8.0, *, dip: bool = False, hot: bool = False, rot: float = 0.0) -> np.ndarray:
     """A synthetic horizontal streak: flat trail with a Gaussian cross-section."""
     n = max(160, length + 50)
     cy = n // 2
@@ -34,14 +33,15 @@ def _streak(length: int, fwhm: float = 8.0, *, dip: bool = False,
     x0 = (n - length) // 2
     cross = np.exp(-0.5 * ((np.arange(n) - cy) / sigma) ** 2)[:, None]
     bar = np.zeros((n, n))
-    bar[:, x0:x0 + length] = cross
+    bar[:, x0 : x0 + length] = cross
     if dip:  # knock the middle below 0.5 → fragments at the half level
-        bar[:, x0 + length // 2 - 3:x0 + length // 2 + 3] *= 0.3
+        bar[:, x0 + length // 2 - 3 : x0 + length // 2 + 3] *= 0.3
     if hot:  # lone hot pixels off the trail
         bar[cy + 1, x0 - 25] = 10.0
         bar[cy - 3, x0 + length + 20] = 8.0
     if rot:
         from scipy.ndimage import rotate
+
         bar = rotate(bar, -rot, reshape=False, order=1)
     return bar
 
@@ -88,7 +88,7 @@ def _streak_field(length: int, rot: float, n: int = 30, size: int = 900) -> np.n
     img = np.zeros((size, size))
     for _ in range(n):
         y, x = int(rng.integers(0, size - s)), int(rng.integers(0, size - s))
-        img[y:y + s, x:x + s] += one * rng.uniform(0.3, 1.0)
+        img[y : y + s, x : x + s] += one * rng.uniform(0.3, 1.0)
     img += rng.normal(0, 0.02, img.shape)
     return img
 
@@ -96,6 +96,7 @@ def _streak_field(length: int, rot: float, n: int = 30, size: int = 900) -> np.n
 class TestSeedEstimate:
     def test_recovers_ballpark_seed_not_frame_fraction(self):
         from senpai.engine.detection.streak.extraction import _estimate_streak_seed
+
         # Old default would be size*0.05 = 45 here regardless of the streak;
         # the estimator must track the actual streak instead.
         for length, rot in [(40, 0.0), (60, 60.0), (30, 120.0)]:
@@ -129,7 +130,7 @@ class TestStreakCenterExtraction:
             for gx in range(20, size - s - 20, 180):
                 y = gy + int(rng.integers(-10, 10))
                 x = gx + int(rng.integers(-10, 10))
-                img[y:y + s, x:x + s] += one * float(rng.uniform(300, 1500))
+                img[y : y + s, x : x + s] += one * float(rng.uniform(300, 1500))
                 centers.append((x + s / 2.0, y + s / 2.0))
         streak = StreakMetadata(
             pixel_length=float(length),
@@ -151,10 +152,7 @@ class TestStreakCenterExtraction:
         tol = 5.0
         matched = 0
         for cx, cy in centers:
-            hits = [
-                1 for dx, dy in detected
-                if (dx - cx) ** 2 + (dy - cy) ** 2 <= tol**2
-            ]
+            hits = [1 for dx, dy in detected if (dx - cx) ** 2 + (dy - cy) ** 2 <= tol**2]
             assert len(hits) <= 1, "min-separation must dedup within a streak"
             matched += len(hits)
         assert matched >= 0.9 * len(centers)
@@ -171,9 +169,7 @@ class TestStreakCenterExtraction:
         rng = np.random.default_rng(9)
         img = rng.normal(0.0, 5.0, (800, 800))
         length, fwhm = 40.0, 8.0
-        streak = StreakMetadata(
-            pixel_length=length, sine_angle=0.5, cosine_angle=np.sqrt(0.75), fwhm=fwhm
-        )
+        streak = StreakMetadata(pixel_length=length, sine_angle=0.5, cosine_angle=np.sqrt(0.75), fwhm=fwhm)
         sources = extract_streak_centers_as_sources(img, streak=streak, max_sources=100)
         assert len(sources) <= 100
         min_sep = max(length * 0.5, fwhm * 2)

@@ -269,6 +269,7 @@ def test_star_list_image_from_starfield_builds_from_detections() -> None:
     assert sli.detections[0].counts == 10.0
     assert sli.image_metadata is sf.image_metadata
 
+
 def test_starfield_no_wcs_status_default() -> None:
     meta = ImageMetadata(width=100, height=100)
     sf = StarField(detections=[], image_metadata=meta, wcs=None)

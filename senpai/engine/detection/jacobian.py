@@ -1,7 +1,7 @@
+import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.wcs.utils import pixel_to_skycoord, skycoord_to_pixel
-import astropy.units as u
 
 from senpai.engine.detection.kernels import rectangle_pyramoid
 
@@ -101,9 +101,7 @@ def wcs_distortion_metrics(wcs, rate_ra, rate_dec, nx=3, ny=3):
     )
 
 
-def compute_effective_sky_motion_vector(
-    wcs, x_ref, y_ref, angle_rad, dsky=1 * u.arcsec
-):
+def compute_effective_sky_motion_vector(wcs, x_ref, y_ref, angle_rad, dsky=1 * u.arcsec):
     """
     Derive an effective sky-motion direction vector from a central streak orientation.
 
@@ -256,9 +254,7 @@ def get_local_streak_kernel(
     base_width = float(streak_metadata.fwhm)
 
     # Prepare central Jacobian and sky basis vectors
-    J_ref, rate_hat, e_perp = compute_effective_sky_motion_vector(
-        wcs, x_ref, y_ref, angle_rad, dsky=dsky
-    )
+    J_ref, rate_hat, e_perp = compute_effective_sky_motion_vector(wcs, x_ref, y_ref, angle_rad, dsky=dsky)
 
     # Local along-track vector and angle
     _, length_local, angle_local = compute_local_streak_vector_from_jacobian(

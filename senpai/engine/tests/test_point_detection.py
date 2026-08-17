@@ -244,10 +244,7 @@ def test_measure_fwhm_from_catalog_stars_recovers_sigma():
     truth = [(40.0, 40.0), (120.0, 60.0), (60.0, 160.0), (200.0, 120.0), (180.0, 210.0)]
     data = _star_field(truth, [80000.0] * len(truth), sigma=sigma, noise=3.0)
     image = _processed_image(data)
-    catalog = [
-        StarInSpace(ra=0.0, dec=0.0, magnitude=12.0 + i, x=x, y=y)
-        for i, (x, y) in enumerate(truth)
-    ]
+    catalog = [StarInSpace(ra=0.0, dec=0.0, magnitude=12.0 + i, x=x, y=y) for i, (x, y) in enumerate(truth)]
     stats = measure_fwhm_from_catalog_stars(image, catalog, initial_fwhm=4.0)
     assert stats.n_measurements >= 2
     assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
@@ -422,9 +419,7 @@ def test_binned_pass2_runs_and_keeps_subpixel_accuracy(monkeypatch):
     image, truth = _large_field(sigma)
     refiner_calls = _track_refiner_calls(monkeypatch)
 
-    starlist, fwhm = extract_point_sources(
-        _processed_image(image), max_detections=len(truth)
-    )
+    starlist, fwhm = extract_point_sources(_processed_image(image), max_detections=len(truth))
 
     assert refiner_calls, "fat-PSF large frame must take the binned pass-2 path"
     assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
@@ -441,9 +436,7 @@ def test_small_fwhm_large_frame_stays_unbinned(monkeypatch):
     image, truth = _large_field(sigma)
     refiner_calls = _track_refiner_calls(monkeypatch)
 
-    starlist, fwhm = extract_point_sources(
-        _processed_image(image), max_detections=len(truth)
-    )
+    starlist, fwhm = extract_point_sources(_processed_image(image), max_detections=len(truth))
 
     assert not refiner_calls, "well-sampled PSF must use the full-res path"
     assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
@@ -471,9 +464,7 @@ def test_fwhm_pass_measures_full_frame_even_with_sparse_center():
         _add_gaussian(image, x, y, 60000.0, sigma)
         truth.append((x, y))
 
-    starlist, fwhm = extract_point_sources(
-        _processed_image(image), max_detections=len(truth)
-    )
+    starlist, fwhm = extract_point_sources(_processed_image(image), max_detections=len(truth))
 
     assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.5)
     detected = [(d.x, d.y) for d in starlist.detections]
@@ -509,20 +500,32 @@ def test_satellite_threshold_search_matches_daostarfinder():
     std = float(np.std(data[data < np.percentile(data, 90)]))
     kernel = _StarFinderKernel(float(fwhm), ratio=1.0, theta=0.0, sigma_radius=1.5)
     convolved = fftconvolve(data, kernel.data.astype(np.float32), mode="same")
-    ys, xs, vals = _local_maxima_above(
-        convolved, kernel.mask.astype(bool), 3.0 * std * kernel.relerr
-    )
+    ys, xs, vals = _local_maxima_above(convolved, kernel.mask.astype(bool), 3.0 * std * kernel.relerr)
     cand_xy = np.column_stack((xs, ys))
 
     for thr_sigma in (3.0, 8.0, 25.0):
         thr = thr_sigma * std
         ref = DAOStarFinder(
-            fwhm=float(fwhm), threshold=thr, sharplo=0.1, sharphi=1.5,
-            roundlo=-1.5, roundhi=1.5, brightest=None, peakmax=None,
+            fwhm=float(fwhm),
+            threshold=thr,
+            sharplo=0.1,
+            sharphi=1.5,
+            roundlo=-1.5,
+            roundhi=1.5,
+            brightest=None,
+            peakmax=None,
         )(data)
         got = _dao_sources_at_threshold(
-            data, convolved, kernel, cand_xy, vals, thr,
-            sharplo=0.1, sharphi=1.5, roundlo=-1.5, roundhi=1.5,
+            data,
+            convolved,
+            kernel,
+            cand_xy,
+            vals,
+            thr,
+            sharplo=0.1,
+            sharphi=1.5,
+            roundlo=-1.5,
+            roundhi=1.5,
         )
         n_ref = 0 if ref is None else len(ref)
         n_got = 0 if got is None else len(got)
@@ -550,9 +553,7 @@ def test_catalog_fwhm_skips_clipped_stars_and_measures_truth():
         saturated = i % 3 == 0  # every third star is clipped
         flux = 4.0e6 if saturated else 3.0e5
         _add_gaussian(data, x, y, flux, sigma)
-        catalog.append(
-            StarInSpace(ra=0.0, dec=0.0, magnitude=8.0 + 0.05 * i, x=x, y=y)
-        )
+        catalog.append(StarInSpace(ra=0.0, dec=0.0, magnitude=8.0 + 0.05 * i, x=x, y=y))
     ceiling = 42000.0
     np.minimum(data, ceiling, out=data)  # clip the bright cores
 
@@ -574,15 +575,11 @@ def test_catalog_fwhm_uses_detection_sat_level_when_provided():
     # An absurdly low explicit sat level marks every star saturated ->
     # no measurements -> falls back to the initial value. Proves the
     # passed-through level is honored rather than re-estimated.
-    stats = measure_fwhm_from_catalog_stars(
-        image, catalog, initial_fwhm=6.5, sat_level=10.0
-    )
+    stats = measure_fwhm_from_catalog_stars(image, catalog, initial_fwhm=6.5, sat_level=10.0)
     assert stats.median_fwhm == pytest.approx(6.5, abs=1e-6)
 
     # And with the true (permissive) level, the real PSF width is measured.
-    stats = measure_fwhm_from_catalog_stars(
-        image, catalog, initial_fwhm=6.5, sat_level=1.0e9
-    )
+    stats = measure_fwhm_from_catalog_stars(image, catalog, initial_fwhm=6.5, sat_level=1.0e9)
     assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
 
 

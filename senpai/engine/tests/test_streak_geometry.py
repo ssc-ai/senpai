@@ -88,7 +88,7 @@ def _horizontal_streak(length: int, fwhm: float = 8.0, n: int = 160) -> np.ndarr
     x0 = (n - length) // 2
     cross = np.exp(-0.5 * ((np.arange(n) - cy) / sigma) ** 2)[:, None]
     img = np.zeros((n, n))
-    img[:, x0:x0 + length] = cross
+    img[:, x0 : x0 + length] = cross
     return img
 
 

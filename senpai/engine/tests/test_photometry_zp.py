@@ -24,9 +24,15 @@ TRUE_ZP = 26.0
 def _result(mag, flux, snr, crowding=0.0):
     star = StarInSpace(ra=0.0, dec=0.0, magnitude=mag, x=None, y=None)
     return SimplePhotometryResult(
-        star=star, flux=flux, flux_err=flux / max(snr, 1e-6), snr=snr,
-        background_level=0.0, background_std=1.0, aperture_radius=4.0,
-        crowding_factor=crowding, quality_flag=True,
+        star=star,
+        flux=flux,
+        flux_err=flux / max(snr, 1e-6),
+        snr=snr,
+        background_level=0.0,
+        background_std=1.0,
+        aperture_radius=4.0,
+        crowding_factor=crowding,
+        quality_flag=True,
     )
 
 
@@ -41,9 +47,7 @@ def _starfield():
     # model_construct: the ZP routine only reads .fwhm_stats, .catalog_stars and
     # .image_metadata; skip full StarField validation for this focused unit test.
     return StarField.model_construct(
-        image_metadata=ImageMetadata(
-            image_id="t", width=100, height=100, exposure_time=1.0
-        ),
+        image_metadata=ImageMetadata(image_id="t", width=100, height=100, exposure_time=1.0),
         fwhm_stats=None,
         catalog_stars=None,
     )

@@ -9,9 +9,7 @@ from senpai.engine.models.metadata import FWHMMetadata
 logger = logging.getLogger(__name__)
 
 
-def _radial_profile_fwhm(
-    data: np.ndarray, x: float, y: float, r_max: int
-) -> float | None:
+def _radial_profile_fwhm(data: np.ndarray, x: float, y: float, r_max: int) -> float | None:
     """FWHM from the star's median radial profile.
 
     The profile is measured in 0.5 px rings around the centroid, the sky
@@ -25,13 +23,10 @@ def _radial_profile_fwhm(
     medians make the profile robust to hot pixels and faint neighbors.
     """
     ix, iy = round(x), round(y)
-    if not (
-        r_max <= ix < data.shape[1] - r_max
-        and r_max <= iy < data.shape[0] - r_max
-    ):
+    if not (r_max <= ix < data.shape[1] - r_max and r_max <= iy < data.shape[0] - r_max):
         return None
-    cut = data[iy - r_max:iy + r_max + 1, ix - r_max:ix + r_max + 1].astype(float)
-    yy, xx = np.mgrid[-r_max:r_max + 1, -r_max:r_max + 1]
+    cut = data[iy - r_max : iy + r_max + 1, ix - r_max : ix + r_max + 1].astype(float)
+    yy, xx = np.mgrid[-r_max : r_max + 1, -r_max : r_max + 1]
     rr = np.hypot(xx - (x - ix), yy - (y - iy))
 
     sky_inner = 0.75 * r_max
@@ -138,14 +133,10 @@ def measure_fwhm_from_catalog_stars(
     MAX_FWHM_MEASUREMENTS = 30
 
     # Filter to stars with valid positions
-    valid_catalog_stars = [
-        star for star in catalog_stars if star.x is not None and star.y is not None
-    ]
+    valid_catalog_stars = [star for star in catalog_stars if star.x is not None and star.y is not None]
 
     # Prefer brighter stars when sub-selecting
-    valid_catalog_stars.sort(
-        key=lambda s: s.magnitude if getattr(s, "magnitude", None) is not None else 99.0
-    )
+    valid_catalog_stars.sort(key=lambda s: s.magnitude if getattr(s, "magnitude", None) is not None else 99.0)
     if len(valid_catalog_stars) > MAX_CATALOG_FOR_FWHM:
         valid_catalog_stars = valid_catalog_stars[:MAX_CATALOG_FOR_FWHM]
 
@@ -158,16 +149,14 @@ def measure_fwhm_from_catalog_stars(
     star_peaks: dict[int, float] = {}
     for star in valid_catalog_stars:
         x0, y0 = int(round(star.x)), int(round(star.y))
-        core = data[max(0, y0 - 2): y0 + 3, max(0, x0 - 2): x0 + 3]
+        core = data[max(0, y0 - 2) : y0 + 3, max(0, x0 - 2) : x0 + 3]
         if core.size:
             star_peaks[id(star)] = float(core.max())
     if sat_level is None:
         sat_level = _catalog_sat_level(list(star_peaks.values()))
 
     # Build array of positions
-    positions = np.array(
-        [[star.x, star.y] for star in valid_catalog_stars], dtype=float
-    )
+    positions = np.array([[star.x, star.y] for star in valid_catalog_stars], dtype=float)
     n = len(valid_catalog_stars)
 
     fwhm_measurements: list[float] = []
@@ -224,7 +213,8 @@ def measure_fwhm_from_catalog_stars(
 
         logger.info(
             "Catalog FWHM sample: %d measured, %d saturated skipped (sat_level=%s)",
-            len(fwhm_measurements), n_saturated,
+            len(fwhm_measurements),
+            n_saturated,
             f"{sat_level:.0f}" if np.isfinite(sat_level) else "inf",
         )
 
@@ -264,9 +254,7 @@ def measure_fwhm_from_catalog_stars(
         fwhm_vs_counts=fwhm_vs_counts,
         is_oversampled=median_fwhm > config.calibrations.target_fwhm,
         recommended_scale_factor=(
-            median_fwhm / config.calibrations.target_fwhm
-            if median_fwhm > config.calibrations.target_fwhm
-            else None
+            median_fwhm / config.calibrations.target_fwhm if median_fwhm > config.calibrations.target_fwhm else None
         ),
     )
 

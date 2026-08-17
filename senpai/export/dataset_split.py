@@ -3,12 +3,11 @@
 import json
 import logging
 import random
-import shutil
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ class DatasetSplit:
 class DatasetSplitter:
     """Split COCO datasets into train/val/test sets."""
 
-    def __init__(self, split: DatasetSplit, random_seed: Optional[int] = None):
+    def __init__(self, split: DatasetSplit, random_seed: int | None = None):
         """Initialize the dataset splitter.
 
         Args:
@@ -52,7 +51,7 @@ class DatasetSplitter:
         temporal_split: bool = True,  # Add parameter to control temporal vs random splitting
         link: bool = False,  # Symlink images into split dirs instead of copying
         train_cap: int = 0,  # Cap train to the most-recent N frames (0 = use all)
-    ) -> Dict[str, List[str]]:
+    ) -> dict[str, list[str]]:
         """Split a COCO dataset into train/val/test sets.
 
         Args:
@@ -76,11 +75,13 @@ class DatasetSplitter:
         # Find all annotation files - look for both point and line annotations
         point_annotation_files = list(input_dir.glob("*_point_sat.json"))
         line_annotation_files = list(input_dir.glob("*_line_star.json"))
-        
+
         if not point_annotation_files and not line_annotation_files:
             raise ValueError(f"No annotation files found in {input_dir}")
 
-        logger.info(f"Found {len(point_annotation_files)} point annotation files and {len(line_annotation_files)} line annotation files")
+        logger.info(
+            f"Found {len(point_annotation_files)} point annotation files and {len(line_annotation_files)} line annotation files"
+        )
         logger.debug(f"Point annotation files: {[f.name for f in point_annotation_files[:3]]}...")
         logger.debug(f"Line annotation files: {[f.name for f in line_annotation_files[:3]]}...")
 
@@ -92,7 +93,7 @@ class DatasetSplitter:
 
         for annotation_file in point_annotation_files:
             try:
-                with open(annotation_file, "r") as f:
+                with open(annotation_file) as f:
                     data = json.load(f)
 
                 # Collect images and their file paths
@@ -119,7 +120,7 @@ class DatasetSplitter:
 
         for annotation_file in line_annotation_files:
             try:
-                with open(annotation_file, "r") as f:
+                with open(annotation_file) as f:
                     data = json.load(f)
 
                 # Collect images and their file paths
@@ -144,7 +145,7 @@ class DatasetSplitter:
         # Combine all unique images for splitting
         all_images = []
         all_image_ids = set()
-        
+
         for img in point_images + line_images:
             if img["id"] not in all_image_ids:
                 all_images.append(img)
@@ -157,37 +158,37 @@ class DatasetSplitter:
         # Look for datetime in various possible fields
         def extract_datetime(img):
             # Try different possible datetime fields
-            datetime_fields = ['datetime', 'date_obs', 'date', 'time', 'timestamp', 'mjd']
+            datetime_fields = ["datetime", "date_obs", "date", "time", "timestamp", "mjd"]
             for field in datetime_fields:
                 if field in img:
                     return img[field]
-            
+
             # If no datetime field found, try to extract from filename
-            filename = img.get('file_name', '')
+            filename = img.get("file_name", "")
             # Common patterns: YYYYMMDD_HHMMSS, YYYY-MM-DD_HH:MM:SS, etc.
-            
+
             # Try various datetime patterns in filename
             patterns = [
-                r'(\d{8}_\d{6})',  # YYYYMMDD_HHMMSS
-                r'(\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2})',  # YYYY-MM-DD_HH:MM:SS
-                r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})',  # YYYY-MM-DDTHH:MM:SS
-                r'(\d{8}T\d{6})',  # YYYYMMDDTHHMMSS
+                r"(\d{8}_\d{6})",  # YYYYMMDD_HHMMSS
+                r"(\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2})",  # YYYY-MM-DD_HH:MM:SS
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})",  # YYYY-MM-DDTHH:MM:SS
+                r"(\d{8}T\d{6})",  # YYYYMMDDTHHMMSS
             ]
-            
+
             for pattern in patterns:
                 match = re.search(pattern, filename)
                 if match:
                     dt_str = match.group(1)
                     try:
                         # Try different datetime formats
-                        for fmt in ['%Y%m%d_%H%M%S', '%Y-%m-%d_%H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y%m%dT%H%M%S']:
+                        for fmt in ["%Y%m%d_%H%M%S", "%Y-%m-%d_%H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y%m%dT%H%M%S"]:
                             try:
                                 return datetime.strptime(dt_str, fmt)
                             except ValueError:
                                 continue
                     except:
                         pass
-            
+
             # If no datetime can be extracted, use a default value
             logger.warning(f"No datetime found for image {img.get('file_name', 'unknown')}, using default")
             return datetime.min
@@ -233,8 +234,10 @@ class DatasetSplitter:
         }
 
         split_type = "temporally" if temporal_split else "randomly"
-        logger.info(f"Split {n_total} images {split_type}: {len(train_ids)} train, {len(val_ids)} val, {len(test_ids)} test")
-        
+        logger.info(
+            f"Split {n_total} images {split_type}: {len(train_ids)} train, {len(val_ids)} val, {len(test_ids)} test"
+        )
+
         # Log temporal range information if using temporal splitting. Derive the
         # per-split image lists from the assigned id sets (the boundaries are
         # pinned-from-the-end + train_cap, not a simple front slice).
@@ -247,12 +250,12 @@ class DatasetSplitter:
                 train_start = extract_datetime(train_images[0])
                 train_end = extract_datetime(train_images[-1])
                 logger.info(f"Train set temporal range: {train_start} to {train_end}")
-            
+
             if val_images:
                 val_start = extract_datetime(val_images[0])
                 val_end = extract_datetime(val_images[-1])
                 logger.info(f"Val set temporal range: {val_start} to {val_end}")
-            
+
             if test_images:
                 test_start = extract_datetime(test_images[0])
                 test_end = extract_datetime(test_images[-1])
@@ -273,10 +276,10 @@ class DatasetSplitter:
 
             # Filter images for this split
             split_images = [img for img in all_images if img["id"] in split_image_ids]
-            
+
             # Filter point annotations for this split
             split_point_annotations = [ann for ann in point_annotations if ann["image_id"] in split_image_ids]
-            
+
             # Filter line annotations for this split
             split_line_annotations = [ann for ann in line_annotations if ann["image_id"] in split_image_ids]
 
@@ -298,19 +301,32 @@ class DatasetSplitter:
                     logger.warning(f"Image file not found: {src_path}")
 
             # Create combined annotation files
-            self._create_combined_annotations(split_images, split_point_annotations, split_line_annotations, annotations_dir, split_name, exclude_sidereal_from_lines)
+            self._create_combined_annotations(
+                split_images,
+                split_point_annotations,
+                split_line_annotations,
+                annotations_dir,
+                split_name,
+                exclude_sidereal_from_lines,
+            )
 
         logger.info(f"Split datasets saved to {output_dir}")
         return {name: list(ids) for name, ids in splits.items()}
 
     def _create_combined_annotations(
-        self, images: List[Dict], point_annotations: List[Dict], line_annotations: List[Dict], annotations_dir: Path, split_name: str, exclude_sidereal_from_lines: bool
+        self,
+        images: list[dict],
+        point_annotations: list[dict],
+        line_annotations: list[dict],
+        annotations_dir: Path,
+        split_name: str,
+        exclude_sidereal_from_lines: bool,
     ):
         """Create combined annotation files for a split."""
 
         # Create points annotation file (satellites)
         points_data_dir = f"{split_name}/"
-            
+
         points_data = {
             "info": {"data_dir": points_data_dir},
             "images": images,
@@ -335,18 +351,17 @@ class DatasetSplitter:
         # catalog x WCS, so a frame without them (demoted/unvalidated WCS) has
         # UNKNOWN star positions — including it would teach "no stars here".
         labeled_ids = {ann["image_id"] for ann in line_annotations}
-        rate_images = [
-            img for img in images
-            if img.get("type") == "rate" and img["id"] in labeled_ids
-        ]
+        rate_images = [img for img in images if img.get("type") == "rate" and img["id"] in labeled_ids]
         rate_image_ids = {img["id"] for img in rate_images}
-        
+
         lines_data_dir = f"{split_name}/"
-        
+
         lines_data = {
             "info": {"data_dir": lines_data_dir},
             "images": rate_images,  # Only include rate frames
-            "annotations": [ann for ann in line_annotations if ann.get("image_id") in rate_image_ids],  # Only line annotations from rate frames
+            "annotations": [
+                ann for ann in line_annotations if ann.get("image_id") in rate_image_ids
+            ],  # Only line annotations from rate frames
             "categories": [
                 {
                     "id": 0,
@@ -370,12 +385,14 @@ class DatasetSplitter:
         # Add detailed debugging
         bbox_annotations = [ann for ann in point_annotations if ann.get("type") == "bbox"]
         line_annotations = [ann for ann in line_annotations if ann.get("type") == "line"]
-        other_annotations = [ann for ann in point_annotations + line_annotations if ann.get("type") not in ["bbox", "line"]]
-        
+        other_annotations = [
+            ann for ann in point_annotations + line_annotations if ann.get("type") not in ["bbox", "line"]
+        ]
+
         # Count frame types
         sidereal_images = [img for img in images if img.get("type") == "sidereal"]
         rate_images = [img for img in images if img.get("type") == "rate"]
-        
+
         logger.debug(f"{split_name} split details:")
         logger.debug(f"  - Images: {len(images)} total ({len(sidereal_images)} sidereal, {len(rate_images)} rate)")
         logger.debug(f"  - Bbox annotations: {len(bbox_annotations)}")
@@ -391,11 +408,11 @@ def split_coco_dataset(
     train_ratio: float = 0.7,
     val_ratio: float = 0.2,
     test_ratio: float = 0.1,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
     image_pattern: str = "*.fits",
     exclude_sidereal_from_lines: bool = True,
     temporal_split: bool = True,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """Convenience function to split a COCO dataset.
 
     Args:

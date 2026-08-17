@@ -28,7 +28,7 @@ def mirror(tmp_path):
     cdir = tmp_path / "chunks"
     cdir.mkdir()
     np.save(cdir / "chunk_0000.npy", arr[: n // 2])
-    np.save(cdir / "chunk_0001.npy", arr[n // 2:])
+    np.save(cdir / "chunk_0001.npy", arr[n // 2 :])
     mdir = tmp_path / "mirror"
     ingest(str(cdir), str(mdir))
     return str(mdir), arr
@@ -39,18 +39,15 @@ def test_query_matches_brute_force(mirror):
     qb = (252.0, 254.5, 42.0, 44.0)
     fl = 18.0
     stars = gaia_local.query_by_ra_dec_bounds(*qb, faint_lim=fl, bright_lim=-32, mirror_dir=mdir)
-    m = ((arr["ra"] >= qb[0]) & (arr["ra"] <= qb[1]) & (arr["dec"] >= qb[2])
-         & (arr["dec"] <= qb[3]) & (arr["g"] <= fl))
+    m = (arr["ra"] >= qb[0]) & (arr["ra"] <= qb[1]) & (arr["dec"] >= qb[2]) & (arr["dec"] <= qb[3]) & (arr["g"] <= fl)
     assert len(stars) == int(m.sum()) > 0
 
 
 def test_dropin_dict_shape(mirror):
     mdir, _ = mirror
-    s = gaia_local.query_by_ra_dec_bounds(252.0, 254.0, 42.0, 44.0, faint_lim=18.0,
-                                          bright_lim=-32, mirror_dir=mdir)[0]
+    s = gaia_local.query_by_ra_dec_bounds(252.0, 254.0, 42.0, 44.0, faint_lim=18.0, bright_lim=-32, mirror_dir=mdir)[0]
     # same keys the online gaia.query_by_ra_dec_bounds returns
-    assert set(s) == {"ra", "dec", "mv", "magnitudes", "catalog",
-                      "source_id", "ra_pm", "dec_pm", "parallax"}
+    assert set(s) == {"ra", "dec", "mv", "magnitudes", "catalog", "source_id", "ra_pm", "dec_pm", "parallax"}
     assert s["catalog"] == "Gaia"
     assert isinstance(s["source_id"], str)
     assert 4.0 < s["ra"] < 4.6  # radians (≈252-254 deg)
@@ -59,15 +56,17 @@ def test_dropin_dict_shape(mirror):
 
 def test_mag_limit_applied(mirror):
     mdir, _ = mirror
-    bright = gaia_local.query_by_ra_dec_bounds(250.0, 260.0, 40.0, 50.0, faint_lim=12.0,
-                                               bright_lim=-32, mirror_dir=mdir)
-    deep = gaia_local.query_by_ra_dec_bounds(250.0, 260.0, 40.0, 50.0, faint_lim=19.0,
-                                             bright_lim=-32, mirror_dir=mdir)
+    bright = gaia_local.query_by_ra_dec_bounds(
+        250.0, 260.0, 40.0, 50.0, faint_lim=12.0, bright_lim=-32, mirror_dir=mdir
+    )
+    deep = gaia_local.query_by_ra_dec_bounds(250.0, 260.0, 40.0, 50.0, faint_lim=19.0, bright_lim=-32, mirror_dir=mdir)
     assert len(deep) > len(bright)
     assert all(st["mv"] <= 12.0 for st in bright)
 
 
 def test_empty_box_returns_empty(mirror):
     mdir, _ = mirror
-    assert gaia_local.query_by_ra_dec_bounds(100.0, 101.0, -10.0, -9.0, faint_lim=20.0,
-                                             bright_lim=-32, mirror_dir=mdir) == []
+    assert (
+        gaia_local.query_by_ra_dec_bounds(100.0, 101.0, -10.0, -9.0, faint_lim=20.0, bright_lim=-32, mirror_dir=mdir)
+        == []
+    )

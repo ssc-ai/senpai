@@ -60,9 +60,7 @@ def _run_collect_pipeline(
         frames.append(frame_result_from_rate(frame))
     frames.sort(key=lambda f: f.index)
 
-    correlated = [
-        cs.model_dump(mode="json") for cs in senpai_run.correlated_streaks
-    ]
+    correlated = [cs.model_dump(mode="json") for cs in senpai_run.correlated_streaks]
 
     logger.info(
         "POST %s — done: %d frames, %d correlated streaks, %s",

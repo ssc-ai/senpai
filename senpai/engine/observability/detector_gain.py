@@ -83,8 +83,7 @@ def _robust_sigma(a: np.ndarray) -> float:
     return float(np.median(np.abs(a - np.median(a))) * 1.4826)
 
 
-def _clean_sky_sigma(diff: np.ndarray, patch: int = 128,
-                     sky_pctile: float = 10.0) -> float:
+def _clean_sky_sigma(diff: np.ndarray, patch: int = 128, sky_pctile: float = 10.0) -> float:
     """Sky-only per-pixel std of a difference image, from the cleanest patches.
 
     Stars (and their non-cancelling residuals under rate tracking) are localized,
@@ -99,9 +98,7 @@ def _clean_sky_sigma(diff: np.ndarray, patch: int = 128,
     ny, nx = H // p, W // p
     if ny < 2 or nx < 2:
         return _robust_sigma(diff)
-    blocks = (diff[:ny * p, :nx * p]
-              .reshape(ny, p, nx, p).transpose(0, 2, 1, 3)
-              .reshape(ny * nx, p * p))
+    blocks = diff[: ny * p, : nx * p].reshape(ny, p, nx, p).transpose(0, 2, 1, 3).reshape(ny * nx, p * p)
     med = np.median(blocks, axis=1, keepdims=True)
     mad = np.median(np.abs(blocks - med), axis=1) * 1.4826
     mad = mad[np.isfinite(mad) & (mad > 0)]
@@ -110,8 +107,7 @@ def _clean_sky_sigma(diff: np.ndarray, patch: int = 128,
     return float(np.percentile(mad, sky_pctile))
 
 
-def ptc_point(frame1: np.ndarray, frame2: np.ndarray,
-              patch: int = 128) -> tuple[float, float] | None:
+def ptc_point(frame1: np.ndarray, frame2: np.ndarray, patch: int = 128) -> tuple[float, float] | None:
     """One PTC point ``(level_ADU, sky per-pixel var_ADU)`` from a same-field pair.
 
     The level is the mean of the two frame medians (sky); the variance is the
@@ -135,15 +131,15 @@ def ptc_point(frame1: np.ndarray, frame2: np.ndarray,
 
 @dataclass
 class GainFit:
-    gain: float                 # e-/ADU = 1 / slope
-    gain_lo: float              # from the Theil-Sen 95% slope interval
+    gain: float  # e-/ADU = 1 / slope
+    gain_lo: float  # from the Theil-Sen 95% slope interval
     gain_hi: float
-    slope: float                # var-vs-level slope = 1 / gain
-    intercept: float            # = read_ADU**2 - bias_ADU / gain
+    slope: float  # var-vs-level slope = 1 / gain
+    intercept: float  # = read_ADU**2 - bias_ADU / gain
     n_pairs: int
-    levels: list[float] = field(default_factory=list)       # all PTC points
+    levels: list[float] = field(default_factory=list)  # all PTC points
     variances: list[float] = field(default_factory=list)
-    env_levels: list[float] = field(default_factory=list)   # lower-envelope pts
+    env_levels: list[float] = field(default_factory=list)  # lower-envelope pts
     env_variances: list[float] = field(default_factory=list)
 
 
@@ -157,8 +153,7 @@ def fit_gain(points: list[tuple[float, float]]) -> GainFit | None:
     only raises variance, so the clean shot line is the lower edge -- and refits.
     Needs points spanning a range of sky levels; a flat PTC cannot pin a slope.
     """
-    pts = [(x, y) for x, y in points if np.isfinite(x) and np.isfinite(y)
-           and x > 0 and y > 0]
+    pts = [(x, y) for x, y in points if np.isfinite(x) and np.isfinite(y) and x > 0 and y > 0]
     if len(pts) < 5:
         return None
     levels = np.array([p[0] for p in pts])
@@ -167,6 +162,7 @@ def fit_gain(points: list[tuple[float, float]]) -> GainFit | None:
         return None  # no lever arm in level -> slope undefined
 
     from scipy.stats import theilslopes
+
     # Contamination (residual stars, PRNU that doesn't fully cancel at high sky)
     # can only *raise* a point's variance, so the true shot line is the lower
     # edge. Iteratively reject points sitting ABOVE the fit (one-sided clip) so
@@ -184,8 +180,7 @@ def fit_gain(points: list[tuple[float, float]]) -> GainFit | None:
         if new_keep.sum() < 5 or new_keep.sum() == keep.sum():
             break
         keep = new_keep
-        slope, intercept, lo_slope, hi_slope = theilslopes(
-            variances[keep], levels[keep])
+        slope, intercept, lo_slope, hi_slope = theilslopes(variances[keep], levels[keep])
     if slope <= 0.0:
         return None
     gain = 1.0 / slope
@@ -193,17 +188,23 @@ def fit_gain(points: list[tuple[float, float]]) -> GainFit | None:
     gain_lo = 1.0 / hi_slope if hi_slope > 0 else float("nan")
     gain_hi = 1.0 / lo_slope if lo_slope > 0 else float("nan")
     return GainFit(
-        gain=gain, gain_lo=gain_lo, gain_hi=gain_hi,
-        slope=slope, intercept=float(intercept), n_pairs=int(keep.sum()),
-        levels=levels.tolist(), variances=variances.tolist(),
-        env_levels=levels[keep].tolist(), env_variances=variances[keep].tolist(),
+        gain=gain,
+        gain_lo=gain_lo,
+        gain_hi=gain_hi,
+        slope=slope,
+        intercept=float(intercept),
+        n_pairs=int(keep.sum()),
+        levels=levels.tolist(),
+        variances=variances.tolist(),
+        env_levels=levels[keep].tolist(),
+        env_variances=variances[keep].tolist(),
     )
 
 
-def plot_ptc(fit: GainFit, output_path: str | Path,
-             title: str = "detector gain (photon transfer)") -> Path:
+def plot_ptc(fit: GainFit, output_path: str | Path, title: str = "detector gain (photon transfer)") -> Path:
     """Render the PTC: variance vs level, the fit line, and the recovered gain."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -211,25 +212,35 @@ def plot_ptc(fit: GainFit, output_path: str | Path,
     kept = set(zip(fit.env_levels, fit.env_variances))
     is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances)])
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(levels[is_kept], np.array(fit.variances)[is_kept], s=22,
-               alpha=0.7, color="tab:blue",
-               label=f"fit pairs, star-free sky (n={fit.n_pairs})")
+    ax.scatter(
+        levels[is_kept],
+        np.array(fit.variances)[is_kept],
+        s=22,
+        alpha=0.7,
+        color="tab:blue",
+        label=f"fit pairs, star-free sky (n={fit.n_pairs})",
+    )
     if (~is_kept).any():
-        ax.scatter(levels[~is_kept], np.array(fit.variances)[~is_kept], s=30,
-                   facecolors="none", edgecolors="tab:red",
-                   label="clipped (above line: residual contamination)")
+        ax.scatter(
+            levels[~is_kept],
+            np.array(fit.variances)[~is_kept],
+            s=30,
+            facecolors="none",
+            edgecolors="tab:red",
+            label="clipped (above line: residual contamination)",
+        )
     xs = np.linspace(levels.min(), levels.max(), 200)
     yfit = fit.slope * xs + fit.intercept
     inv = 1.0 / fit.gain
     pos = yfit > 0  # negative intercept -> line dips below 0 near the bias floor
-    ax.plot(xs[pos], yfit[pos], "-", color="black", lw=1.8,
-            label=f"fit: gain = {fit.gain:.3f} e-/ADU = {inv:.3f} ADU/e-")
+    ax.plot(
+        xs[pos], yfit[pos], "-", color="black", lw=1.8, label=f"fit: gain = {fit.gain:.3f} e-/ADU = {inv:.3f} ADU/e-"
+    )
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("sky level (ADU)")
     ax.set_ylabel("difference variance / 2  (ADU²)")
-    ax.set_title(title + "\nphoton transfer: slope = 1/gain "
-                 "(star-free patches, one-sided clip)")
+    ax.set_title(title + "\nphoton transfer: slope = 1/gain (star-free patches, one-sided clip)")
     ax.legend(loc="best", fontsize=9)
     ax.grid(True, alpha=0.3, which="both")
     output_path = Path(output_path)

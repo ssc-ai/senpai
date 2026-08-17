@@ -138,9 +138,7 @@ def windowed_correlation_peaks(
     return peaks
 
 
-def track_rate_from_header(
-    header: object, plate_scale_arcsec: float, dec_deg: float
-) -> float | None:
+def track_rate_from_header(header: object, plate_scale_arcsec: float, dec_deg: float) -> float | None:
     """Derive the object's pixel track rate from the mount track-rate headers, if available.
 
     ``TELTKRA``/``TELTKDEC`` are the mount's commanded RA/Dec track rates (arcsec/s); the mount
@@ -161,9 +159,7 @@ def track_rate_from_header(
     if ra_rate is None or dec_rate is None or plate_scale_arcsec <= 0:
         return None
     try:
-        great_circle_arcsec_s = float(
-            np.hypot(float(ra_rate) * np.cos(np.deg2rad(dec_deg)), float(dec_rate))
-        )
+        great_circle_arcsec_s = float(np.hypot(float(ra_rate) * np.cos(np.deg2rad(dec_deg)), float(dec_rate)))
     except (TypeError, ValueError):
         return None
     rate = great_circle_arcsec_s / plate_scale_arcsec
@@ -203,9 +199,7 @@ def _initial_track_rate(rate_frame: RateTrackFrame) -> float | None:
     return None
 
 
-def solve_rate_from_rate(
-    rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFrame, frame_shift: FrameShift
-) -> None:
+def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFrame, frame_shift: FrameShift) -> None:
     """Measure the pixel shift between two rate-tracked frames by cross correlation.
 
     Prepares and balances both frames, cross correlates them, and searches the
@@ -242,9 +236,9 @@ def solve_rate_from_rate(
     # Return the modified object
     rate_a_exposure_time = float(rate_frame_a.frame.header.get("EXPTIME", 1))
     rate_b_exposure_time = float(rate_frame_b.frame.header.get("EXPTIME", 1))
-    inter_frame_gap_seconds = abs(
-        (rate_frame_a.timestamp - rate_frame_b.timestamp).total_seconds()
-    ) - 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
+    inter_frame_gap_seconds = abs((rate_frame_a.timestamp - rate_frame_b.timestamp).total_seconds()) - 0.5 * (
+        rate_a_exposure_time + rate_b_exposure_time
+    )
 
     # Elapsed time between the two frames' exposure midpoints; the denominator for the object's pixel
     # track rate. Two rate frames sharing a timestamp (duplicate/degenerate DATE-OBS) make this zero,
@@ -302,11 +296,7 @@ def solve_rate_from_rate(
         if fr.streak is not None and np.all(np.isfinite([fr.streak.cosine_angle, fr.streak.sine_angle])):
             drift_axis = (fr.streak.cosine_angle, fr.streak.sine_angle)
             break
-    if (
-        settings.streak.symmetric_border_removal
-        and pixel_track_rate_per_second is not None
-        and drift_axis is not None
-    ):
+    if settings.streak.symmetric_border_removal and pixel_track_rate_per_second is not None and drift_axis is not None:
         drift_mag = pixel_track_rate_per_second * elapsed_seconds
         pad_px = int(min(30, max(8, 2 * (streak_fwhm or 4.0), 0.15 * drift_mag)))
         rate_a_data, rate_b_data, filled_a, filled_b = remove_border_crossing_streaks_pairwise(
@@ -315,7 +305,10 @@ def solve_rate_from_rate(
         if filled_a or filled_b:
             logger.info(
                 "Symmetric border-streak removal: filled %d px (frame %d), %d px (frame %d)",
-                filled_a, rate_frame_a.index, filled_b, rate_frame_b.index,
+                filled_a,
+                rate_frame_a.index,
+                filled_b,
+                rate_frame_b.index,
             )
     else:
         rate_a_data = remove_border_crossing_streaks(rate_a_data)
@@ -347,9 +340,7 @@ def solve_rate_from_rate(
     max_trials = 3
     search_radius_pixels = 5.0
     original_center = np.array(cross_correlated_image.shape) / 2
-    candidate_peaks = windowed_correlation_peaks(
-        cross_correlated_image, expected_shift, n_peaks=max_trials
-    )
+    candidate_peaks = windowed_correlation_peaks(cross_correlated_image, expected_shift, n_peaks=max_trials)
 
     best_shift = None
     best_correlation = None
@@ -360,17 +351,15 @@ def solve_rate_from_rate(
         shift_rate_to_rate_xy = (original_center - cc_max)[::-1]
 
         # Validate this proposal with Bayesian flux correlation.
-        shift_rate_to_rate_xy[0], shift_rate_to_rate_xy[1], correlation = (
-            bayesian_optimize_proposed_shift(
-                target=rate_frame_b,
-                source=rate_frame_a,
-                shift_x_low=shift_rate_to_rate_xy[0] - search_radius_pixels,
-                shift_x_high=shift_rate_to_rate_xy[0] + search_radius_pixels,
-                shift_y_low=shift_rate_to_rate_xy[1] - search_radius_pixels,
-                shift_y_high=shift_rate_to_rate_xy[1] + search_radius_pixels,
-                catalog_stars=rate_frame_a.starfield.catalog_stars,
-                n_calls=10,
-            )
+        shift_rate_to_rate_xy[0], shift_rate_to_rate_xy[1], correlation = bayesian_optimize_proposed_shift(
+            target=rate_frame_b,
+            source=rate_frame_a,
+            shift_x_low=shift_rate_to_rate_xy[0] - search_radius_pixels,
+            shift_x_high=shift_rate_to_rate_xy[0] + search_radius_pixels,
+            shift_y_low=shift_rate_to_rate_xy[1] - search_radius_pixels,
+            shift_y_high=shift_rate_to_rate_xy[1] + search_radius_pixels,
+            catalog_stars=rate_frame_a.starfield.catalog_stars,
+            n_calls=10,
         )
 
         # The brightest in-window peak (first candidate) is the fallback when nothing clears the gate.
@@ -419,13 +408,9 @@ def solve_rate_from_rate(
     frame_shift.is_valid = True
     frame_shift.correlation = best_correlation
 
-    streak_length_expected_from_shift = (
-        estimated_pixel_track_rate_per_second * rate_a_exposure_time
-    )
+    streak_length_expected_from_shift = estimated_pixel_track_rate_per_second * rate_a_exposure_time
 
-    streak_orientation_expected_from_shift = np.rad2deg(
-        np.arctan2(shift_rate_to_rate_xy[1], shift_rate_to_rate_xy[0])
-    )
+    streak_orientation_expected_from_shift = np.rad2deg(np.arctan2(shift_rate_to_rate_xy[1], shift_rate_to_rate_xy[0]))
 
     if not rate_frame_b.streak:
         # refine length on image
@@ -441,8 +426,7 @@ def solve_rate_from_rate(
             plot_single_frame(
                 psf,
                 scale=False,
-                output_file=Path(settings.plotting.output_dir)
-                / f"{rate_frame_b.index}_streak_psf.png",
+                output_file=Path(settings.plotting.output_dir) / f"{rate_frame_b.index}_streak_psf.png",
             )
 
         if percent_difference(length_estimate, streak_length_expected_from_shift) > 10:
@@ -455,9 +439,7 @@ def solve_rate_from_rate(
             cosine_angle=np.cos(np.deg2rad(rotation_estimate)),
             fwhm=fwhm,
         )
-        rate_frame_b.pixel_track_rate_per_second = (
-            np.linalg.norm(shift_rate_to_rate_xy) / elapsed_seconds
-        )
+        rate_frame_b.pixel_track_rate_per_second = np.linalg.norm(shift_rate_to_rate_xy) / elapsed_seconds
 
 
 def bayesian_optimize_proposed_shift(

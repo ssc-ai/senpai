@@ -70,9 +70,7 @@ def flux_significance_test(
     integral = np.zeros((h + 1, w + 1))
     integral[1:, 1:] = np.cumsum(np.cumsum(bgsub, axis=0), axis=1)
 
-    pos = np.array(
-        [(x, y) for x, y in positions if margin < x < w - margin and margin < y < h - margin]
-    )
+    pos = np.array([(x, y) for x, y in positions if margin < x < w - margin and margin < y < h - margin])
     if len(pos) == 0:
         return {"n_tested": 0, "frac_significant": 0.0, "control_frac": 0.0}
 
@@ -94,7 +92,7 @@ def flux_significance_test(
     ctrl = _box_sums(integral, cx, pos[:, 1], box_radius)
 
     return {
-        "n_tested": int(len(pos)),
+        "n_tested": len(pos),
         "frac_significant": float(np.mean(pred > threshold)),
         "control_frac": float(np.mean(ctrl > threshold)),
     }
@@ -134,16 +132,10 @@ def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetr
 
     starfield = frame.starfield
     if starfield is None or not starfield.catalog_stars:
-        logger.warning(
-            "WCS validation skipped for frame %d: no catalog stars", frame.index
-        )
+        logger.warning("WCS validation skipped for frame %d: no catalog stars", frame.index)
         return None
 
-    stars = [
-        s
-        for s in starfield.catalog_stars
-        if s.x is not None and s.y is not None and s.magnitude is not None
-    ]
+    stars = [s for s in starfield.catalog_stars if s.x is not None and s.y is not None and s.magnitude is not None]
     stars.sort(key=lambda s: s.magnitude)
     positions = [(s.x, s.y) for s in stars[: config.n_stars]]
 
@@ -179,8 +171,7 @@ def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetr
     )
 
     logger.info(
-        "WCS validation frame %d: %d stars, frac_significant=%.2f (control=%.2f, "
-        "box=%dpx) -> %s",
+        "WCS validation frame %d: %d stars, frac_significant=%.2f (control=%.2f, box=%dpx) -> %s",
         frame.index,
         metrics.n_stars_tested,
         metrics.frac_significant,

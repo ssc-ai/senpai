@@ -29,7 +29,7 @@ import logging
 import numpy as np
 from astropy.stats import sigma_clipped_stats
 from pydantic import BaseModel, field_serializer
-from scipy.ndimage import label, maximum_filter, map_coordinates
+from scipy.ndimage import label, map_coordinates, maximum_filter
 from scipy.optimize import curve_fit
 
 from senpai.engine.detection.kernels import build_directional_filter_bank
@@ -69,8 +69,14 @@ class StreakCandidate(BaseModel):
     observation_filter: str | None = None
 
     @field_serializer(
-        "x", "y", "angle_deg", "length_pixels", "width_pixels",
-        "peak_snr", "directional_excess", "fractional_excess",
+        "x",
+        "y",
+        "angle_deg",
+        "length_pixels",
+        "width_pixels",
+        "peak_snr",
+        "directional_excess",
+        "fractional_excess",
     )
     def _round2(self, v: float) -> float:
         return round(v, 2)
@@ -143,11 +149,7 @@ def _bin_image(image: np.ndarray, factor: int) -> np.ndarray:
     """Block-average ``image`` by ``factor`` (trims edges that don't divide)."""
     h, w = image.shape
     hb, wb = h // factor, w // factor
-    return (
-        image[: hb * factor, : wb * factor]
-        .reshape(hb, factor, wb, factor)
-        .mean(axis=(1, 3))
-    )
+    return image[: hb * factor, : wb * factor].reshape(hb, factor, wb, factor).mean(axis=(1, 3))
 
 
 def _upsample_map(binned: np.ndarray, factor: int, shape: tuple[int, int]) -> np.ndarray:
@@ -260,18 +262,15 @@ def _characterize_component(
         except Exception:
             logger.debug(
                 "WCS pixel_to_world failed for streak at (%.1f, %.1f)",
-                centroid_x, centroid_y,
+                centroid_x,
+                centroid_y,
             )
 
     # Rate estimate
     if exposure_time and exposure_time > 0:
         rate_pix = float(length) / exposure_time
         candidate.rate_pixels_per_sec = rate_pix
-        if (
-            starfield
-            and starfield.wcs_metadata
-            and hasattr(starfield.wcs_metadata, "x_ifov_arcsec")
-        ):
+        if starfield and starfield.wcs_metadata and hasattr(starfield.wcs_metadata, "x_ifov_arcsec"):
             candidate.rate_arcsec_per_sec = rate_pix * starfield.wcs_metadata.x_ifov_arcsec
 
     return candidate
@@ -283,7 +282,7 @@ def _characterize_component(
 
 
 def _gauss1d(x, amp, mu, sig, bg):
-    return amp * np.exp(-((x - mu) ** 2) / (2 * sig ** 2)) + bg
+    return amp * np.exp(-((x - mu) ** 2) / (2 * sig**2)) + bg
 
 
 def _fit_perp_profile(
@@ -326,10 +325,7 @@ def _fit_perp_profile(
     residual_rms = float(np.sqrt(np.mean((_gauss1d(tv, *popt) - profile) ** 2)))
 
     wing_mask = np.abs(tv) > 2 * fwhm
-    local_noise = (
-        float(np.std(profile[wing_mask])) if wing_mask.sum() >= 5
-        else float(np.std(profile))
-    )
+    local_noise = float(np.std(profile[wing_mask])) if wing_mask.sum() >= 5 else float(np.std(profile))
 
     return fitted_fwhm, amplitude, local_noise, residual_rms
 
@@ -375,7 +371,8 @@ def _refine_streak_from_image(
     if best_fit is None:
         logger.debug(
             "Rejected streak at (%.0f,%.0f): no valid profile fit at any angle",
-            cx, cy,
+            cx,
+            cy,
         )
         return None
 
@@ -385,7 +382,10 @@ def _refine_streak_from_image(
     if local_noise > 0 and fitted_amp < 3 * local_noise:
         logger.debug(
             "Rejected streak at (%.0f,%.0f): amp=%.2f < 3*noise=%.2f",
-            cx, cy, fitted_amp, 3 * local_noise,
+            cx,
+            cy,
+            fitted_amp,
+            3 * local_noise,
         )
         return None
 
@@ -396,7 +396,10 @@ def _refine_streak_from_image(
     if fitted_fwhm < 0.3 * fwhm or fitted_fwhm > 2.5 * fwhm:
         logger.debug(
             "Rejected streak at (%.0f,%.0f): width=%.2f outside [0.3,2.5]*fwhm=%.2f",
-            cx, cy, fitted_fwhm, fwhm,
+            cx,
+            cy,
+            fitted_fwhm,
+            fwhm,
         )
         return None
 
@@ -598,11 +601,11 @@ def _subtract_catalog_stars(
         # Round Gaussian template (normalized to sum=1)
         half = int(np.ceil(3.5 * fwhm))
         y, x = np.mgrid[-half : half + 1, -half : half + 1].astype(np.float64)
-        psf = np.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
+        psf = np.exp(-(x**2 + y**2) / (2 * sigma**2))
         psf /= psf.sum()
         gauss_grid = (y, x)
 
-    psf_sq_sum = np.sum(psf ** 2)
+    psf_sq_sum = np.sum(psf**2)
     template_peak = float(psf.max())
 
     star_amplitudes: list[tuple[float, float, float, float]] = []
@@ -635,9 +638,7 @@ def _subtract_catalog_stars(
                 gy, gx = gauss_grid
                 dx = star.x - ix
                 dy = star.y - iy
-                model = np.exp(
-                    -((gx - dx) ** 2 + (gy - dy) ** 2) / (2 * sigma ** 2)
-                )
+                model = np.exp(-((gx - dx) ** 2 + (gy - dy) ** 2) / (2 * sigma**2))
                 model /= model.sum()
             else:
                 # Streaked template: pixel-centered subtraction.  The trail
@@ -645,14 +646,15 @@ def _subtract_catalog_stars(
                 # small dipole residual, covered by the residual mask.
                 model = psf
 
-            result[iy - half : iy + half + 1, ix - half : ix + half + 1] -= (
-                amplitude * model
-            )
+            result[iy - half : iy + half + 1, ix - half : ix + half + 1] -= amplitude * model
             star_amplitudes.append((star.x, star.y, float(amplitude), measured_peak))
 
     logger.info(
         "PSF-subtracted %d catalog stars (FWHM=%.2f, template=%dx%d%s)",
-        len(star_amplitudes), fwhm, 2 * half + 1, 2 * half + 1,
+        len(star_amplitudes),
+        fwhm,
+        2 * half + 1,
+        2 * half + 1,
         f", trailed L={streak_length_pixels:.0f}px" if trailed else "",
     )
     return result, star_amplitudes, template_peak
@@ -674,10 +676,7 @@ def _find_hotspots(
     """
     size = max(3, int(2 * min_separation + 1))
     local_max = maximum_filter(directional_excess, size=size, mode="constant")
-    peaks = (
-        (directional_excess == local_max)
-        & (directional_excess > threshold)
-    )
+    peaks = (directional_excess == local_max) & (directional_excess > threshold)
     ys, xs = np.where(peaks)
     vals = directional_excess[ys, xs]
     # Sort by excess descending
@@ -868,7 +867,12 @@ def _trace_and_build_candidate(
     angle_change = min(angle_change, 180 - angle_change)
     if angle_change > 1.0:
         retrace = _trace_streak_profile(
-            directional_excess, centroid_x, centroid_y, angle, fwhm, threshold,
+            directional_excess,
+            centroid_x,
+            centroid_y,
+            angle,
+            fwhm,
+            threshold,
         )
         if retrace is not None and retrace[4] >= result[4]:
             centroid_x, centroid_y, length, peak_excess, _total = retrace
@@ -902,11 +906,7 @@ def _trace_and_build_candidate(
     if exposure_time and exposure_time > 0:
         rate_pix = length / exposure_time
         candidate.rate_pixels_per_sec = rate_pix
-        if (
-            starfield
-            and starfield.wcs_metadata
-            and hasattr(starfield.wcs_metadata, "x_ifov_arcsec")
-        ):
+        if starfield and starfield.wcs_metadata and hasattr(starfield.wcs_metadata, "x_ifov_arcsec"):
             candidate.rate_arcsec_per_sec = rate_pix * starfield.wcs_metadata.x_ifov_arcsec
 
     return candidate
@@ -974,9 +974,7 @@ def detect_streaks_in_sidereal(
     # ---- 1. Background subtract ----------------------------------------
     # Stats on a 4x4-subsampled view: identical medians to within noise at
     # a fraction of the cost on multi-megapixel frames.
-    _, bg_median, image_noise = sigma_clipped_stats(
-        image[::4, ::4], sigma=3.0, maxiters=5
-    )
+    _, bg_median, image_noise = sigma_clipped_stats(image[::4, ::4], sigma=3.0, maxiters=5)
     bg_subtracted = image.astype(np.float64) - bg_median
 
     # ---- 1b. PSF-subtract catalog stars --------------------------------
@@ -1006,8 +1004,7 @@ def detect_streaks_in_sidereal(
     # native resolution afterwards so tracing and refinement are unchanged.
     bin_factor = max(1, int(fwhm / 3.5))
     logger.info(
-        "Applying %d-angle directional filter bank "
-        "(FWHM=%.2f, length=%.1fxFWHM, bin=%d)",
+        "Applying %d-angle directional filter bank (FWHM=%.2f, length=%.1fxFWHM, bin=%d)",
         n_angles,
         fwhm,
         filter_length_fwhm,
@@ -1077,11 +1074,11 @@ def detect_streaks_in_sidereal(
 
     abs_threshold = detection_sigma * excess_noise
     detection_mask = (
-        (directional_excess > abs_threshold)          # above noise floor
+        (directional_excess > abs_threshold)  # above noise floor
         & (fractional_excess > min_fractional_excess)  # not a point source
-        & (isotropic > iso_signal_threshold)           # has real signal
+        & (isotropic > iso_signal_threshold)  # has real signal
         & border_mask
-        & ~star_mask                                   # no star residual seeds
+        & ~star_mask  # no star residual seeds
     )
     n_det = int(detection_mask.sum())
     logger.info(
@@ -1259,8 +1256,7 @@ def detect_streaks_in_sidereal(
         cy_mean = comp_ys.mean()
         dx = comp_xs - cx_mean
         dy = comp_ys - cy_mean
-        cov = np.array([[np.sum(dx * dx), np.sum(dx * dy)],
-                        [np.sum(dx * dy), np.sum(dy * dy)]]) / n_pix
+        cov = np.array([[np.sum(dx * dx), np.sum(dx * dy)], [np.sum(dx * dy), np.sum(dy * dy)]]) / n_pix
         eigvals, eigvecs = np.linalg.eigh(cov)
         # Eigenvectors sorted ascending; last = major axis
         major = eigvecs[:, -1]
@@ -1346,13 +1342,8 @@ def detect_streaks_in_sidereal(
         # recompute from the refined length.
         if exposure_time and exposure_time > 0:
             result.rate_pixels_per_sec = result.length_pixels / exposure_time
-            if (
-                starfield.wcs_metadata
-                and hasattr(starfield.wcs_metadata, "x_ifov_arcsec")
-            ):
-                result.rate_arcsec_per_sec = (
-                    result.rate_pixels_per_sec * starfield.wcs_metadata.x_ifov_arcsec
-                )
+            if starfield.wcs_metadata and hasattr(starfield.wcs_metadata, "x_ifov_arcsec"):
+                result.rate_arcsec_per_sec = result.rate_pixels_per_sec * starfield.wcs_metadata.x_ifov_arcsec
         refined.append(result)
     candidates = refined
 
@@ -1364,10 +1355,7 @@ def detect_streaks_in_sidereal(
     # highest-SNR instance.
     deduped: list[StreakCandidate] = []
     for candidate in candidates:
-        if any(
-            np.hypot(candidate.x - kept.x, candidate.y - kept.y) < fwhm * 2
-            for kept in deduped
-        ):
+        if any(np.hypot(candidate.x - kept.x, candidate.y - kept.y) < fwhm * 2 for kept in deduped):
             continue
         deduped.append(candidate)
     candidates = deduped
@@ -1435,9 +1423,7 @@ def measure_streak_candidate_photometry(
         # photutils angle convention: measured from +x axis, CCW
         theta = np.radians(candidate.angle_deg)
 
-        aperture = RectangularAperture(
-            (cx, cy), w=ap_length, h=ap_width, theta=theta
-        )
+        aperture = RectangularAperture((cx, cy), w=ap_length, h=ap_width, theta=theta)
         bg_annulus = RectangularAnnulus(
             (cx, cy),
             w_in=ap_length + fwhm,
@@ -1465,7 +1451,7 @@ def measure_streak_candidate_photometry(
         n_pix = ap_area
         source_e = max(flux, 0) * gain
         bg_e = max(bg_per_pixel, 0) * gain
-        noise_e = np.sqrt(source_e + bg_e * n_pix + read_noise ** 2 * n_pix)
+        noise_e = np.sqrt(source_e + bg_e * n_pix + read_noise**2 * n_pix)
         flux_err = noise_e / gain if gain > 0 else 0
 
         candidate.flux = float(flux)
@@ -1479,7 +1465,7 @@ def measure_streak_candidate_photometry(
 
             mag_err_flux = 1.0857 * flux_err / flux
             zp_err = zero_point_err if zero_point_err else 0.0
-            mag_err = float(np.sqrt(mag_err_flux ** 2 + zp_err ** 2))
+            mag_err = float(np.sqrt(mag_err_flux**2 + zp_err**2))
 
             # Calibrated magnitude from zero point
             cal_mag = float(inst_mag + zero_point)
@@ -1489,7 +1475,7 @@ def measure_streak_candidate_photometry(
                 mags, errs = {}, {}
                 for band_name, band_cal in multiband_calibration.bands.items():
                     mags[band_name] = float(inst_mag + band_cal.zero_point)
-                    band_err = float(np.sqrt(mag_err_flux ** 2 + band_cal.zero_point_err ** 2))
+                    band_err = float(np.sqrt(mag_err_flux**2 + band_cal.zero_point_err**2))
                     errs[band_name] = band_err
                 candidate.calibrated_magnitudes = mags
                 candidate.magnitude_errs = errs

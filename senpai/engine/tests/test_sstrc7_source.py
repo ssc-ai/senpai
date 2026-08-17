@@ -30,9 +30,7 @@ def _catalog_path():
 
 @pytest.fixture(scope="module")
 def stars():
-    return sstrc7_source.query_by_los_radec_with_rotation(
-        FOV, FOV, RA, DEC, rotation=0.0, rootPath=_catalog_path()
-    )
+    return sstrc7_source.query_by_los_radec_with_rotation(FOV, FOV, RA, DEC, rotation=0.0, rootPath=_catalog_path())
 
 
 @pytest.mark.requires_catalog
@@ -80,15 +78,11 @@ def test_magnitudes_are_catalog_valued(stars):
 @pytest.mark.requires_catalog
 def test_magnitude_limits_filter_the_result():
     path = _catalog_path()
-    faint = sstrc7_source.query_by_los_radec_with_rotation(
-        FOV, FOV, RA, DEC, rootPath=path, faint_lim=14.0
-    )
+    faint = sstrc7_source.query_by_los_radec_with_rotation(FOV, FOV, RA, DEC, rootPath=path, faint_lim=14.0)
     assert faint, "no stars brighter than 14th magnitude in this field"
     assert max(s["mv"] for s in faint) < 14.0
 
-    bright = sstrc7_source.query_by_los_radec_with_rotation(
-        FOV, FOV, RA, DEC, rootPath=path, bright_lim=14.0
-    )
+    bright = sstrc7_source.query_by_los_radec_with_rotation(FOV, FOV, RA, DEC, rootPath=path, bright_lim=14.0)
     assert bright
     assert min(s["mv"] for s in bright) > 14.0
 

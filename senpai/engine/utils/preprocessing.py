@@ -1,6 +1,5 @@
 import logging
 from pathlib import Path
-from typing import Optional, Union
 
 import numpy as np
 
@@ -54,8 +53,7 @@ def handle_negative_values(image: ProcessedFitsImage) -> ProcessedFitsImage:
     return image
 
 
-def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
-                           row_stride: int = 8) -> float | None:
+def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None, row_stride: int = 8) -> float | None:
     """Photon-transfer gain (electrons per ADU) from sky shot noise in one frame.
 
     For a sky-dominated frame the per-pixel ADU variance is the sky electron
@@ -75,7 +73,7 @@ def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
     """
     if sky_level_adu is None or sky_level_adu <= 0.0:
         return None
-    sub = array[::max(int(row_stride), 1), :]
+    sub = array[:: max(int(row_stride), 1), :]
     diff = sub[:, :-1].astype(np.float64) - sub[:, 1:].astype(np.float64)
     diff = diff[np.isfinite(diff)]
     if diff.size < 1000:
@@ -148,9 +146,7 @@ def remove_column_and_row_medians(
     col_params = {"sky_median_adu": sky_median_adu}
     if gain_e_per_adu is not None:
         col_params["gain_e_per_adu"] = gain_e_per_adu
-    col_metadata = ProcessingMetadata(
-        step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT,
-        parameters=col_params)
+    col_metadata = ProcessingMetadata(step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT, parameters=col_params)
     image.processing_history.append(col_metadata)
 
     # Subtract row medians (shape: (n_rows, 1))
@@ -335,7 +331,7 @@ def background_subtract(
 
 def apply_flat_field(
     image: ProcessedFitsImage,
-    master_flat: Union[str, Path, np.ndarray],
+    master_flat: str | Path | np.ndarray,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
     """
@@ -363,8 +359,8 @@ def apply_flat_field(
 
 def apply_dark_subtraction(
     image: ProcessedFitsImage,
-    master_dark: Union[str, Path, np.ndarray],
-    dark_exposure_time: Optional[float] = None,
+    master_dark: str | Path | np.ndarray,
+    dark_exposure_time: float | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
     """
@@ -394,7 +390,7 @@ def apply_dark_subtraction(
 
 def auto_apply_calibrations(
     image: ProcessedFitsImage,
-    config: Optional[object] = None,
+    config: object | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
     """
@@ -501,8 +497,8 @@ def auto_apply_calibrations(
 
 
 def _find_master_calibration(
-    image: ProcessedFitsImage, calibration_dir: Optional[str], matching_headers: list[str], calibration_type: str
-) -> Optional[Path]:
+    image: ProcessedFitsImage, calibration_dir: str | None, matching_headers: list[str], calibration_type: str
+) -> Path | None:
     """
     Find the appropriate master calibration file for an image by matching FITS headers.
 
@@ -577,7 +573,7 @@ def _find_master_calibration(
         target_time = None
 
     # Collect every calibration file whose headers match
-    candidates: list[tuple[Path, Optional[float], dict]] = []
+    candidates: list[tuple[Path, float | None, dict]] = []
     for calib_file in calib_files:
         try:
             with fits.open(calib_file) as hdul:
@@ -634,9 +630,7 @@ def _find_master_calibration(
     if candidates:
         if target_time is not None and len(candidates) > 1:
             # Prefer the calibration taken closest in time; undated ones last.
-            candidates.sort(
-                key=lambda c: abs(c[1] - target_time) if c[1] is not None else float("inf")
-            )
+            candidates.sort(key=lambda c: abs(c[1] - target_time) if c[1] is not None else float("inf"))
         calib_file, _, calib_metadata = candidates[0]
         print(
             f"Found matching {calibration_type}: {calib_file.name} with metadata: "
@@ -667,8 +661,8 @@ def _find_master_calibration(
 
 
 def _find_best_dark_calibration(
-    image: ProcessedFitsImage, dark_dir: Optional[str], matching_headers: list[str], max_exposure_ratio: float
-) -> Optional[Path]:
+    image: ProcessedFitsImage, dark_dir: str | None, matching_headers: list[str], max_exposure_ratio: float
+) -> Path | None:
     """
     Find the best dark calibration file by matching headers and finding closest exposure time.
 
@@ -814,7 +808,7 @@ def _find_best_dark_calibration(
 
 def preprocess_image(
     image: ProcessedFitsImage,
-    config: Optional[object] = None,
+    config: object | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
     """
@@ -829,8 +823,12 @@ def preprocess_image(
         # four full-frame medians per frame cost ~1 s each on 66 Mpix.
         logger.info(
             "[%s] %s: min=%.1f, max=%.1f, median=%.1f, mean=%.1f",
-            fname, stage, np.min(arr), np.max(arr),
-            np.median(arr[::8, ::8]), np.mean(arr),
+            fname,
+            stage,
+            np.min(arr),
+            np.max(arr),
+            np.median(arr[::8, ::8]),
+            np.mean(arr),
         )
 
     log_stats("loaded", image.data)
@@ -1494,7 +1492,7 @@ def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "
 
 
 def apply_fwhm_optimization(
-    image: ProcessedFitsImage, starfield: StarField, config: Optional[object] = None
+    image: ProcessedFitsImage, starfield: StarField, config: object | None = None
 ) -> tuple[ProcessedFitsImage, StarField]:
     """
     Apply FWHM-based optimization after WCS fitting.

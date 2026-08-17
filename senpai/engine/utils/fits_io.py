@@ -377,8 +377,9 @@ def _to_arcsec_per_second(value: float, unit: str) -> float:
     factor = _RATE_UNIT_TO_ARCSEC_PER_SEC.get(unit.strip().lower())
     if factor is None:
         logger.warning(
-            "Unknown track-rate unit %r — treating value as arcsec/s. "
-            "Known units: %s", unit, sorted(_RATE_UNIT_TO_ARCSEC_PER_SEC),
+            "Unknown track-rate unit %r — treating value as arcsec/s. Known units: %s",
+            unit,
+            sorted(_RATE_UNIT_TO_ARCSEC_PER_SEC),
         )
         return value
     return value * factor
@@ -394,18 +395,14 @@ def extract_track_rates_from_header(header: Header) -> tuple[float, float, Track
     for key in config.headers.tracking.track_ra_rate_keys:
         ra_rate = extract_header_value(header, key)
         if ra_rate is not None:
-            ra_rate = _to_arcsec_per_second(
-                float(ra_rate), config.headers.tracking.track_ra_rate_unit
-            )
+            ra_rate = _to_arcsec_per_second(float(ra_rate), config.headers.tracking.track_ra_rate_unit)
             logger.debug(f"Extracted RA rate from {key}: {ra_rate} arcsec/s")
             break
 
     for key in config.headers.tracking.track_dec_rate_keys:
         dec_rate = extract_header_value(header, key)
         if dec_rate is not None:
-            dec_rate = _to_arcsec_per_second(
-                float(dec_rate), config.headers.tracking.track_dec_rate_unit
-            )
+            dec_rate = _to_arcsec_per_second(float(dec_rate), config.headers.tracking.track_dec_rate_unit)
             logger.debug(f"Extracted DEC rate from {key}: {dec_rate} arcsec/s")
             break
 

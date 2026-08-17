@@ -122,9 +122,14 @@ def test_fit_none_when_too_few_finite():
 
 def test_colortermfit_rounds_fields():
     fit = ColorTermFit(
-        band="V", zero_point=25.123456, zero_point_err=0.0123456,
-        color_coefficient=0.151234, color_coefficient_err=0.004321,
-        color_index_name="BP-RP", n_stars=20, rms_residual=0.012345,
+        band="V",
+        zero_point=25.123456,
+        zero_point_err=0.0123456,
+        color_coefficient=0.151234,
+        color_coefficient_err=0.004321,
+        color_index_name="BP-RP",
+        n_stars=20,
+        rms_residual=0.012345,
         clipped_fraction=0.1234,
     )
     assert fit.zero_point == 25.123
@@ -164,9 +169,15 @@ def _make_results(zp, coeff, band="Johnson_V", n=20, with_color=True, exposure_t
         star = StarInSpace(ra=0, dec=0, x=50.0, y=50.0, magnitude=cat_mag, magnitudes=mags)
         results.append(
             SimplePhotometryResult(
-                star=star, flux=flux, flux_err=flux / 100.0, snr=100.0,
-                background_level=0.0, background_std=1.0, aperture_radius=7.0,
-                crowding_factor=0.0, quality_flag=True,
+                star=star,
+                flux=flux,
+                flux_err=flux / 100.0,
+                snr=100.0,
+                background_level=0.0,
+                background_std=1.0,
+                aperture_radius=7.0,
+                crowding_factor=0.0,
+                quality_flag=True,
             )
         )
     return results

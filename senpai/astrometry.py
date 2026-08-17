@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Config conversion
 # ---------------------------------------------------------------------------
 
+
 def _build_astroeasy_config() -> astroeasy.AstrometryConfig:
     """Convert senpai's AppConfig.astrometry to an astroeasy AstrometryConfig."""
     cfg = get_or_initialize_config().astrometry
@@ -42,12 +43,10 @@ def _build_astroeasy_config() -> astroeasy.AstrometryConfig:
 # Model conversion helpers
 # ---------------------------------------------------------------------------
 
+
 def _sources_to_detections(sources: StarListImage) -> tuple[list[astroeasy.Detection], astroeasy.ImageMetadata]:
     """Convert senpai StarListImage → astroeasy Detection list + ImageMetadata."""
-    detections = [
-        astroeasy.Detection(x=s.x, y=s.y, flux=s.counts)
-        for s in sources.detections
-    ]
+    detections = [astroeasy.Detection(x=s.x, y=s.y, flux=s.counts) for s in sources.detections]
     metadata = astroeasy.ImageMetadata(
         width=sources.image_metadata.width,
         height=sources.image_metadata.height,
@@ -98,18 +97,22 @@ def _solve_result_to_starfield(
 
     fit_wcs = _wcsresult_to_wcsmodel(result.wcs) if result.wcs else None
 
-    astrometric_fit_stars = [
-        StarInSpace(
-            ra=m.ra,
-            dec=m.dec,
-            magnitude=m.magnitude,
-            catalog=m.catalog,
-            catalog_id=m.catalog_id,
-            x=m.x,
-            y=m.y,
-        )
-        for m in result.matched_stars
-    ] if result.matched_stars else []
+    astrometric_fit_stars = (
+        [
+            StarInSpace(
+                ra=m.ra,
+                dec=m.dec,
+                magnitude=m.magnitude,
+                catalog=m.catalog,
+                catalog_id=m.catalog_id,
+                x=m.x,
+                y=m.y,
+            )
+            for m in result.matched_stars
+        ]
+        if result.matched_stars
+        else []
+    )
 
     return StarField(
         astrometric_fit_stars=astrometric_fit_stars or None,
@@ -125,6 +128,7 @@ def _solve_result_to_starfield(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarField:
     """Solve astrometry for detected sources.
@@ -188,7 +192,8 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
         logger.warning(
             "solver_mode=%s but no catalog mirror configured "
             "(astrometry.fast_solve.mirror_dir or star_catalog type gaia_local) — "
-            "native tiers will be skipped", mode,
+            "native tiers will be skipped",
+            mode,
         )
 
     if fast.sensor_profile:
@@ -209,12 +214,17 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
     dotnet_config = _build_astroeasy_config() if mode == "chain" else None
 
     result = cascade.solve(
-        detections, metadata,
-        profile=profile, mirror_dir=mirror_dir,
-        dotnet_config=dotnet_config, prior_wcs=prior_wcs, tiers=tiers,
+        detections,
+        metadata,
+        profile=profile,
+        mirror_dir=mirror_dir,
+        dotnet_config=dotnet_config,
+        prior_wcs=prior_wcs,
+        tiers=tiers,
     )
     logger.info(
-        "cascade (%s): %s — attempts: %s", mode,
+        "cascade (%s): %s — attempts: %s",
+        mode,
         f"solved at {result.tier}" if result.tier else "all tiers failed",
         [(t.tier, t.status, f"{t.duration_ms:.0f}ms") for t in result.attempts],
     )
@@ -251,6 +261,4 @@ def enforce_indices():
     """Raise if configured index files are missing or incomplete."""
     config = get_or_initialize_config()
     if not examine_indices():
-        raise RuntimeError(
-            f"Astrometry indices for {config.astrometry.indices_series} are missing or incomplete"
-        )
+        raise RuntimeError(f"Astrometry indices for {config.astrometry.indices_series} are missing or incomplete")

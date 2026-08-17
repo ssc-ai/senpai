@@ -92,9 +92,7 @@ def estimate_fwhm(
         # its peak (the top 0.5% of a Gaussian is r < 0.1 sigma).
         flat_tol = max(2.0, 0.005 * abs(peak))
         if peak > 0 and int(np.count_nonzero(cutout >= peak - flat_tol)) >= 4:
-            logger.debug(
-                "Skipping FWHM at (%d, %d): saturated/flat-topped core", x0, y0
-            )
+            logger.debug("Skipping FWHM at (%d, %d): saturated/flat-topped core", x0, y0)
             return None
 
     # Create x and y coordinates for fitting
@@ -238,7 +236,7 @@ def _estimate_saturation_level(image: np.ndarray, sources) -> float:
     peaks = []
     for s in sources:
         x0, y0 = int(round(s["xcentroid"])), int(round(s["ycentroid"]))
-        core = image[max(0, y0 - 2): y0 + 3, max(0, x0 - 2): x0 + 3]
+        core = image[max(0, y0 - 2) : y0 + 3, max(0, x0 - 2) : x0 + 3]
         if core.size:
             peaks.append(float(core.max()))
     return sat_level_from_peaks(peaks)
@@ -263,9 +261,7 @@ def sat_level_from_peaks(peaks) -> float:
     return level
 
 
-def _robust_source_fwhm(
-    image: np.ndarray, x: float, y: float, sat_level: float, box_size: int = 21
-) -> float | None:
+def _robust_source_fwhm(image: np.ndarray, x: float, y: float, sat_level: float, box_size: int = 21) -> float | None:
     """Fit-free, saturation-aware FWHM: diameter of the connected above-half-max
     region around the centroid.
 
@@ -336,7 +332,7 @@ def _measure_fwhm_sample(
     sat_level = _estimate_saturation_level(data, detected_sources)
     fwhms: list[float] = []
     measured_pos: list[tuple[float, float]] = []
-    DEDUP_R2 = 12.0 ** 2
+    DEDUP_R2 = 12.0**2
     for source in detected_sources:
         xc = float(source["xcentroid"])
         yc = float(source["ycentroid"])
@@ -345,7 +341,7 @@ def _measure_fwhm_sample(
         try:
             fwhm = _robust_source_fwhm(data, xc, yc, sat_level)
         except Exception as e:
-            logger.debug(f"FWHM estimation failed: {str(e)}")
+            logger.debug(f"FWHM estimation failed: {e!s}")
             continue
         if fwhm is not None and fwhm > 0:
             fwhms.append(fwhm)
@@ -433,7 +429,9 @@ def extract_point_sources(
         fwhm_pixel = float(np.median(fwhms))
         logger.info(
             "Using median FWHM %.1f px from %d unsaturated stars (sat_level=%.0f)",
-            fwhm_pixel, len(fwhms), sat_level,
+            fwhm_pixel,
+            len(fwhms),
+            sat_level,
         )
     else:
         fwhm_pixel = DEFAULT_FWHM

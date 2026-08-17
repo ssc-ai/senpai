@@ -48,7 +48,6 @@ Applying dark corrections:
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from astropy.io import fits
@@ -58,15 +57,15 @@ from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
 
 
 def create_master_dark(
-    dark_directory: Union[str, Path],
-    output_path: Optional[Union[str, Path]] = None,
+    dark_directory: str | Path,
+    output_path: str | Path | None = None,
     max_percentile_counts: float = 2000.0,
     percentile_threshold: float = 99.5,
     min_frames: int = 5,
     sigma: float = 3.0,
     maxiters: int = 5,
-    required_headers: Optional[List[str]] = None,
-) -> Tuple[np.ndarray, fits.Header]:
+    required_headers: list[str] | None = None,
+) -> tuple[np.ndarray, fits.Header]:
     """
     Create a master dark from a directory of dark frame FITS files.
 
@@ -194,11 +193,11 @@ def create_master_dark(
 
 
 def apply_dark_subtraction(
-    image: Union[ProcessedFitsImage, np.ndarray],
-    master_dark: Union[str, Path, np.ndarray],
-    dark_exposure_time: Optional[float] = None,
+    image: ProcessedFitsImage | np.ndarray,
+    master_dark: str | Path | np.ndarray,
+    dark_exposure_time: float | None = None,
     store_intermediates: bool = False,
-) -> Union[ProcessedFitsImage, np.ndarray]:
+) -> ProcessedFitsImage | np.ndarray:
     """
     Apply dark subtraction to an image.
 
@@ -319,11 +318,11 @@ def apply_dark_subtraction(
 
 
 def find_best_dark_for_exposure(
-    dark_directory: Union[str, Path],
+    dark_directory: str | Path,
     target_exptime: float,
-    matching_headers: Optional[List[str]] = None,
+    matching_headers: list[str] | None = None,
     max_exptime_ratio: float = 10.0,
-) -> Optional[Tuple[Path, float]]:
+) -> tuple[Path, float] | None:
     """
     Find the best dark frame for a given exposure time.
 
@@ -393,7 +392,7 @@ def find_best_dark_for_exposure(
     return None
 
 
-def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]) -> Dict[Tuple[str, ...], List[Path]]:
+def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]) -> dict[tuple[str, ...], list[Path]]:
     """
     Group FITS files by consistent header values.
 
@@ -440,7 +439,7 @@ def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]
     return groups
 
 
-def load_master_dark(file_path: Union[str, Path]) -> Tuple[np.ndarray, fits.Header]:
+def load_master_dark(file_path: str | Path) -> tuple[np.ndarray, fits.Header]:
     """
     Load a master dark from a FITS file.
 
@@ -461,9 +460,9 @@ def load_master_dark(file_path: Union[str, Path]) -> Tuple[np.ndarray, fits.Head
 
 
 def _create_descriptive_filename(
-    base_output_path: Union[str, Path],
-    group_key: Tuple[str, ...],
-    header_names: List[str],
+    base_output_path: str | Path,
+    group_key: tuple[str, ...],
+    header_names: list[str],
 ) -> Path:
     """
     Create a descriptive filename based on group characteristics.
@@ -638,14 +637,14 @@ def main():
 
 
 def _create_master_dark_from_files(
-    fits_files: List[Path],
-    output_path: Union[str, Path],
+    fits_files: list[Path],
+    output_path: str | Path,
     max_percentile_counts: float,
     percentile_threshold: float,
     min_frames: int,
     sigma: float,
     maxiters: int,
-) -> Tuple[np.ndarray, fits.Header]:
+) -> tuple[np.ndarray, fits.Header]:
     """
     Helper function to create master dark from a specific list of files.
     """
@@ -719,7 +718,7 @@ def _create_master_dark_from_files(
 
 
 def _create_master_dark_standard(
-    valid_frames: List[np.ndarray],
+    valid_frames: list[np.ndarray],
     sigma: float,
     maxiters: int,
 ) -> np.ndarray:
@@ -746,7 +745,7 @@ def _create_master_dark_standard(
 
 
 def _create_master_dark_chunked(
-    valid_frames: List[np.ndarray],
+    valid_frames: list[np.ndarray],
     sigma: float,
     maxiters: int,
     chunk_size: int = 1024,
@@ -791,7 +790,7 @@ def _create_master_dark_chunked(
     return master_dark
 
 
-def analyze_header_variations(directory: Union[str, Path]) -> None:
+def analyze_header_variations(directory: str | Path) -> None:
     """
     Analyze all FITS files in a directory and report which headers vary.
 

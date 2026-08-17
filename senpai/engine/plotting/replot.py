@@ -56,11 +56,7 @@ def find_batch_dirs(root: Path) -> list[Path]:
 
 
 def _find_result_json(batch_dir: Path) -> Path | None:
-    matches = [
-        p
-        for p in sorted(batch_dir.glob("senpai_*.json"))
-        if not p.name.endswith("_summary.json")
-    ]
+    matches = [p for p in sorted(batch_dir.glob("senpai_*.json")) if not p.name.endswith("_summary.json")]
     return matches[0] if matches else None
 
 
@@ -143,9 +139,7 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
         if force or not lim_path.exists():
             limiting = ps.get("limiting_magnitude_50") or ps.get("limiting_magnitude")
             min_snr = float(ps.get("limiting_snr", get_config().photometry.limiting_snr))
-            _save_simple_limiting_mag_plot(
-                stars_mag, stars_snr, limiting, min_snr, lim_path
-            )
+            _save_simple_limiting_mag_plot(stars_mag, stars_snr, limiting, min_snr, lim_path)
             written.append(lim_path)
     return written
 
@@ -234,37 +228,48 @@ def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
     if sf is None or not sf.catalog_stars:
         return []
     wcs = P._astropy_wcs(sf)
-    meta = {"index": frame.index, "exposure": P._exposure(frame),
-            "pixel_scale_arcsec": P._plate_scale(wcs)}
+    meta = {"index": frame.index, "exposure": P._exposure(frame), "pixel_scale_arcsec": P._plate_scale(wcs)}
     st = getattr(frame, "streak", None)
     if mode == "rate" and (st is None or not st.pixel_length):
         return []
     try:
-        if not force and npy.exists():           # cheap: render from saved stamp
+        if not force and npy.exists():  # cheap: render from saved stamp
             import numpy as np
+
             stamp = np.load(npy)
             if mode == "sidereal":
                 P.sidereal_from_stamp(stamp, wcs, meta, png)
             else:
-                P.streak_from_stamp(stamp, wcs, float(st.fwhm),
-                                    float(st.pixel_length), float(st.degree_angle()),
-                                    meta, png)
-        else:                                    # reload-and-slice (re-stacks)
+                P.streak_from_stamp(
+                    stamp, wcs, float(st.fwhm), float(st.pixel_length), float(st.degree_angle()), meta, png
+                )
+        else:  # reload-and-slice (re-stacks)
             data = img.data if img is not None else None
-            if data is None:                     # fall back to the original FITS
+            if data is None:  # fall back to the original FITS
                 op = getattr(frame, "original_frame_path", None)
                 if op and Path(op).exists():
                     data = load_fits_file(op).data
             if data is None:
                 return []
             if mode == "sidereal":
-                fwhm = (getattr(getattr(frame, "seeing", None), "pixel_fwhm", None)
-                        or (sf.fwhm_stats.median_fwhm if sf.fwhm_stats else None) or 4.0)
+                fwhm = (
+                    getattr(getattr(frame, "seeing", None), "pixel_fwhm", None)
+                    or (sf.fwhm_stats.median_fwhm if sf.fwhm_stats else None)
+                    or 4.0
+                )
                 P.make_sidereal_psf(data, P._stars(sf), wcs, float(fwhm), meta, png, npy)
             else:
-                P.make_streak_psf(data, P._stars(sf), wcs, float(st.fwhm),
-                                  float(st.pixel_length), float(st.degree_angle()),
-                                  meta, png, npy)
+                P.make_streak_psf(
+                    data,
+                    P._stars(sf),
+                    wcs,
+                    float(st.fwhm),
+                    float(st.pixel_length),
+                    float(st.degree_angle()),
+                    meta,
+                    png,
+                    npy,
+                )
     except Exception as e:
         logger.warning("frame %s: PSF panel failed: %s", frame.index, e)
         return []
@@ -292,7 +297,7 @@ def replot_batch_dir(
     frames = [(f, "sidereal") for f in run.sidereal_frames]
     frames += [(f, "rate") for f in run.rate_track_frames]
 
-    counts = {k: 0 for k in kinds}
+    counts = dict.fromkeys(kinds, 0)
     review_finals: list[Path] = []
     review_raws: list[Path] = []
     review_rate_finals: list[Path] = []
@@ -303,7 +308,8 @@ def replot_batch_dir(
         if img is None and needs_img:
             logger.warning(
                 "frame %s: processed FITS not found (%s); skipping image plots",
-                frame.index, frame.processed_frame_path,
+                frame.index,
+                frame.processed_frame_path,
             )
 
         if "review" in kinds and img is not None:
@@ -321,14 +327,10 @@ def replot_batch_dir(
                 review_raws.append(raw_path)
 
         if "photometry" in kinds:
-            counts["photometry"] += len(
-                _plot_photometry_curves(frame, batch_dir, force)
-            )
+            counts["photometry"] += len(_plot_photometry_curves(frame, batch_dir, force))
 
         if "aperture" in kinds and img is not None:
-            counts["aperture"] += len(
-                _plot_aperture(img, frame, mode, batch_dir, force)
-            )
+            counts["aperture"] += len(_plot_aperture(img, frame, mode, batch_dir, force))
 
         if "psf" in kinds:
             counts["psf"] += len(_plot_psf(img, frame, mode, batch_dir, force))
@@ -338,9 +340,7 @@ def replot_batch_dir(
         if review_finals:
             _write_sequence_gif(review_finals, batch_dir / f"{run_id}_sequence.gif")
         if review_rate_finals:
-            _write_sequence_gif(
-                review_rate_finals, batch_dir / f"{run_id}_sequence_rate.gif"
-            )
+            _write_sequence_gif(review_rate_finals, batch_dir / f"{run_id}_sequence_rate.gif")
         if review_raws:
             _write_sequence_gif(review_raws, batch_dir / f"{run_id}_sequence_raw.gif")
 
@@ -366,7 +366,7 @@ def replot(
         logger.warning("No batch directories (senpai_*.json) found under: %s", paths)
         return {}
 
-    totals: dict[str, int] = {k: 0 for k in kinds}
+    totals: dict[str, int] = dict.fromkeys(kinds, 0)
     for d in batch_dirs:
         logger.info("Replotting %s (%s)", d.name, ", ".join(kinds))
         try:

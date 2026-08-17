@@ -13,7 +13,6 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
 
 # Disable matplotlib logging - set before AND after import to catch all loggers
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
@@ -46,7 +45,7 @@ logger = logging.getLogger(__name__)
 class CoverageStatistics:
     """Statistics for a single grid position, FOV, and magnitude threshold."""
 
-    grid_position: Tuple[float, float]  # (ra, dec)
+    grid_position: tuple[float, float]  # (ra, dec)
     fov: float
     magnitude_threshold: float
     min_stars: int
@@ -65,7 +64,7 @@ class AggregatedStatistics:
     global_max: int
     mean_min: float
     mean_max: float
-    percentiles: Dict[str, float]
+    percentiles: dict[str, float]
 
 
 @dataclass
@@ -87,7 +86,7 @@ def generate_sky_grid(
     grid_spacing_mult: float = 2.0,
     test_mode: bool = False,
     degrees_off_geo_belt: float | None = None,
-) -> List[Tuple[float, float]]:
+) -> list[tuple[float, float]]:
     """
     Generate a grid of RA/Dec positions covering the sky.
 
@@ -168,7 +167,7 @@ def query_stars_for_position(
     bright_lim: float = None,
     x_fov: float | None = None,
     y_fov: float | None = None,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Query catalog stars for a given sky position.
 
@@ -424,7 +423,7 @@ def query_stars_for_position(
 
             # Check if there are stars near the center
             center_stars = [
-                s for s in filtered_stars if abs(((s["ra"] - ra) % 360)) <= 0.5 and abs(s["dec"] - dec) <= 0.5
+                s for s in filtered_stars if abs((s["ra"] - ra) % 360) <= 0.5 and abs(s["dec"] - dec) <= 0.5
             ]
             logger.debug(f"  Stars within 0.5° of center ({ra:.2f}°, {dec:.2f}°): {len(center_stars)}")
 
@@ -452,15 +451,15 @@ def query_stars_for_position(
 
 
 def analyze_fov_coverage(
-    stars: List[Dict],
+    stars: list[dict],
     center_ra: float,
     center_dec: float,
     fov_size: float,
-    magnitude_thresholds: List[float],
+    magnitude_thresholds: list[float],
     conv_resolution: float = 0.1,
     min_resolution: float = 0.01,
     min_fov: float | None = None,
-) -> Dict[float, Dict[str, float]]:
+) -> dict[float, dict[str, float]]:
     """
     Analyze star coverage for a given FOV using convolution.
 
@@ -667,7 +666,7 @@ def analyze_fov_coverage(
     return results
 
 
-def generate_fov_values(min_fov: float, max_fov: float, num_points: int) -> List[float]:
+def generate_fov_values(min_fov: float, max_fov: float, num_points: int) -> list[float]:
     """
     Generate FOV values with logarithmic spacing (roughly doubling).
 
@@ -704,7 +703,7 @@ def generate_fov_values(min_fov: float, max_fov: float, num_points: int) -> List
 
 
 def process_single_corridor_time_step(
-    corridor_data: Tuple[int, CorridorData],
+    corridor_data: tuple[int, CorridorData],
     max_fov: float,
     min_fov: float,
     grid_spacing_mult: float,
@@ -714,11 +713,11 @@ def process_single_corridor_time_step(
     mag_step: float,
     catalog_path: str,
     conv_resolution: float,
-    fov_values: List[float],
-    magnitude_thresholds: List[float],
+    fov_values: list[float],
+    magnitude_thresholds: list[float],
     output_dir: Path | None,
     generate_debug_plots: bool = True,
-) -> List[CoverageStatistics]:
+) -> list[CoverageStatistics]:
     """
     Process a single Earth-Moon corridor time step.
 
@@ -885,7 +884,7 @@ def process_single_corridor_time_step(
 
 
 def process_single_position(
-    position_data: Tuple[int, Tuple[float, float]],
+    position_data: tuple[int, tuple[float, float]],
     max_fov: float,
     min_fov: float,
     fov_num_points: int,
@@ -894,11 +893,11 @@ def process_single_position(
     mag_step: float,
     catalog_path: str,
     conv_resolution: float,
-    fov_values: List[float],
-    magnitude_thresholds: List[float],
+    fov_values: list[float],
+    magnitude_thresholds: list[float],
     output_dir: Path | None,
     generate_debug_plots: bool = True,
-) -> Tuple[Tuple[float, float], List[CoverageStatistics]]:
+) -> tuple[tuple[float, float], list[CoverageStatistics]]:
     """
     Process a single sky position and return statistics.
 
@@ -1007,11 +1006,11 @@ def process_single_position(
 
 
 def save_position_statistics(
-    position_stats: List[CoverageStatistics],
-    grid_pos: Tuple[float, float],
+    position_stats: list[CoverageStatistics],
+    grid_pos: tuple[float, float],
     position_num: int,
     output_dir: Path,
-    save_parameters: Dict | None,
+    save_parameters: dict | None,
 ) -> None:
     """
     Save statistics for a single position to a per-position file.
@@ -1045,8 +1044,8 @@ def save_position_statistics(
 
 
 def load_position_statistics_from_files(
-    output_dir: Path, expected_fovs: List[float] | None = None, expected_mags: List[float] | None = None
-) -> Tuple[List[CoverageStatistics], Dict, set, Dict[Tuple[float, float], str]]:
+    output_dir: Path, expected_fovs: list[float] | None = None, expected_mags: list[float] | None = None
+) -> tuple[list[CoverageStatistics], dict, set, dict[tuple[float, float], str]]:
     """
     Load all per-position statistics files and determine which positions have been processed.
 
@@ -1071,7 +1070,7 @@ def load_position_statistics_from_files(
     # Load all position files
     for pos_file in sorted(pos_dir.glob("coverage_statistics_pos_*.json")):
         try:
-            with open(pos_file, "r") as f:
+            with open(pos_file) as f:
                 data = json.load(f)
 
             # Extract parameters from first file (should be same for all)
@@ -1219,7 +1218,7 @@ def load_position_statistics_from_files(
                     ra = float(ra_str)
                     dec = float(dec_str)
                     grid_pos = (round(ra, 2), round(dec, 2))
-                    incomplete_positions[grid_pos] = f"load error: {str(e)}"
+                    incomplete_positions[grid_pos] = f"load error: {e!s}"
             except Exception:
                 pass
 
@@ -1227,7 +1226,7 @@ def load_position_statistics_from_files(
 
 
 def run_coverage_analysis(
-    grid_positions: List[Tuple[float, float]],
+    grid_positions: list[tuple[float, float]],
     max_fov: float,
     min_fov: float,
     fov_num_points: int,
@@ -1236,14 +1235,14 @@ def run_coverage_analysis(
     mag_step: float,
     catalog_path: str,
     conv_resolution: float | None = None,
-    existing_statistics: List[CoverageStatistics] | None = None,
+    existing_statistics: list[CoverageStatistics] | None = None,
     processed_positions: set | None = None,
     output_dir: Path | None = None,
-    save_parameters: Dict | None = None,
+    save_parameters: dict | None = None,
     min_threshold: int = 4,
     coverage_threshold: int = 8,
     n_proc: int = 1,
-) -> List[CoverageStatistics]:
+) -> list[CoverageStatistics]:
     """
     Run coverage analysis for all grid positions, FOVs, and magnitude thresholds.
 
@@ -1609,8 +1608,8 @@ def run_coverage_analysis(
 
 
 def aggregate_statistics(
-    statistics: List[CoverageStatistics],
-) -> List[AggregatedStatistics]:
+    statistics: list[CoverageStatistics],
+) -> list[AggregatedStatistics]:
     """
     Aggregate statistics across all sky positions for plotting.
 
@@ -1659,7 +1658,7 @@ def aggregate_statistics(
     return aggregated
 
 
-def load_statistics_from_json(json_path: Path) -> Tuple[List[AggregatedStatistics], Dict]:
+def load_statistics_from_json(json_path: Path) -> tuple[list[AggregatedStatistics], dict]:
     """
     Load aggregated statistics from JSON file.
 
@@ -1669,7 +1668,7 @@ def load_statistics_from_json(json_path: Path) -> Tuple[List[AggregatedStatistic
     Returns:
         Tuple of (aggregated_stats list, parameters dict)
     """
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     # Reconstruct AggregatedStatistics objects
@@ -1680,7 +1679,7 @@ def load_statistics_from_json(json_path: Path) -> Tuple[List[AggregatedStatistic
     return aggregated_stats, data.get("parameters", {})
 
 
-def load_per_position_statistics_from_json(json_path: Path) -> Tuple[List[CoverageStatistics], Dict, set]:
+def load_per_position_statistics_from_json(json_path: Path) -> tuple[list[CoverageStatistics], dict, set]:
     """
     Load per-position statistics from JSON file and determine which positions have been processed.
 
@@ -1690,7 +1689,7 @@ def load_per_position_statistics_from_json(json_path: Path) -> Tuple[List[Covera
     Returns:
         Tuple of (statistics list, parameters dict, set of processed grid positions)
     """
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     # Reconstruct CoverageStatistics objects
@@ -1709,7 +1708,7 @@ def load_per_position_statistics_from_json(json_path: Path) -> Tuple[List[Covera
     return statistics, data.get("parameters", {}), processed_positions
 
 
-def load_corridor_data_from_file(positions_file: Path) -> List[CorridorData] | None:
+def load_corridor_data_from_file(positions_file: Path) -> list[CorridorData] | None:
     """
     Load Earth-Moon corridor data from a JSON file.
 
@@ -1719,7 +1718,7 @@ def load_corridor_data_from_file(positions_file: Path) -> List[CorridorData] | N
     Returns:
         List of CorridorData objects if corridor format detected, None otherwise
     """
-    with open(positions_file, "r") as f:
+    with open(positions_file) as f:
         data = json.load(f)
 
     positions_data = data.get("positions", [])
@@ -1757,7 +1756,7 @@ def load_positions_from_file(
     min_fov: float | None = None,
     max_fov: float | None = None,
     corridor_samples: int | None = None,
-) -> List[Tuple[float, float]]:
+) -> list[tuple[float, float]]:
     """
     Load RA/Dec positions from a JSON file (e.g., from l1_moon_search_zone.py).
 
@@ -1777,7 +1776,7 @@ def load_positions_from_file(
     Returns:
         List of (ra, dec) tuples in degrees
     """
-    with open(positions_file, "r") as f:
+    with open(positions_file) as f:
         data = json.load(f)
 
     positions = []
@@ -1792,7 +1791,7 @@ def load_positions_from_file(
     has_earth_moon = "ra_earth" in first_pos and "ra_moon" in first_pos
 
     if has_earth_moon:
-        from astropy.coordinates import SkyCoord  # noqa: E402
+        from astropy.coordinates import SkyCoord
 
         # Determine how to calculate samples
         use_fov_based = max_fov is not None and corridor_samples is None
@@ -1906,7 +1905,7 @@ def load_positions_from_file(
     return positions
 
 
-def check_parameters_match(params1: Dict, params2: Dict, tolerance: float = 1e-6) -> bool:
+def check_parameters_match(params1: dict, params2: dict, tolerance: float = 1e-6) -> bool:
     """
     Check if two parameter dictionaries match (for resume capability).
 
@@ -1948,7 +1947,7 @@ def check_parameters_match(params1: Dict, params2: Dict, tolerance: float = 1e-6
 
 
 def plot_star_distribution_debug(
-    stars: List[Dict],
+    stars: list[dict],
     center_ra: float,
     center_dec: float,
     position_num: int,
@@ -2074,7 +2073,7 @@ def plot_star_distribution_debug(
 
 
 def plot_star_distribution_debug_corridor(
-    stars: List[Dict],
+    stars: list[dict],
     corridor: CorridorData,
     time_step_num: int,
     output_dir: Path,
@@ -2239,7 +2238,7 @@ def plot_star_distribution_debug_corridor(
 
 
 def plot_coverage_results(
-    aggregated_stats_or_json: Union[List[AggregatedStatistics], Path, str],
+    aggregated_stats_or_json: list[AggregatedStatistics] | Path | str,
     output_dir: Path,
     min_threshold: int = 4,
     coverage_threshold: int = 8,
@@ -2346,7 +2345,7 @@ def plot_coverage_results(
 
         for fov, color in zip(fovs_sorted, colors, strict=True):
             # Get all magnitude thresholds for this FOV
-            fov_keys = [(f, m) for (f, m) in fov_mag_groups.keys() if f == fov]
+            fov_keys = [(f, m) for (f, m) in fov_mag_groups if f == fov]
             fov_keys_sorted = sorted(fov_keys, key=lambda x: x[1])
 
             magnitudes = []
@@ -2446,8 +2445,8 @@ def plot_coverage_results(
 
 
 def _plot_coverage_percentage_single(
-    fov_groups: Dict,
-    aggregated_stats: List[AggregatedStatistics],
+    fov_groups: dict,
+    aggregated_stats: list[AggregatedStatistics],
     output_dir: Path,
     threshold: int,
     total_grid_positions: int,

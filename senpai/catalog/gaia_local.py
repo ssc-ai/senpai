@@ -28,9 +28,15 @@ MAX_LOCAL_ROWS = 200_000
 
 
 def query_by_ra_dec_bounds(
-    min_ra: float, max_ra: float, min_dec: float, max_dec: float,
-    faint_lim: float | None = None, bright_lim: float | None = None,
-    primary_filter: str = "G", *, mirror_dir: str,
+    min_ra: float,
+    max_ra: float,
+    min_dec: float,
+    max_dec: float,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
+    primary_filter: str = "G",
+    *,
+    mirror_dir: str,
 ) -> list[dict[str, Any]]:
     """Stars from the local mirror within the RA/Dec box and magnitude limits.
 
@@ -43,7 +49,10 @@ def query_by_ra_dec_bounds(
         bright_lim = -32.0
 
     a = query_mirror_box(
-        min_ra, max_ra, min_dec, max_dec,
+        min_ra,
+        max_ra,
+        min_dec,
+        max_dec,
         mirror_dir=mirror_dir,
         faint_limit=faint_lim,
         bright_limit=bright_lim,
@@ -56,7 +65,8 @@ def _to_star(row, primary_filter: str, faint_lim: float) -> dict[str, Any]:
     """Build the same star dict as gaia.query_by_ra_dec_bounds (radians, synthetic
     Johnson_V / Sloan_r from BP-RP, proper motion in rad/s)."""
     from senpai.catalog.gaia_transforms import (
-        gaia_bp_rp_to_johnson_v, gaia_bp_rp_to_sloan_r,
+        gaia_bp_rp_to_johnson_v,
+        gaia_bp_rp_to_sloan_r,
     )
 
     g, bp, rp = float(row["g"]), float(row["bp"]), float(row["rp"])
@@ -77,9 +87,7 @@ def _to_star(row, primary_filter: str, faint_lim: float) -> dict[str, Any]:
             magnitudes["Sloan_r"] = sr
 
     band = {"G": g, "BP": bp, "RP": rp}.get(primary_filter, g)
-    primary_mag = band if (np.isfinite(band) and band < 32) else (
-        g if (np.isfinite(g) and g < 32) else faint_lim
-    )
+    primary_mag = band if (np.isfinite(band) and band < 32) else (g if (np.isfinite(g) and g < 32) else faint_lim)
 
     MAS2RAD = 4.84813681109535993589914102358e-9
     YEAR2SEC = 3.1556952e7

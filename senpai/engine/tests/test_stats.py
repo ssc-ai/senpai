@@ -25,9 +25,7 @@ def _field(shape=(2400, 2400), background=120.0, noise=8.0, seed=11):
 
 def test_strided_stats_match_full_computation():
     image = _field()
-    full_mean, full_median, full_std = sigma_clipped_stats(
-        image, sigma=3.0, maxiters=5
-    )
+    full_mean, full_median, full_std = sigma_clipped_stats(image, sigma=3.0, maxiters=5)
     mean, median, std = robust_background_stats(image)
     # The quantity detection consumes is median + n*std: both terms must be
     # interchangeable with the full-frame computation at the noise scale.
