@@ -11,9 +11,10 @@ fixture and snapshot/restore any header-key lists we mutate per test.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from datetime import datetime
 
-from senpai.core.config import HeadersConfig
+from senpai.core.config import AppConfig, HeadersConfig
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 
@@ -27,12 +28,13 @@ from senpai.engine.utils import fits_io
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _config():
+def _config() -> AppConfig:
+    """Initialise the process-wide config from a shipped YAML, once per module."""
     return initialize_config(CONFIG_DIR / "local.yaml")
 
 
 @pytest.fixture
-def restore_headers():
+def restore_headers() -> Iterator[None]:
     """Snapshot the mutable header-key lists and restore them after the test.
 
     Tests that need multiple candidate keys / alternate formats mutate the
@@ -90,69 +92,91 @@ def restore_headers():
 
 
 def test_sexagesimal_degrees_positive() -> None:
+    """A positive sexagesimal value in degrees converts to decimal degrees."""
     assert fits_io.sexagesimal_to_decimal("+20 44 48.24", "degrees") == pytest.approx(20.746733, abs=1e-5)
 
 
 def test_sexagesimal_degrees_negative() -> None:
+    """A negative sexagesimal value applies the sign to all three components.
+
+    The minus belongs to the whole angle, not just the degrees term, so -5 30 00 is -5.5.
+    """
     assert fits_io.sexagesimal_to_decimal("-33 56 12", "degrees") == pytest.approx(-33.936667, abs=1e-5)
 
 
 def test_sexagesimal_hours_multiplies_by_15() -> None:
     # 14h15m39.7s -> degrees
+    """A value in hours is multiplied by 15 to reach degrees."""
     assert fits_io.sexagesimal_to_decimal("14 15 39.7", "hours") == pytest.approx(213.915417, abs=1e-4)
 
 
 def test_sexagesimal_colon_delimiters() -> None:
+    """Colon-delimited sexagesimal parses the same as space-delimited."""
     assert fits_io.sexagesimal_to_decimal("10:30:00", "degrees") == pytest.approx(10.5, abs=1e-9)
 
 
 def test_sexagesimal_two_part_degrees_minutes() -> None:
+    """A two-part value is read as degrees and minutes, with seconds absent rather than assumed."""
     assert fits_io.sexagesimal_to_decimal("10 30", "degrees") == pytest.approx(10.5, abs=1e-9)
 
 
 def test_sexagesimal_single_value_passthrough() -> None:
+    """A single number passes through as already-decimal."""
     assert fits_io.sexagesimal_to_decimal("42.5", "degrees") == pytest.approx(42.5, abs=1e-9)
 
 
 def test_float_nsew_south_is_negative() -> None:
+    """A southern latitude is negative once the hemisphere suffix is applied."""
     assert fits_io.float_nsew_to_decimal("33.9 S") == pytest.approx(-33.9)
 
 
 def test_float_nsew_west_is_negative() -> None:
+    """A western longitude is negative once the hemisphere suffix is applied."""
     assert fits_io.float_nsew_to_decimal("117.0 W") == pytest.approx(-117.0)
 
 
 def test_float_nsew_north_positive() -> None:
+    """A northern latitude stays positive."""
     assert fits_io.float_nsew_to_decimal("45.2 N") == pytest.approx(45.2)
 
 
 def test_convert_to_decimal_degrees_float_hours() -> None:
+    """A float in hours converts to degrees."""
     assert fits_io.convert_to_decimal_degrees("1.0", fmt="float", units="hours") == pytest.approx(15.0)
 
 
 def test_convert_to_decimal_degrees_float_degrees() -> None:
+    """A float already in degrees passes through unchanged."""
     assert fits_io.convert_to_decimal_degrees("123.5", fmt="float", units="degrees") == pytest.approx(123.5)
 
 
 def test_convert_to_decimal_degrees_unsupported_format_raises() -> None:
+    """An unsupported format raises rather than guessing at the units.
+
+    Silently picking a unit here would put a 15x error into the pointing.
+    """
     with pytest.raises(ValueError):
         fits_io.convert_to_decimal_degrees("1.0", fmt="bogus", units="degrees")
 
 
 def test_convert_to_decimal_kilometers_from_meters() -> None:
+    """An altitude in metres converts to kilometres."""
     assert fits_io.convert_to_decimal_kilometers("2000", units="meters") == pytest.approx(2.0)
 
 
 def test_convert_to_decimal_kilometers_passthrough_km() -> None:
+    """An altitude already in kilometres passes through."""
     assert fits_io.convert_to_decimal_kilometers("1.5", units="kilometers") == pytest.approx(1.5)
 
 
 def test_convert_to_decimal_kilometers_unknown_unit_raises() -> None:
+    """An unknown altitude unit raises rather than assuming one."""
     with pytest.raises(ValueError):
         fits_io.convert_to_decimal_kilometers("100", units="parsecs")
 
 
 def test_extract_header_value_present_and_absent() -> None:
+    """A present keyword is returned and an absent one yields None."""
     h = Header()
     h["FOO"] = 7
     assert fits_io.extract_header_value(h, "FOO") == 7
@@ -165,16 +189,19 @@ def test_extract_header_value_present_and_absent() -> None:
 
 
 def test_exposure_time_basic() -> None:
+    """Exposure time is read from its keyword."""
     h = Header()
     h["EXPTIME"] = "12.5"
     assert fits_io.extract_exposure_time_from_header(h) == pytest.approx(12.5)
 
 
 def test_exposure_time_missing_returns_none() -> None:
+    """A header with no exposure time yields None rather than a default."""
     assert fits_io.extract_exposure_time_from_header(Header()) is None
 
 
 def test_exposure_time_multiple_candidate_keys(restore_headers: HeadersConfig) -> None:
+    """Several candidate keywords are tried in order, since sensors disagree on the name."""
     cfg = restore_headers
     cfg.exposure_time.exposure_time_keys = ["EXPOSURE", "EXPTIME"]
     h = Header()
@@ -188,6 +215,7 @@ def test_exposure_time_multiple_candidate_keys(restore_headers: HeadersConfig) -
 
 
 def test_observation_time_iso() -> None:
+    """An ISO timestamp parses."""
     h = Header()
     h["DATE-OBS"] = "2023-05-01T03:22:11.5"
     t = fits_io.extract_observation_time_from_header(h)
@@ -196,6 +224,7 @@ def test_observation_time_iso() -> None:
 
 
 def test_observation_time_custom_format(restore_headers: HeadersConfig) -> None:
+    """A configured non-ISO format parses."""
     cfg = restore_headers
     cfg.observation_time.format = "%Y/%m/%d %H:%M:%S"
     h = Header()
@@ -206,6 +235,11 @@ def test_observation_time_custom_format(restore_headers: HeadersConfig) -> None:
 
 def test_observation_time_falls_back_to_broad_parser() -> None:
     # No configured DATE-OBS value, but a DATE_TIME header arrow can parse.
+    """An unconfigured format still parses via the permissive parser.
+
+    Getting the time wrong groups a frame into the wrong collect, so it is worth one more attempt
+    before giving up.
+    """
     h = Header()
     h["DATE-OBS"] = "2020-01-02T00:00:00"  # used by the broad fallback too
     t = fits_io.extract_observation_time_from_header(h)
@@ -218,6 +252,7 @@ def test_observation_time_falls_back_to_broad_parser() -> None:
 
 
 def test_site_sexagesimal_lat_lon() -> None:
+    """A site given in sexagesimal latitude and longitude parses."""
     h = Header()
     h["SITELAT"] = "-33 56 12"
     h["SITELONG"] = "+18 28 36"
@@ -230,6 +265,7 @@ def test_site_sexagesimal_lat_lon() -> None:
 
 
 def test_site_altitude_meters_unit(restore_headers: HeadersConfig) -> None:
+    """A site altitude in metres is converted to kilometres."""
     cfg = restore_headers
     cfg.site.altitude_unit = "meters"
     h = Header()
@@ -241,12 +277,14 @@ def test_site_altitude_meters_unit(restore_headers: HeadersConfig) -> None:
 
 
 def test_site_missing_lat_lon_returns_none() -> None:
+    """A header with no coordinates yields no site rather than a partial one."""
     h = Header()
     h["SITEALT"] = "1.0"
     assert fits_io.extract_observing_site_from_header(h) is None
 
 
 def test_site_float_positional_format(restore_headers: HeadersConfig) -> None:
+    """A site given as plain floats parses."""
     cfg = restore_headers
     cfg.site.positional_format = "float"
     cfg.site.altitude_unit = "kilometers"
@@ -264,6 +302,7 @@ def test_site_float_positional_format(restore_headers: HeadersConfig) -> None:
 
 
 def test_boresight_ra_dec_sexagesimal_hours() -> None:
+    """A boresight given as sexagesimal RA in hours and Dec in degrees parses."""
     h = Header()
     h["OBJCTRA"] = "14 15 39.7"
     h["OBJCTDEC"] = "+20 44 48.2"
@@ -273,6 +312,7 @@ def test_boresight_ra_dec_sexagesimal_hours() -> None:
 
 
 def test_boresight_missing_returns_none_none() -> None:
+    """A header with no boresight yields no pointing, so the solve runs blind rather than on a guess."""
     ra, dec = fits_io.extract_boresight_from_header(Header())
     assert ra is None and dec is None
 
@@ -280,6 +320,7 @@ def test_boresight_missing_returns_none_none() -> None:
 def test_boresight_altaz_fallback(restore_headers: HeadersConfig) -> None:
     # local.yaml configures CENTAZ/CENTALT; supply az/alt + site + time and
     # verify Alt/Az -> RA/Dec produces a valid sky coordinate.
+    """With no RA/Dec, the boresight falls back to the alt/az the mount reported."""
     h = Header()
     h["CENTAZ"] = "120.0"
     h["CENTALT"] = "45.0"
@@ -299,6 +340,7 @@ def test_boresight_altaz_fallback(restore_headers: HeadersConfig) -> None:
 
 
 def test_track_rates_sidereal_from_mode_string() -> None:
+    """A sidereal track mode in the header is taken at face value."""
     h = Header()
     h["TELTKRA"] = 0.0
     h["TELTKDEC"] = 0.0
@@ -310,6 +352,7 @@ def test_track_rates_sidereal_from_mode_string() -> None:
 
 
 def test_track_rates_rate_mode_from_string() -> None:
+    """A rate track mode in the header is taken at face value."""
     h = Header()
     h["TELTKRA"] = 15.0
     h["TELTKDEC"] = -3.0
@@ -321,6 +364,7 @@ def test_track_rates_rate_mode_from_string() -> None:
 
 
 def test_track_mode_inferred_from_zero_rates_when_no_mode() -> None:
+    """With no mode keyword, zero track rates imply sidereal."""
     h = Header()
     h["TELTKRA"] = 0.0
     h["TELTKDEC"] = 0.0
@@ -329,6 +373,7 @@ def test_track_mode_inferred_from_zero_rates_when_no_mode() -> None:
 
 
 def test_track_mode_inferred_rate_from_nonzero_rates_when_no_mode() -> None:
+    """With no mode keyword, non-zero track rates imply rate tracking."""
     h = Header()
     h["TELTKRA"] = 5.0
     h["TELTKDEC"] = 0.0
@@ -337,11 +382,16 @@ def test_track_mode_inferred_rate_from_nonzero_rates_when_no_mode() -> None:
 
 
 def test_track_mode_unknown_when_nothing_present() -> None:
+    """With neither a mode nor rates, the mode is unknown rather than defaulted.
+
+    Guessing sidereal here would send a rate-track collect down the wrong path entirely.
+    """
     _, _, mode = fits_io.extract_track_rates_from_header(Header())
     assert mode is TrackMode.UNKNOWN
 
 
 def test_track_rates_unit_conversion_degrees(restore_headers: HeadersConfig) -> None:
+    """Track rates given in degrees per second convert to arcseconds per second."""
     cfg = restore_headers
     cfg.tracking.track_ra_rate_unit = "degrees/second"
     cfg.tracking.track_dec_rate_unit = "degrees/second"
@@ -359,17 +409,24 @@ def test_track_rates_unit_conversion_degrees(restore_headers: HeadersConfig) -> 
 
 
 @pytest.mark.parametrize("raw", ["open", "L", "lum", "clear", "none", ""])
-def test_filter_clear_aliases_normalized(raw) -> None:
+def test_filter_clear_aliases_normalized(raw: str) -> None:
+    """Every spelling of an empty filter slot normalises to Clear.
+
+    Sensors write open, L, lum, clear, none or nothing at all for the same physical state, and
+    band-specific calibration has to treat them as one.
+    """
     h = Header()
     h["FILTER"] = raw
     assert fits_io.extract_filter_from_header(h) == "Clear"
 
 
 def test_filter_named_passthrough() -> None:
+    """A named filter passes through unchanged."""
     h = Header()
     h["FILTER"] = "Sloan_r"
     assert fits_io.extract_filter_from_header(h) == "Sloan_r"
 
 
 def test_filter_missing_returns_none() -> None:
+    """A header with no filter yields None, so calibration knows the band is unknown."""
     assert fits_io.extract_filter_from_header(Header()) is None
