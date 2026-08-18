@@ -14,11 +14,20 @@ from senpai.catalog import runner
 
 
 @pytest.fixture(autouse=True)
-def _calls(monkeypatch: pytest.MonkeyPatch):
+def _calls(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Record every catalog query the cache actually issues."""
     runner._GAIA_SKY_CACHE.clear()
     calls = []
 
-    def fake_query(min_ra, max_ra, min_dec, max_dec, faint_lim=None, bright_lim=None):
+    def fake_query(
+        min_ra: float,
+        max_ra: float,
+        min_dec: float,
+        max_dec: float,
+        faint_lim: float | None = None,
+        bright_lim: float | None = None,
+    ) -> list[dict]:
+        """Record the requested box and return no stars."""
         calls.append((min_ra, max_ra, min_dec, max_dec))
         cra = np.deg2rad((min_ra + max_ra) / 2)
         cdec = np.deg2rad((min_dec + max_dec) / 2)
@@ -29,6 +38,10 @@ def _calls(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_first_query_pads_and_caches(_calls: dict) -> None:
+    """The first query pads the field and caches the result.
+
+    The padding is what lets a small later shift be served from cache instead of re-queried.
+    """
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     assert len(_calls) == 1
     pad = runner._GAIA_SKY_PAD_DEG
@@ -38,8 +51,10 @@ def test_first_query_pads_and_caches(_calls: dict) -> None:
 
 
 def test_intra_batch_jitter_is_free(_calls: dict) -> None:
-    """Sub-pad shift (frame shift ~0.04°) + a refinement nudge land inside the
-    padded coverage → zero extra online queries.
+    """A shift smaller than the padding is served entirely from cache.
+
+    A ~0.04 degree frame shift plus a refinement nudge both land inside the padded coverage,
+    so no additional online query is issued.
     """
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     runner._query_gaia_sky(255.04, 257.04, 43.04, 45.04, 21, -32)
@@ -63,6 +78,7 @@ def test_partial_overlap_fetches_only_sliver(_calls: dict) -> None:
 
 
 def test_diagonal_shift_fetches_two_slivers(_calls: dict) -> None:
+    """A diagonal shift fetches only the two new strips, not the whole field again."""
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)  # call 0
     runner._query_gaia_sky(255.5, 257.5, 43.5, 45.5, 21, -32)  # RA+Dec shift
     # box-difference of grown bbox vs prior coverage = an L = 2 strips
@@ -71,6 +87,7 @@ def test_diagonal_shift_fetches_two_slivers(_calls: dict) -> None:
 
 
 def test_disjoint_pointing_starts_new_region(_calls: dict) -> None:
+    """A pointing with no overlap starts a fresh region rather than growing the old one."""
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     runner._query_gaia_sky(280.0, 282.0, 43.0, 45.0, 21, -32)  # far slew
     assert len(_calls) == 2
@@ -78,6 +95,11 @@ def test_disjoint_pointing_starts_new_region(_calls: dict) -> None:
 
 
 def test_different_mag_limits_are_separate(_calls: dict) -> None:
+    """Different magnitude limits are cached separately.
+
+    Reusing a shallower result for a deeper request would silently return fewer stars than asked
+    for.
+    """
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 18, -32)
     assert len(_calls) == 2
@@ -85,5 +107,9 @@ def test_different_mag_limits_are_separate(_calls: dict) -> None:
 
 
 def test_ra_wrap_bypasses_cache(_calls: dict) -> None:
+    """A field crossing RA=0 bypasses the cache.
+
+    The cached region is a box in RA, and a wrapped field cannot be expressed as one.
+    """
     runner._query_gaia_sky(359.5, 360.5, 43.0, 45.0, 21, -32)  # crosses seam
     assert len(runner._GAIA_SKY_CACHE) == 0

@@ -21,7 +21,8 @@ from senpai.engine.photometry.utils import (
 TRUE_ZP = 26.0
 
 
-def _result(mag, flux, snr, crowding=0.0):
+def _result(mag: float, flux: float, snr: float, crowding: float = 0.0) -> SimplePhotometryResult:
+    """Build one photometry result with chosen flux, SNR and crowding."""
     star = StarInSpace(ra=0.0, dec=0.0, magnitude=mag, x=None, y=None)
     return SimplePhotometryResult(
         star=star,
@@ -36,16 +37,17 @@ def _result(mag, flux, snr, crowding=0.0):
     )
 
 
-def _clean(mag, snr=100.0):
-    """A star whose flux is exactly consistent with TRUE_ZP at 1s exposure."""
+def _clean(mag: float, snr: float = 100.0) -> SimplePhotometryResult:
+    """Build a star whose flux is exactly consistent with TRUE_ZP at a 1 s exposure."""
     return _result(mag, flux=10 ** ((TRUE_ZP - mag) / 2.5), snr=snr)
 
 
-def _starfield():
+def _starfield() -> StarField:
     # fwhm_stats=None → skip the KD-tree neighbour path; this isolates the
     # SNR-cut + sigma-clip robustness (the contamination defence under test).
     # model_construct: the ZP routine only reads .fwhm_stats, .catalog_stars and
     # .image_metadata; skip full StarField validation for this focused unit test.
+    """Build the StarField the zero-point fit reads its catalog from."""
     return StarField.model_construct(
         image_metadata=ImageMetadata(image_id="t", width=100, height=100, exposure_time=1.0),
         fwhm_stats=None,
@@ -53,11 +55,13 @@ def _starfield():
     )
 
 
-def _cfg():
+def _cfg() -> SimplePhotometryConfig:
+    """Build a photometry config with a deterministic noise model."""
     return SimplePhotometryConfig()
 
 
 def test_zp_recovers_clean_zero_point() -> None:
+    """The fit recovers a zero point from results consistent with it."""
     results = [_clean(m) for m in [12, 13, 14, 15, 16] * 3]
     zp, err = _calculate_simple_zero_point(results, _starfield(), _cfg())
     assert zp is not None
@@ -95,5 +99,6 @@ def test_zp_excludes_low_snr_stars() -> None:
 
 
 def test_zp_none_when_too_few_stars() -> None:
+    """Too few stars yields no zero point rather than one fitted to a handful."""
     zp, err = _calculate_simple_zero_point([_clean(12)], _starfield(), _cfg())
     assert zp is None and err is None
