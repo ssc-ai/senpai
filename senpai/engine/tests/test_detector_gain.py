@@ -35,7 +35,7 @@ class TestParseAndPair:
         assert find_burst_pairs(names) == []
 
 
-def _sky_pair(level, gain, shape=(800, 800), seed=0):
+def _sky_pair(level, gain, shape=(800, 800), seed: int = 0):
     rng = np.random.default_rng(seed)
     f1 = rng.poisson(level * gain, shape) / gain
     f2 = rng.poisson(level * gain, shape) / gain
@@ -66,7 +66,7 @@ class TestPtcPoint:
 
 
 class TestFitGain:
-    def _ptc(self, gain, levels, seed=0):
+    def _ptc(self, gain, levels, seed: int = 0):
         return [ptc_point(*_sky_pair(L, gain, seed=seed + i)) for i, L in enumerate(levels)]
 
     def test_recovers_known_gain(self) -> None:

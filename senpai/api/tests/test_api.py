@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import ModuleType
 
 import pytest
 from pydantic import ValidationError
@@ -27,6 +28,7 @@ import senpai.api.routes.senpai as route_mod
 from senpai.api.models.examples import StarListImageExample
 from senpai.api.models.returns import DetectResponse, FrameResult
 from senpai.api.routes.senpai import FilePayloadItem, detect, detect_upload, index
+from senpai.core.config import AppConfig
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.engine.models.metadata import CollectionMetadata
 from senpai.engine.models.senpai import SenpaiRun
@@ -39,13 +41,13 @@ from .conftest import make_request
 # ---------------------------------------------------------------------------
 
 
-def test_create_app_uses_config_version(patched_app_env, _init_config) -> None:
+def test_create_app_uses_config_version(patched_app_env: ModuleType, _init_config: AppConfig) -> None:
     app = patched_app_env.create_app(_init_config)
     assert app.title == "SENPAI API"
     assert app.version == _init_config.version
 
 
-def test_create_app_registers_expected_routes(patched_app_env, _init_config) -> None:
+def test_create_app_registers_expected_routes(patched_app_env: ModuleType, _init_config: AppConfig) -> None:
     app = patched_app_env.create_app(_init_config)
     # Assert against the OpenAPI path set (the stable public contract) rather than
     # introspecting app.routes: FastAPI 0.137 keeps lazy _IncludedRouter wrappers
@@ -60,14 +62,14 @@ def test_create_app_registers_expected_routes(patched_app_env, _init_config) -> 
     assert "/astrometry/solve/sources" in paths
 
 
-def test_create_app_openapi_schema(patched_app_env, _init_config) -> None:
+def test_create_app_openapi_schema(patched_app_env: ModuleType, _init_config: AppConfig) -> None:
     app = patched_app_env.create_app(_init_config)
     schema = app.openapi()
     assert schema["info"]["title"] == "SENPAI API"
     assert "/senpai/detect" in schema["paths"]
 
 
-def test_create_app_accepts_config_path(patched_app_env) -> None:
+def test_create_app_accepts_config_path(patched_app_env: ModuleType) -> None:
 
     app = patched_app_env.create_app(LOCAL_APP_CONFIG_OVERRIDE)
     assert app.version is not None
@@ -78,7 +80,7 @@ def test_create_app_accepts_config_path(patched_app_env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_lifespan_runs_hermetically(patched_app_env, _init_config) -> None:
+def test_lifespan_runs_hermetically(patched_app_env: ModuleType, _init_config: AppConfig) -> None:
     """The lifespan must validate astrometry and set up/tear down the executor."""
     app = patched_app_env.create_app(_init_config)
 
@@ -94,14 +96,14 @@ def test_lifespan_runs_hermetically(patched_app_env, _init_config) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_senpai_index_returns_version(_init_config) -> None:
+def test_senpai_index_returns_version(_init_config: AppConfig) -> None:
 
     result = asyncio.run(index(make_request("/senpai/")))
     assert result["version"] == _init_config.version
     assert "api" in result
 
 
-def test_astrometry_index_returns_config(_init_config) -> None:
+def test_astrometry_index_returns_config(_init_config: AppConfig) -> None:
     from senpai.api.routes.astrometry import index
 
     response = asyncio.run(index(make_request("/astrometry/")))

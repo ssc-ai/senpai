@@ -13,7 +13,7 @@ from astropy.stats import sigma_clipped_stats
 from senpai.engine.utils.stats import robust_background_stats
 
 
-def _field(shape=(2400, 2400), background=120.0, noise=8.0, seed=11):
+def _field(shape=(2400, 2400), background=120.0, noise=8.0, seed: int = 11):
     rng = np.random.default_rng(seed)
     image = np.full(shape, background) + rng.normal(0.0, noise, shape)
     # Bright contaminants the sigma clip must reject (stars / hot pixels).

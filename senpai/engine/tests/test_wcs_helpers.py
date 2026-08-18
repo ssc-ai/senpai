@@ -15,7 +15,7 @@ from senpai.engine.models.starfield import StarInImage
 from senpai.engine.utils.wcs_helpers import find_local_maxima, match_stars_to_detections
 
 
-def _smooth_peaky_image(seed=3, size=1200, n_peaks=120):
+def _smooth_peaky_image(seed: int = 3, size: int = 1200, n_peaks=120):
     rng = np.random.default_rng(seed)
     img = rng.normal(0.0, 1.0, (size, size))
     ys = rng.integers(40, size - 40, n_peaks)

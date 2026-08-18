@@ -93,7 +93,7 @@ def _flux_for_mag(mag):
     return 10 ** ((TRUE_ZP - mag) / 2.5)
 
 
-def _single_star_image(total_flux, x0=100.3, y0=98.7, size=200, bg=100.0, sky=5.0, seed=0):
+def _single_star_image(total_flux, x0=100.3, y0=98.7, size: int = 200, bg=100.0, sky=5.0, seed: int = 0):
     rng = np.random.default_rng(seed)
     data = bg + rng.normal(0.0, sky, (size, size))
     _inject_star(data, x0, y0, total_flux)
@@ -114,7 +114,7 @@ def _fwhm_stats(fwhm=FWHM):
     )
 
 
-def _starfield(stars, fwhm=FWHM, size=400):
+def _starfield(stars, fwhm=FWHM, size: int = 400):
     return StarField.model_construct(
         catalog_stars=list(stars),
         fwhm_stats=_fwhm_stats(fwhm),
@@ -214,7 +214,7 @@ def test_quality_flag_false_when_min_snr_too_high() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _field_image_and_starfield(seed=1, size=400, sky=5.0):
+def _field_image_and_starfield(seed: int = 1, size: int = 400, sky=5.0):
     rng = np.random.default_rng(seed)
     data = 100.0 + rng.normal(0.0, sky, (size, size))
     positions = [(60, 60), (120, 90), (200, 150), (300, 250), (150, 300), (250, 80), (90, 200), (330, 330)]

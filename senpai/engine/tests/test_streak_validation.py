@@ -190,7 +190,7 @@ class TestQuickCorrelation:
 # validate_shift_lightweight / validate_proposed_shift
 # --------------------------------------------------------------------------- #
 class TestValidateShift:
-    def _pair(self, dx, dy, n_stars=30, seed=1, noise=3.0):
+    def _pair(self, dx, dy, n_stars=30, seed: int = 1, noise=3.0):
         positions = _star_field(n_stars=n_stars, seed=seed)
         source_img = _render(positions, dx=0, dy=0, noise=noise, seed=2)
         target_img = _render(positions, dx=dx, dy=dy, noise=noise, seed=3)

@@ -32,7 +32,7 @@ from senpai.export.dataset_split import (
 # ---------------------------------------------------------------------------
 
 
-def _write_fits(path, width=64, height=48):
+def _write_fits(path, width: int = 64, height: int = 48):
     """Write a tiny FITS file and return (path, width, height)."""
     data = np.zeros((height, width), dtype=np.float32)
     header = fits.Header()
@@ -43,12 +43,12 @@ def _write_fits(path, width=64, height=48):
     return str(path), width, height
 
 
-def _image_metadata(width, height):
+def _image_metadata(width: int, height: int):
 
     return ImageMetadata(image_id="img", width=width, height=height)
 
 
-def _starfield(width, height, *, fit=True, detections=None, catalog=None):
+def _starfield(width: int, height: int, *, fit=True, detections=None, catalog=None):
 
     return StarField(
         detections=[StarInImage(**d) for d in (detections or [])],
@@ -59,7 +59,7 @@ def _starfield(width, height, *, fit=True, detections=None, catalog=None):
     )
 
 
-def _sidereal_frame(fits_path, width, height, *, index=0, detections=None, catalog=None, fit=True):
+def _sidereal_frame(fits_path, width: int, height: int, *, index=0, detections=None, catalog=None, fit=True):
 
     return SiderealFrameSerializable(
         starfield=_starfield(width, height, fit=fit, detections=detections, catalog=catalog),
@@ -85,7 +85,9 @@ def _satellite(x, y, snr=12.0):
     return SatelliteInImage(x=x, y=y, snr=snr)
 
 
-def _rate_frame(fits_path, width, height, *, index=0, satellites=None, detections=None, streak=None, fit=True):
+def _rate_frame(
+    fits_path, width: int, height: int, *, index=0, satellites=None, detections=None, streak=None, fit=True
+):
 
     sat_list = None
     if satellites is not None:
@@ -375,7 +377,7 @@ def test_dataset_split_deterministic_with_seed(tmp_path: Path) -> None:
         _make_point_annotation_file(input_dir, image_id, fname, "rate")
         _touch_image(input_dir, fname)
 
-    def run(seed):
+    def run(seed: int):
         out = tmp_path / f"out_{seed}"
         return split_coco_dataset(
             str(input_dir),

@@ -119,7 +119,7 @@ class TestStreakCenterExtraction:
     planted streak yields exactly one centroid at its center.
     """
 
-    def _streak_grid(self, length=40, rot=30.0, size=1200, seed=3):
+    def _streak_grid(self, length=40, rot=30.0, size: int = 1200, seed: int = 3):
 
         rng = np.random.default_rng(seed)
         one = _streak(length, rot=rot)  # patch with the streak at its center

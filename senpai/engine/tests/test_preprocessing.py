@@ -373,7 +373,7 @@ class TestPreprocessImage:
 # --- gain estimate from sky shot noise (photon transfer) ---------------------
 
 
-def _poisson_sky(sky_adu: float, gain: float, shape=(1500, 1500), seed=0):
+def _poisson_sky(sky_adu: float, gain: float, shape=(1500, 1500), seed: int = 0):
     """Flat-fielded sky frame whose shot noise encodes a known gain (e-/ADU).
 
     sky electrons ~ Poisson(sky_adu * gain); ADU = electrons / gain, so

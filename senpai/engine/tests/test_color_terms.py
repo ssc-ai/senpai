@@ -34,7 +34,7 @@ def _config() -> None:
     get_config().plotting.debug = False
 
 
-def _synth_arrays(zp, color_coeff, n=40, noise=0.01, seed=0):
+def _synth_arrays(zp, color_coeff, n=40, noise=0.01, seed: int = 0):
     """Return (inst, cat, color) obeying cat = zp + color_coeff*color + inst."""
     rng = np.random.default_rng(seed)
     color = rng.uniform(0.2, 2.0, n)
@@ -151,7 +151,7 @@ def test_bandcalibration_rounds_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_results(zp, coeff, band="Johnson_V", n=20, with_color=True, exposure_time=1.0, seed=10):
+def _make_results(zp, coeff, band="Johnson_V", n=20, with_color=True, exposure_time=1.0, seed: int = 10):
     """Photometry results whose flux obeys cat = zp + coeff*color + inst,
     with inst = -2.5*log10(flux/texp). Color comes from Gaia BP-RP.
     """

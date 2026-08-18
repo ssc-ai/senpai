@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+from senpai.core.config import HeadersConfig
+
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 import pytest
@@ -173,7 +175,7 @@ def test_exposure_time_missing_returns_none() -> None:
     assert fits_io.extract_exposure_time_from_header(Header()) is None
 
 
-def test_exposure_time_multiple_candidate_keys(restore_headers) -> None:
+def test_exposure_time_multiple_candidate_keys(restore_headers: HeadersConfig) -> None:
     cfg = restore_headers
     cfg.exposure_time.exposure_time_keys = ["EXPOSURE", "EXPTIME"]
     h = Header()
@@ -194,7 +196,7 @@ def test_observation_time_iso() -> None:
     assert (t.year, t.month, t.day, t.hour, t.minute, t.second) == (2023, 5, 1, 3, 22, 11)
 
 
-def test_observation_time_custom_format(restore_headers) -> None:
+def test_observation_time_custom_format(restore_headers: HeadersConfig) -> None:
     cfg = restore_headers
     cfg.observation_time.format = "%Y/%m/%d %H:%M:%S"
     h = Header()
@@ -228,7 +230,7 @@ def test_site_sexagesimal_lat_lon() -> None:
     assert site.altitude_km == pytest.approx(1.5)
 
 
-def test_site_altitude_meters_unit(restore_headers) -> None:
+def test_site_altitude_meters_unit(restore_headers: HeadersConfig) -> None:
     cfg = restore_headers
     cfg.site.altitude_unit = "meters"
     h = Header()
@@ -245,7 +247,7 @@ def test_site_missing_lat_lon_returns_none() -> None:
     assert fits_io.extract_observing_site_from_header(h) is None
 
 
-def test_site_float_positional_format(restore_headers) -> None:
+def test_site_float_positional_format(restore_headers: HeadersConfig) -> None:
     cfg = restore_headers
     cfg.site.positional_format = "float"
     cfg.site.altitude_unit = "kilometers"
@@ -276,7 +278,7 @@ def test_boresight_missing_returns_none_none() -> None:
     assert ra is None and dec is None
 
 
-def test_boresight_altaz_fallback(restore_headers) -> None:
+def test_boresight_altaz_fallback(restore_headers: HeadersConfig) -> None:
     # local.yaml configures CENTAZ/CENTALT; supply az/alt + site + time and
     # verify Alt/Az -> RA/Dec produces a valid sky coordinate.
     h = Header()
@@ -340,7 +342,7 @@ def test_track_mode_unknown_when_nothing_present() -> None:
     assert mode is TrackMode.UNKNOWN
 
 
-def test_track_rates_unit_conversion_degrees(restore_headers) -> None:
+def test_track_rates_unit_conversion_degrees(restore_headers: HeadersConfig) -> None:
     cfg = restore_headers
     cfg.tracking.track_ra_rate_unit = "degrees/second"
     cfg.tracking.track_dec_rate_unit = "degrees/second"

@@ -20,7 +20,7 @@ from photutils.aperture import (
 from senpai.engine.photometry.utils import _shared_shape_aperture_sums
 
 
-def _streak_field(n=400, size=1500, seed=5):
+def _streak_field(n=400, size: int = 1500, seed: int = 5):
     rng = np.random.default_rng(seed)
     data = rng.normal(0.0, 5.0, (size, size)).astype(np.float32)
     pos = np.column_stack([rng.uniform(120, size - 120, n), rng.uniform(120, size - 120, n)])
