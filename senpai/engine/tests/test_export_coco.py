@@ -30,7 +30,7 @@ from senpai.export.dataset_split import (
 # ---------------------------------------------------------------------------
 
 
-def _write_fits(path, width: int = 64, height: int = 48):
+def _write_fits(path: Path, width: int = 64, height: int = 48) -> tuple[Path, int, int]:
     """Write a tiny FITS file and return (path, width, height)."""
     data = np.zeros((height, width), dtype=np.float32)
     header = fits.Header()
@@ -41,13 +41,20 @@ def _write_fits(path, width: int = 64, height: int = 48):
     return str(path), width, height
 
 
-def _image_metadata(width: int, height: int):
-
+def _image_metadata(width: int, height: int) -> ImageMetadata:
+    """Image metadata for a frame of the given size."""
     return ImageMetadata(image_id="img", width=width, height=height)
 
 
-def _starfield(width: int, height: int, *, fit=True, detections=None, catalog=None):
-
+def _starfield(
+    width: int,
+    height: int,
+    *,
+    fit: bool = True,
+    detections: list[dict] | None = None,
+    catalog: list[dict] | None = None,
+) -> StarField:
+    """Build a StarField, optionally unsolved so the export has to skip the frame."""
     return StarField(
         detections=[StarInImage(**d) for d in (detections or [])],
         catalog_stars=([StarInSpace(**c) for c in catalog] if catalog is not None else None),
@@ -57,8 +64,17 @@ def _starfield(width: int, height: int, *, fit=True, detections=None, catalog=No
     )
 
 
-def _sidereal_frame(fits_path, width: int, height: int, *, index=0, detections=None, catalog=None, fit=True):
-
+def _sidereal_frame(
+    fits_path: Path,
+    width: int,
+    height: int,
+    *,
+    index: int = 0,
+    detections: list[dict] | None = None,
+    catalog: list[dict] | None = None,
+    fit: bool = True,
+) -> SiderealFrameSerializable:
+    """Build a serialized sidereal frame, as a run's JSON would carry it."""
     return SiderealFrameSerializable(
         starfield=_starfield(width, height, fit=fit, detections=detections, catalog=catalog),
         processed_frame_path=fits_path,
@@ -67,8 +83,8 @@ def _sidereal_frame(fits_path, width: int, height: int, *, index=0, detections=N
     )
 
 
-def _streak(length=20.0, angle_deg=0.0, fwhm=3.0):
-
+def _streak(length: float = 20.0, angle_deg: float = 0.0, fwhm: float = 3.0) -> StreakMetadata:
+    """Build streak metadata of a given length and angle."""
     rad = np.deg2rad(angle_deg)
     return StreakMetadata(
         pixel_length=length,
@@ -78,15 +94,23 @@ def _streak(length=20.0, angle_deg=0.0, fwhm=3.0):
     )
 
 
-def _satellite(x, y, snr=12.0):
-
+def _satellite(x: float, y: float, snr: float = 12.0) -> SatelliteInImage:
+    """Build one detected satellite at a pixel position."""
     return SatelliteInImage(x=x, y=y, snr=snr)
 
 
 def _rate_frame(
-    fits_path, width: int, height: int, *, index=0, satellites=None, detections=None, streak=None, fit=True
-):
-
+    fits_path: Path,
+    width: int,
+    height: int,
+    *,
+    index: int = 0,
+    satellites: list[SatelliteInImage] | None = None,
+    detections: list[dict] | None = None,
+    streak: StreakMetadata | None = None,
+    fit: bool = True,
+) -> RateTrackFrameSerializable:
+    """Build a serialized rate-track frame, as a run's JSON would carry it."""
     sat_list = None
     if satellites is not None:
         sat_list = SatelliteListImage(
@@ -104,8 +128,12 @@ def _rate_frame(
     )
 
 
-def _run(sidereal=None, rate=None, scale_factor=None):
-
+def _run(
+    sidereal: list[SiderealFrameSerializable] | None = None,
+    rate: list[RateTrackFrameSerializable] | None = None,
+    scale_factor: float | None = None,
+) -> SenpaiRunResult:
+    """Build a serialized run result holding the given frames."""
     return SenpaiRunResult(
         id="run-1",
         num_frames=len(sidereal or []) + len(rate or []),
@@ -123,6 +151,7 @@ def _run(sidereal=None, rate=None, scale_factor=None):
 
 
 def test_sidereal_point_annotations_bbox(tmp_path: Path) -> None:
+    """Each sidereal detection becomes a point annotation with a box around its centroid."""
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     # Two well-separated detections at known positions.
     dets = [
@@ -160,6 +189,7 @@ def test_sidereal_point_annotations_bbox(tmp_path: Path) -> None:
 
 
 def test_sidereal_skipped_when_no_wcs(tmp_path: Path) -> None:
+    """An unsolved sidereal frame is skipped: without a WCS its annotations cannot be placed on sky."""
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     dets = [{"x": 5.0, "y": 5.0, "counts": 10_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets, fit=False)])
@@ -172,6 +202,7 @@ def test_sidereal_skipped_when_no_wcs(tmp_path: Path) -> None:
 
 
 def test_process_sidereal_flag_disables_sidereal(tmp_path: Path) -> None:
+    """Turning off sidereal processing emits no sidereal annotations."""
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     dets = [{"x": 5.0, "y": 5.0, "counts": 10_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets)])
@@ -183,6 +214,7 @@ def test_process_sidereal_flag_disables_sidereal(tmp_path: Path) -> None:
 
 
 def test_snr_cut_filters_low_snr_detections(tmp_path: Path) -> None:
+    """Detections below the SNR cut are dropped from the annotations."""
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     # counts -> snr via sqrt(counts/1000); 1e6 counts -> snr ~31.6 (kept),
     # 10 counts -> snr ~0.1 (cut at snr_cut=5).
@@ -207,6 +239,7 @@ def test_snr_cut_filters_low_snr_detections(tmp_path: Path) -> None:
 
 
 def test_rate_satellite_and_streak_annotations(tmp_path: Path) -> None:
+    """A rate frame yields both satellite point annotations and a streak line."""
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     sats = [_satellite(25.0, 15.0, snr=20.0)]
     star_dets = [{"x": 30.0, "y": 24.0, "counts": 500_000.0}]
@@ -242,6 +275,7 @@ def test_rate_satellite_and_streak_annotations(tmp_path: Path) -> None:
 
 
 def test_rate_streak_line_angle(tmp_path: Path) -> None:
+    """The streak line follows the measured angle, so a vertical streak annotates vertically."""
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     star_dets = [{"x": 32.0, "y": 24.0, "counts": 500_000.0}]
     streak = _streak(length=10.0, angle_deg=90.0)  # vertical
@@ -260,6 +294,11 @@ def test_rate_streak_line_angle(tmp_path: Path) -> None:
 
 
 def test_rate_skipped_when_streak_exceeds_max_length(tmp_path: Path) -> None:
+    """A streak longer than the configured maximum skips the frame.
+
+    A trail that long is a satellite crossing the whole field or a failed measurement, and
+    either way it is not a usable training label.
+    """
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     star_dets = [{"x": 30.0, "y": 24.0, "counts": 500_000.0}]
     streak = _streak(length=200.0)
@@ -271,6 +310,7 @@ def test_rate_skipped_when_streak_exceeds_max_length(tmp_path: Path) -> None:
 
 
 def test_rate_skipped_when_no_wcs(tmp_path: Path) -> None:
+    """An unsolved rate frame is skipped, as for sidereal."""
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     sats = [_satellite(10.0, 10.0)]
     run = _run(rate=[_rate_frame(fits_path, w, h, satellites=sats, fit=False)])
@@ -281,6 +321,11 @@ def test_rate_skipped_when_no_wcs(tmp_path: Path) -> None:
 
 
 def test_scale_factor_scales_coordinates(tmp_path: Path) -> None:
+    """Annotation coordinates are unscaled back to the original frame size.
+
+    A run that downsampled for detection reports positions in binned pixels; the labels have to
+    refer to the image they are attached to.
+    """
     fits_path, w, h = _write_fits(tmp_path / "side.fits", width=64, height=64)
     dets = [{"x": 10.0, "y": 10.0, "counts": 1_000_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets)], scale_factor=2.0)
@@ -294,6 +339,7 @@ def test_scale_factor_scales_coordinates(tmp_path: Path) -> None:
 
 
 def test_write_fits_creates_image_file(tmp_path: Path) -> None:
+    """The export writes an image file beside its annotations."""
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     dets = [{"x": 10.0, "y": 10.0, "counts": 1_000_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets)])
@@ -308,6 +354,7 @@ def test_write_fits_creates_image_file(tmp_path: Path) -> None:
 
 
 def test_export_batch_processes_multiple_runs(tmp_path: Path) -> None:
+    """A batch export processes every run it is given."""
     fp1, w, h = _write_fits(tmp_path / "a.fits")
     fp2, _, _ = _write_fits(tmp_path / "b.fits")
     dets = [{"x": 10.0, "y": 10.0, "counts": 1_000_000.0}]
@@ -326,16 +373,21 @@ def test_export_batch_processes_multiple_runs(tmp_path: Path) -> None:
 
 
 def test_dataset_split_ratios_must_sum_to_one() -> None:
+    """Split ratios that do not sum to 1 are rejected at construction."""
     with pytest.raises(ValueError):
         DatasetSplit(train=0.5, val=0.2, test=0.1)
 
 
 def test_dataset_split_defaults_valid() -> None:
+    """The default split is 70/20/10."""
     s = DatasetSplit()
     assert (s.train, s.val, s.test) == (0.7, 0.2, 0.1)
 
 
-def _make_point_annotation_file(input_dir, image_id, file_name, frame_type, n_ann=1):
+def _make_point_annotation_file(
+    input_dir: Path, image_id: int, file_name: str, frame_type: str, n_ann: int = 1
+) -> None:
+    """Write a COCO point-annotation file for one image."""
     data = {
         "images": [
             {
@@ -352,12 +404,14 @@ def _make_point_annotation_file(input_dir, image_id, file_name, frame_type, n_an
     (input_dir / f"{image_id}_point_sat.json").write_text(json.dumps(data))
 
 
-def _touch_image(input_dir, file_name):
+def _touch_image(input_dir: Path, file_name: str) -> None:
+    """Write a minimal FITS file so a split has something to move."""
     np.zeros((4, 4), dtype=np.float32)
     fits.PrimaryHDU(np.zeros((4, 4), dtype=np.float32)).writeto(input_dir / file_name, overwrite=True)
 
 
 def test_dataset_split_raises_without_annotations(tmp_path: Path) -> None:
+    """Splitting a directory with no annotations raises rather than writing empty splits."""
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     splitter = DatasetSplitter(DatasetSplit(), random_seed=0)
@@ -366,6 +420,11 @@ def test_dataset_split_raises_without_annotations(tmp_path: Path) -> None:
 
 
 def test_dataset_split_deterministic_with_seed(tmp_path: Path) -> None:
+    """The same seed produces the same split.
+
+    Without this a re-run would reshuffle train and test, which silently invalidates any model
+    comparison made across the two runs.
+    """
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     # 10 images with parseable timestamps in the filename so temporal sort is stable.
@@ -375,7 +434,8 @@ def test_dataset_split_deterministic_with_seed(tmp_path: Path) -> None:
         _make_point_annotation_file(input_dir, image_id, fname, "rate")
         _touch_image(input_dir, fname)
 
-    def run(seed: int):
+    def run(seed: int) -> dict[str, list[str]]:
+        """Run the split under one seed and return its file assignment."""
         out = tmp_path / f"out_{seed}"
         return split_coco_dataset(
             str(input_dir),
@@ -394,6 +454,7 @@ def test_dataset_split_deterministic_with_seed(tmp_path: Path) -> None:
 
 
 def test_dataset_split_sizes_match_ratios(tmp_path: Path) -> None:
+    """Split sizes follow the configured ratios."""
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     for i in range(10):
@@ -418,6 +479,7 @@ def test_dataset_split_sizes_match_ratios(tmp_path: Path) -> None:
 
 
 def test_dataset_split_writes_combined_annotation_files(tmp_path: Path) -> None:
+    """Each split gets one combined annotation file rather than per-image files."""
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     for i in range(4):
