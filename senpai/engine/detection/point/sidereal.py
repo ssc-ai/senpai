@@ -62,13 +62,23 @@ def estimate_fwhm(
 
     Parameters
     ----------
-    - image (numpy.ndarray): 2D array representing the image.
-    - x_centroid, y_centroid (float): Coordinates of the star's centroid.
-    - box_size (int): Size of the box to extract around the centroid for fitting.
+    image : numpy.ndarray
+        2D array representing the image.
+    x_centroid : float
+        Column coordinate of the star's centroid.
+    y_centroid : float
+        Row coordinate of the star's centroid.
+    box_size : int
+        Size of the box extracted around the centroid for fitting.
+    fwhm_x_guess : float
+        Starting width for the fit along x, in pixels.
+    fwhm_y_guess : float
+        Starting width for the fit along y, in pixels.
 
     Returns
     -------
-    - float: Estimated FWHM.
+    float or None
+        Estimated FWHM, or None when the fit does not converge.
 
     """
     # Extract a small box around the star
@@ -192,19 +202,26 @@ def detect_sources_classic(
 
     Parameters
     ----------
-    - image (numpy.ndarray): 2D array representing the image.
-    - max_sources (int): Maximum number of sources to detect. Defaults to 10.
-    - fwhm (float): Full-width half-maximum of the point sources. Defaults to 5.0.
-    - threshold_sigma (float): Detection threshold in units of background RMS noise. Defaults to 5.0.
-    - sharplo (float): Lower bound on sharpness for source detection.
-    - sharphi (float): Upper bound on sharpness for source detection.
-    - bg_stats: Precomputed (mean, median, std) background statistics; pass
-      this when calling repeatedly on the same image so the sigma-clipped
-      stats are computed once.
+    image : numpy.ndarray
+        2D array representing the image.
+    max_sources : int
+        Maximum number of sources to return, brightest first.
+    fwhm : float
+        Expected full-width half-maximum of a point source, in pixels.
+    threshold_sigma : float
+        Detection threshold, in units of background RMS noise.
+    sharplo : float
+        Lower bound on sharpness, which rejects cosmics and hot pixels.
+    sharphi : float
+        Upper bound on sharpness, which rejects extended sources.
+    bg_stats : tuple of float, optional
+        Precomputed (mean, median, std) background statistics. Pass this when calling
+        repeatedly on the same image so the sigma-clipped stats are computed once.
 
     Returns
     -------
-    - astropy.table.Table: A table containing the detected sources, sorted by brightness.
+    astropy.table.Table
+        The detected sources, sorted by brightness.
 
     """
     # Estimate background statistics with more robust parameters
@@ -235,7 +252,7 @@ def detect_sources_classic(
     return Table()
 
 
-def _estimate_saturation_level(image: np.ndarray, sources) -> float:
+def _estimate_saturation_level(image: np.ndarray, sources: Table) -> float:
     """Robust per-frame saturation level from detected source PEAKS.
 
     Raw uint16 frames clip at 65535; after the row/col-median background
@@ -257,11 +274,11 @@ def _estimate_saturation_level(image: np.ndarray, sources) -> float:
     return sat_level_from_peaks(peaks)
 
 
-def sat_level_from_peaks(peaks) -> float:
-    """Saturation level from a sample of source core peaks (see
-    _estimate_saturation_level for the rationale). Shared with the
-    catalog-star FWHM path, whose star sample suffers the same
-    saturated-pile-at-the-bright-end structure.
+def sat_level_from_peaks(peaks: list[float]) -> float:
+    """Estimate a saturation level from a sample of source core peaks.
+
+    See :func:`_estimate_saturation_level` for the rationale. Shared with the catalog-star
+    FWHM path, whose star sample has the same saturated-pile-at-the-bright-end structure.
     """
     if len(peaks) < 10:
         return float("inf")  # too few sources to identify a saturated population
@@ -278,8 +295,9 @@ def sat_level_from_peaks(peaks) -> float:
 
 
 def _robust_source_fwhm(image: np.ndarray, x: float, y: float, sat_level: float, box_size: int = 21) -> float | None:
-    """Fit-free, saturation-aware FWHM: diameter of the connected above-half-max
-    region around the centroid.
+    """Measure FWHM without fitting: the diameter of the connected above-half-max region.
+
+    Taken around the centroid, so no functional form is assumed.
 
     No Gaussian assumption — the real PSFs here are messy and a curve_fit returns
     garbage (37/42/1.2 px) on them. Rejects saturated cores (peak >= sat_level)
@@ -407,6 +425,19 @@ def _refine_centroid_full_res(
 def extract_point_sources(
     image: ProcessedFitsImage, max_detections: int = 100, min_separation: float = None
 ) -> tuple[StarListImage, float]:
+    """Detect the stars in a sidereal frame and measure the frame's PSF width.
+
+    Two passes. The first finds bright stars and measures a median FWHM from them; the second
+    re-detects using that width, since a detection threshold matched to the actual PSF finds
+    more real sources and fewer artefacts than one matched to a guess.
+
+    When the PSF is fat enough that 2x2 binning still leaves it well sampled, the second pass
+    runs on the binned frame and accepted centroids are re-measured at full resolution -- four
+    times less data to convolve, with no loss of positional accuracy.
+
+    Returns the detected stars and the FWHM in pixels, which is what every downstream kernel
+    is sized from.
+    """
     logger.info("Extracting point sources from image %s", image.metadata.image_id)
 
     # Default FWHM values - more permissive for poor seeing conditions

@@ -33,13 +33,17 @@ def load_senpai_run(json_path: Path | str) -> SenpaiRunResult:
 
 
 def load_jpeg_file(jpeg_file: Path | str) -> ProcessedFitsImage:
-    """Loads a .JPEG file and returns: - grayscale numpy array - metadata header info (as dict)."""
+    """Load a JPEG as a frame. Untested against real sensor output."""
     logger.warning("untested")
     return ProcessedFitsImage.from_file_bytes(jpeg_file.read_bytes(), file_path=str(jpeg_file))
 
 
 def load_dng_file(dng_file: Path | str) -> ProcessedFitsImage:
-    """Loads a .DNG file and returns: - grayscale numpy array - metadata header info (as dict)."""
+    """Load a camera raw (DNG) file as a grayscale frame.
+
+    Demosaiced and converted to luminance, since the detector wants one plane rather than
+    three colour channels.
+    """
     # Open and process the DNG (RAW) file
     with rawpy.imread(dng_file) as raw:
         # Get postprocessed RGB image (demosaiced)
@@ -114,6 +118,11 @@ def load_dng_file(dng_file: Path | str) -> ProcessedFitsImage:
 
 
 def load_fits_files(fits_files: list[Path | str]) -> list[ProcessedFitsImage]:
+    """Load several FITS files, checking they all exist before reading any of them.
+
+    Failing up front means a collect with one missing frame does not get halfway through
+    loading before it stops.
+    """
     fits_files = [Path(f) for f in fits_files]
 
     for fits_file in fits_files:
@@ -128,6 +137,7 @@ def load_fits_files(fits_files: list[Path | str]) -> list[ProcessedFitsImage]:
 
 
 def load_fits_file(fits_file: Path | str) -> ProcessedFitsImage:
+    """Load one FITS file as a frame."""
     logger.info("loading fits file from disk")
     fits_file = Path(fits_file)
 
@@ -138,6 +148,7 @@ def load_fits_file(fits_file: Path | str) -> ProcessedFitsImage:
 
 
 async def load_uploaded_files(fits_files: list[UploadFile]) -> list[ProcessedFitsImage]:
+    """Load frames from an API upload, reading each body into memory rather than to disk."""
     logger.info(f"loading {len(fits_files)} uploaded files")
 
     processed_files = []
@@ -150,6 +161,7 @@ async def load_uploaded_files(fits_files: list[UploadFile]) -> list[ProcessedFit
 
 
 def load_base64_files(base64_files: list[str]) -> list[ProcessedFitsImage]:
+    """Load frames from base64-encoded FITS, as an API request carries them."""
     logger.info(f"loading {len(base64_files)} base64 files")
 
     return [ProcessedFitsImage.from_base64_string(base64_file) for base64_file in base64_files]

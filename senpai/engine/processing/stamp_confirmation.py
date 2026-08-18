@@ -20,6 +20,7 @@ possible).  With 3+ frames, the SNR boost is even stronger.
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import map_coordinates
@@ -27,6 +28,10 @@ from scipy.signal import correlate
 
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
+
+if TYPE_CHECKING:
+    from senpai.engine.detection.streak.sidereal_streak import StreakCandidate
+    from senpai.engine.models.senpai import SiderealFrame
 
 logger = logging.getLogger(__name__)
 
@@ -336,8 +341,8 @@ def confirm_streaks_via_stamps(
 def _confirm_single_candidate(
     ref_image: np.ndarray,
     ref_stars: list[tuple[float, float]],
-    ref_frame,
-    candidate,
+    ref_frame: "SiderealFrame",
+    candidate: "StreakCandidate",
     other_frames_data: list[dict],
     fwhm: float,
     star_mask_radius: float,
@@ -950,8 +955,8 @@ def _find_profile_offset(
 
 
 def _de_multiframe_snr(
-    candidate,
-    ref_frame,
+    candidate: "StreakCandidate",
+    ref_frame: "SiderealFrame",
     other_frames_data: list[dict],
     de_data: dict[int, tuple[np.ndarray, float]],
     senpai_run: SenpaiRun,
@@ -1174,7 +1179,7 @@ def _find_de_peak_near(
     return peak_x, peak_y
 
 
-def _make_unconfirmed(frame, candidate) -> CorrelatedStreak:
+def _make_unconfirmed(frame: "SiderealFrame", candidate: "StreakCandidate") -> CorrelatedStreak:
     """Wrap a single-frame candidate as an unconfirmed CorrelatedStreak."""
     ra = [float(candidate.ra)] if candidate.ra is not None else []
     dec = [float(candidate.dec)] if candidate.dec is not None else []
@@ -1200,7 +1205,7 @@ def _make_unconfirmed(frame, candidate) -> CorrelatedStreak:
     )
 
 
-def _wrap_single_frame(frames_with_streaks) -> list[CorrelatedStreak]:
+def _wrap_single_frame(frames_with_streaks: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Wrap all single-frame candidates as unconfirmed."""
     result = []
     for frame in frames_with_streaks:

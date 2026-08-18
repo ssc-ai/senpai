@@ -2,6 +2,7 @@
 
 import logging
 import math
+from typing import TYPE_CHECKING
 
 from senpai.catalog.runner import query_catalog
 from senpai.core.config import settings
@@ -9,10 +10,20 @@ from senpai.engine.detection.jacobian import wcs_distortion_metrics
 from senpai.engine.models.astrometry import WCSMetadata, WCSModel, WCSStatus
 from senpai.engine.models.starfield import StarField, StarInSpace, StarListSpace
 
+if TYPE_CHECKING:
+    from senpai.engine.models.metadata import ImageMetadata
+    from senpai.engine.models.senpai import FrameShift, SenpaiRun
+
 logger = logging.getLogger(__name__)
 
 
 def shift_wcs(wcs_model: WCSModel, shift_x: float, shift_y: float) -> WCSModel:
+    """Translate a WCS by a pixel offset, returning a new model.
+
+    Only the reference pixel moves: a translation does not change the plate scale, the
+    rotation or the distortion, so CRPIX is the whole of it. The original is left alone,
+    since the source frame keeps its own solution.
+    """
     # Create a new WCSModel by copying the source model and updating CRPIX values
     # Use model_dump() and model_validate() to create a copy with updated values
     wcs_data = wcs_model.model_dump()
@@ -61,6 +72,7 @@ def compute_wcs_distortion_metrics(
 
 
 def catalog_stars_from_wcs(wcs_model: WCSModel, limiting_magnitude: float | None = None) -> StarListSpace:
+    """Query the configured catalog for the stars a solved WCS puts in frame."""
     return query_catalog(wcs_model, faint_lim=limiting_magnitude)
 
 
@@ -112,7 +124,7 @@ def existing_stars_from_wcs(wcs_model: WCSModel, star_list: list[StarInSpace]) -
     return updated_stars
 
 
-def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
+def shift_wcs_by_pixel_shift(senpai_run: "SenpaiRun", frame_shift: "FrameShift") -> None:
     """Shift WCS from a source frame to a target frame using pixel offsets.
 
     Args:
@@ -250,7 +262,7 @@ def scale_wcs_solution(wcs_model: WCSModel, scale_factor: float) -> WCSModel:
 
 
 def filter_catalog_stars_by_radius(
-    catalog_stars: StarListSpace, image_metadata, radius_factor: float | None
+    catalog_stars: StarListSpace, image_metadata: "ImageMetadata", radius_factor: float | None
 ) -> StarListSpace:
     """Filter catalog stars to only include those within a specified radius of the image center.
 
