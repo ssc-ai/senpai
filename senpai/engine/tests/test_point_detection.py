@@ -535,7 +535,7 @@ def test_satellite_threshold_search_matches_daostarfinder() -> None:
 # measure_fwhm_from_catalog_stars: saturation + winged-PSF behavior
 # ---------------------------------------------------------------------------
 def test_catalog_fwhm_skips_clipped_stars_and_measures_truth():
-    # A field with a saturated pile (clipped cores) plus unsaturated stars -> None:
+    # A field with a saturated pile (clipped cores) plus unsaturated stars -> None -> None:
     # the measured FWHM must come from the unsaturated cohort and match the
     # true PSF width — the old Gaussian-fit path measured only the faintest
     # stars (broken catalog-sample sat level) and read ~1.5x wide.

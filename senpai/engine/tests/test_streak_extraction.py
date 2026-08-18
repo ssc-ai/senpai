@@ -156,7 +156,7 @@ class TestStreakCenterExtraction:
 
     def test_noise_field_respects_caps_and_separation(self):
         # Pure noise legitimately yields 3-sigma matched-filter maxima (by
-        # design — astrometry rejects them); what must hold is the contract -> None:
+        # design — astrometry rejects them); what must hold is the contract -> None -> None:
         # bounded count and pairwise minimum separation.
 
         rng = np.random.default_rng(9)

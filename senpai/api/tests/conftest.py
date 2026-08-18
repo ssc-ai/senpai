@@ -51,7 +51,7 @@ class _InlineExecutor:
 
 
 @pytest.fixture
-def patched_app_env(monkeypatch):
+def patched_app_env(monkeypatch: pytest.MonkeyPatch):
     """Neutralize all host-touching startup work in senpai.api.main."""
     monkeypatch.setattr(main_mod, "test_astrometry_install", lambda *a, **k: True)
     monkeypatch.setattr(main_mod, "examine_indices", lambda *a, **k: True)

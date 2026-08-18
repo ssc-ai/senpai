@@ -54,7 +54,7 @@ def test_remove_border_crossing_removes_only_border_seeded_blobs() -> None:
 
 
 def test_flood_fill_is_bounded_on_fully_connected_frame():
-    # Every pixel is above threshold (mimics a frame bridged by a dead line) -> None:
+    # Every pixel is above threshold (mimics a frame bridged by a dead line) -> None -> None:
     # an unbounded flood fill would traverse all 360k pixels; the bounded
     # default must cap it well below that.
     img = np.full((600, 600), 1000.0)
