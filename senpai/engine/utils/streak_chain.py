@@ -11,13 +11,27 @@ and refinement kernels both inherit the corrected model.
 
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import (
+        RateTrackFrame,
+        RateTrackFrameSerializable,
+        SenpaiRun,
+        SenpaiRunResult,
+    )
+
+    #: These helpers run on a live run and on one loaded back from JSON -- the coco export
+    #: reconciles a deserialized run -- so each accepts either form.
+    RunLike = SenpaiRun | SenpaiRunResult
+    FrameLike = RateTrackFrame | RateTrackFrameSerializable
 
 logger = logging.getLogger(__name__)
 
 
-def _timestamp(frame):
+def _timestamp(frame: "FrameLike") -> datetime | None:
     ts = getattr(frame, "timestamp", None)
     if ts is None:
         return None
@@ -29,7 +43,7 @@ def _timestamp(frame):
     return ts
 
 
-def _exposure_seconds(frame) -> float | None:
+def _exposure_seconds(frame: "FrameLike") -> float | None:
     md = getattr(frame, "frame_metadata", None)
     exp = getattr(md, "exposure_time_seconds", None) if md is not None else None
     if exp is None and isinstance(md, dict):
@@ -37,7 +51,7 @@ def _exposure_seconds(frame) -> float | None:
     return float(exp) if exp else None
 
 
-def chain_drift_rates(senpai_run) -> list[tuple[float, float]]:
+def chain_drift_rates(senpai_run: "RunLike") -> list[tuple[float, float]]:
     """Drift rate vectors (px/s) from the accepted hops of a run.
 
     Works on both live SenpaiRun objects and serialized SenpaiRunResult
@@ -67,7 +81,7 @@ def chain_drift_rates(senpai_run) -> list[tuple[float, float]]:
 
 
 def reconcile_streak_with_chain(
-    frame,
+    frame: "FrameLike",
     rates: list[tuple[float, float]],
     length_tolerance: float = 0.5,
     angle_tolerance_deg: float = 25.0,
@@ -134,7 +148,9 @@ def reconcile_streak_with_chain(
     return None
 
 
-def reconcile_run_streaks(senpai_run, length_tolerance: float = 0.5, angle_tolerance_deg: float = 25.0) -> int:
+def reconcile_run_streaks(
+    senpai_run: "RunLike", length_tolerance: float = 0.5, angle_tolerance_deg: float = 25.0
+) -> int:
     """Reconcile every rate frame of a (possibly serialized) run in memory.
 
     Used at coco-export time so training labels get physical streak geometry

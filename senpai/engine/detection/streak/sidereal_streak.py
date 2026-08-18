@@ -25,6 +25,7 @@ Pipeline
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.stats import sigma_clipped_stats
@@ -37,6 +38,9 @@ from scipy.optimize import curve_fit
 from senpai.engine.detection.kernels import build_directional_filter_bank, streak_matched_kernel
 from senpai.engine.detection.streak.masking import analyze_source_shape_fwhm
 from senpai.engine.models.starfield import StarField
+
+if TYPE_CHECKING:
+    from senpai.engine.photometry.color_terms import MultiBandCalibration
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +286,7 @@ def _characterize_component(
 # ---------------------------------------------------------------------------
 
 
-def _gauss1d(x, amp, mu, sig, bg):
+def _gauss1d(x: np.ndarray, amp: float, mu: float, sig: float, bg: float) -> np.ndarray:
     return amp * np.exp(-((x - mu) ** 2) / (2 * sig**2)) + bg
 
 
@@ -1139,8 +1143,11 @@ def detect_streaks_in_sidereal(
     ]
 
     def _is_excluded_star_streak(candidate: StreakCandidate) -> bool:
-        """Candidate is a star trail (rate frames): matches the tracking angle
-        and either the approximate trail length or a star on its axis.
+        """Whether a candidate is a star trail rather than a satellite.
+
+        On a rate-tracked frame the stars trail, so a candidate matching the tracking angle
+        and either the expected trail length or a catalog star on its axis is a star, not a
+        target.
         """
         if exclude_angle_deg is None or not exclude_length_pixels:
             return False
@@ -1384,7 +1391,7 @@ def detect_streaks_in_sidereal(
 
 
 def measure_streak_candidate_photometry(
-    image,
+    image: np.ndarray,
     candidates: list[StreakCandidate],
     zero_point: float,
     zero_point_err: float | None = None,
@@ -1392,7 +1399,7 @@ def measure_streak_candidate_photometry(
     fwhm: float = 4.0,
     gain: float = 1.0,
     read_noise: float = 0.0,
-    multiband_calibration=None,
+    multiband_calibration: "MultiBandCalibration | None" = None,
     observation_filter: str | None = None,
 ) -> None:
     """Measure photometry for streak candidates using rectangular apertures.

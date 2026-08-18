@@ -60,6 +60,8 @@ def angular_difference(angle1: float, angle2: float) -> float:
 
 
 class StreakMeasurement(BaseModel):
+    """One streak measurement: its rotation, length and width."""
+
     rotation: float
     length: float
     fwhm: float | None = None
@@ -73,6 +75,13 @@ class StreakMeasurement(BaseModel):
 
 
 class StreakMeasurements(BaseModel):
+    """The same streak measured several independent ways, so they can be combined.
+
+    Each source has a different failure mode -- header rates are wrong if the mount lied,
+    cross-correlation fails on a sparse field, direct extraction fails on a faint trail --
+    so keeping them separate and combining at the end is more robust than trusting one.
+    """
+
     header: StreakMeasurement | None = None
     cross_correlation: StreakMeasurement | None = None
     frame_extraction: StreakMeasurement | None = None
@@ -84,6 +93,11 @@ class StreakMeasurements(BaseModel):
     def filtered_results(
         self,
     ) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+        """Collect the measurements that were actually made, with their weights.
+
+        Returns rotations, lengths, FWHMs and the two weight lists, each holding only the
+        sources that produced a value.
+        """
         # Get all non-None values for each attribute
         frames = [
             self.header,
@@ -111,6 +125,7 @@ class StreakMeasurements(BaseModel):
         return rotations, lengths, fwhms, filtered_weights, fwhm_weights
 
     def mean_measurement(self) -> StreakMeasurement:
+        """Weighted mean across the available measurements."""
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 
         # Apply weighted average if we have values
@@ -144,6 +159,11 @@ class StreakMeasurements(BaseModel):
         )
 
     def median_measurement(self) -> StreakMeasurement:
+        """Weighted median across the available measurements.
+
+        Preferred over the mean when one source may be badly wrong rather than merely
+        noisy, since a single outlier cannot drag a median.
+        """
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 
         # For weighted median, we'll use a simple implementation

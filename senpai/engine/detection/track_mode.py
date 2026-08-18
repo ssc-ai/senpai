@@ -25,10 +25,14 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from astropy.io import fits
 from scipy import ndimage
+
+if TYPE_CHECKING:
+    from senpai.core.config import AppConfig
 
 from senpai.core.config import get_config, initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
@@ -171,7 +175,7 @@ def infer_track_mode_from_image(data: np.ndarray, max_sources: int = _MAX_SOURCE
     return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, len(elongs), med_elong, pa_align)
 
 
-def _header_trkmode(header, mode_keys) -> TrackMode | None:
+def _header_trkmode(header: dict[str, Any], mode_keys: list[str]) -> TrackMode | None:
     """Explicit, unambiguous TRKMODE from the header, or None."""
     for k in mode_keys:
         v = extract_header_value(header, k)
@@ -188,7 +192,9 @@ def _header_trkmode(header, mode_keys) -> TrackMode | None:
     return None
 
 
-def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
+def classify_track_mode(
+    header: dict[str, Any], data: np.ndarray | None = None, config: AppConfig | None = None
+) -> TrackModeDecision:
     """Classify a frame sidereal vs rate, cheapest evidence first (see module docstring).
 
     ``data`` (the 2-D image) enables the pixel arbiter; omit it to stay metadata-only.
@@ -244,7 +250,7 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
 # CLI: classify a frame and show each tier's evidence
 #   python -m senpai.engine.detection.track_mode <fits...> [--from-data] [--raw]
 # --------------------------------------------------------------------------
-def _main(argv=None) -> int:
+def _main(argv: list[str] | None = None) -> int:
 
     p = argparse.ArgumentParser(
         description="Classify a frame sidereal-vs-rate and show every tier's "

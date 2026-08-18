@@ -6,10 +6,14 @@ for multiple target photometric bands using sigma-clipped linear regression.
 
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.engine.models.starfield import StarField
+
+if TYPE_CHECKING:
+    from senpai.core.config import PhotometryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,8 @@ class ColorTermFit:
     rms_residual: float
     clipped_fraction: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the fitted coefficients to the precision they actually carry."""
         self.zero_point = round(self.zero_point, 3)
         self.zero_point_err = round(self.zero_point_err, 4)
         self.color_coefficient = round(self.color_coefficient, 4)
@@ -47,7 +52,8 @@ class BandCalibration:
     color_term: ColorTermFit | None = None
     method: str = "simple"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the calibration to the precision it actually carries."""
         self.zero_point = round(self.zero_point, 3)
         self.zero_point_err = round(self.zero_point_err, 4)
 
@@ -168,7 +174,7 @@ def calculate_multiband_calibration(
     results: list,
     starfield: StarField,
     target_bands: list[str],
-    config,
+    config: "PhotometryConfig",
     observation_filter: str | None = None,
 ) -> MultiBandCalibration | None:
     """Calculate zero points with color corrections for multiple target bands.

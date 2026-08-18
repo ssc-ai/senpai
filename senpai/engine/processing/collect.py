@@ -18,7 +18,7 @@ from senpai.engine.detection.streak.frame_shift import (
 )
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import SeeingModel, TrackMode
-from senpai.engine.models.senpai import RateTrackFrame, SenpaiRun, SiderealFrame
+from senpai.engine.models.senpai import CorrelatedStreak, RateTrackFrame, SenpaiRun, SiderealFrame
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 from senpai.engine.photometry.utils import (
     measure_detection_photometry,
@@ -764,7 +764,7 @@ def _process_senpai_collect(
                 fwhm = frame.starfield.detection_metadata.pixel_fwhm
             radius = 2 * fwhm
 
-            def _near_streak(d, s) -> bool:
+            def _near_streak(d: SatelliteInImage, s: CorrelatedStreak) -> bool:
                 # Distance from the point to the streak SEGMENT (not just its
                 # center) so detections anywhere along the streak are caught.
                 dx, dy = d.x - s.x, d.y - s.y
@@ -801,7 +801,7 @@ def _process_senpai_collect(
     return senpai_run
 
 
-def _write_sequence_gif(image_paths: list, gif_path) -> None:
+def _write_sequence_gif(image_paths: list, gif_path: Path) -> None:
     """Write a per-frame animation, padding frames to a common shape first.
 
     Mixed sidereal/rate batches render their ``final_*`` plots at different pixel
@@ -830,8 +830,11 @@ def _write_sequence_gif(image_paths: list, gif_path) -> None:
         logger.warning(f"Skipping animation {gif_path}: {e}")
 
 
-def final_plots(senpai_run: SenpaiRun, output_dir: Path):
+def final_plots(senpai_run: SenpaiRun, output_dir: Path) -> None:
+    """Render the run's end-of-collect diagnostics: PSF panels, overlays and the sequence GIF.
 
+    Everything here is gated on plotting config, so a production run does none of it.
+    """
     run_id = settings.runtime.run_id
 
     # Per-frame empirical PSF panels (stacked stars for sidereal, stacked streak
