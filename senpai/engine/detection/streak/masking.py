@@ -695,8 +695,10 @@ def remove_border_crossing_streaks_pairwise(
     broken pair.
 
     Args:
-        image_a, image_b: The two frames (modified in place, same shape).
-        drift_dx, drift_dy: Expected inter-frame drift vector (sign-agnostic).
+        image_a: First frame of the pair (modified in place).
+        image_b: Second frame of the pair, same shape (modified in place).
+        drift_dx: Expected inter-frame x drift, in pixels (sign-agnostic).
+        drift_dy: Expected inter-frame y drift, in pixels (sign-agnostic).
         pad_px: Isotropic dilation of the counterpart fills, absorbing drift
             estimate error.
 
