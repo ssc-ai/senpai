@@ -52,23 +52,28 @@ class ExecutedCommand(BaseModel):
 
     @property
     def is_collection(self) -> bool:
+        """Whether this command actually took frames, as opposed to slewing or calibrating."""
         return self.command in COLLECTION_COMMANDS
 
     @property
     def observation_time(self) -> datetime | None:
+        """When the frames were taken, or None if the command did not record it."""
         return _parse_iso(self.metadata.get("observation_time"))
 
     @property
     def tracking_modes(self) -> list[str]:
+        """Track modes used, which is what says whether a collect mixed rate and sidereal."""
         return list(self.metadata.get("tracking_modes", []))
 
     @property
     def exposure_time(self) -> float | None:
+        """Single exposure time, for commands that took one length of frame."""
         v = self.metadata.get("exposure_time")
         return float(v) if v is not None else None
 
     @property
     def exposure_times(self) -> list[float]:
+        """Every exposure time used, for commands that varied it within one collect."""
         return [float(x) for x in self.metadata.get("exposure_times", [])]
 
     @property
@@ -86,6 +91,8 @@ class ExecutedCommand(BaseModel):
 
 
 class SiteConfig(BaseModel):
+    """Where the telescope is, which is what alt/az and Moon geometry are computed from."""
+
     model_config = ConfigDict(extra="ignore")
     name: str | None = None
     latitude: float | None = None
@@ -105,6 +112,12 @@ class RunConfig(BaseModel):
 
 
 class LightingSchedule(BaseModel):
+    """The night's darkness and Moon windows, as the scheduler computed them.
+
+    Recorded rather than recomputed, so an analysis sees the same night boundaries the run
+    was planned against.
+    """
+
     model_config = ConfigDict(extra="allow")
     night_start: str | None = None
     night_end: str | None = None
@@ -135,9 +148,10 @@ class RunState(BaseModel):
 
     @classmethod
     def load(cls, path: str | Path) -> RunState:
-
+        """Read a run state from its JSON file."""
         text = Path(path).read_text()
         return cls.model_validate_json(text)
 
     def collection_commands(self) -> list[ExecutedCommand]:
+        """Just the commands that took frames, in the order they ran."""
         return [c for c in self.executed_commands if c.is_collection]

@@ -9,15 +9,26 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 from pstats import SortKey
+from typing import TYPE_CHECKING, TypeVar
 
 import yaml
 
-from senpai.core.config import settings
+from senpai.core.config import AppConfig, settings
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from senpai.engine.models.senpai import SenpaiRunSummary
+    from senpai.engine.photometry.utils import SimplePhotometryResult, SimplePhotometrySummary
 
 logger = logging.getLogger(__name__)
 
+#: A profiled call returns exactly what the wrapped callable returned, so the wrapper is
+#: generic in that type rather than typed Any.
+T = TypeVar("T")
 
-def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
+
+def save_run_metadata(output_dir: Path, module_name: str, config: AppConfig) -> None:
     """Save command.txt and config.yaml to output_dir for reproducibility."""
     output_dir = Path(output_dir)
 
@@ -51,7 +62,7 @@ _QUICKLOOK_PHOTOMETRY_DROP = frozenset(
 )
 
 
-def write_frame_quicklooks(summary, output_dir: Path) -> None:
+def write_frame_quicklooks(summary: "SenpaiRunSummary", output_dir: Path) -> None:
     """Write compact per-frame quick-look JSONs (frame_{index}_{mode}.json).
 
     Takes a SenpaiRunSummary: each frame gets its FrameSummary (detections,
@@ -68,11 +79,11 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
     logger.info("Wrote %d per-frame quick-look JSONs", len(summary.frames))
 
 
-def profile_run(func, *args, run_id: str = "profile", **kwargs):
-    """Generic profiling wrapper.
+def profile_run(func: "Callable[..., T]", *args: object, run_id: str = "profile", **kwargs: object) -> T:
+    """Run a callable under cProfile and write its top-30 cumulative stats beside the output.
 
-    Runs func(*args, **kwargs) under cProfile, saves top-30 stats to
-    output_dir/profile_{run_id}.txt, returns func's result.
+    Returns whatever the callable returned, so wrapping a call in this changes nothing but
+    the presence of a profile_{run_id}.txt afterwards.
     """
     pr = cProfile.Profile()
     pr.enable()
@@ -93,7 +104,9 @@ def profile_run(func, *args, run_id: str = "profile", **kwargs):
     return result
 
 
-def serialize_photometry_to_json(results, summary, output_path: Path) -> None:
+def serialize_photometry_to_json(
+    results: "list[SimplePhotometryResult]", summary: "SimplePhotometrySummary", output_path: Path
+) -> None:
     """Serialize photometry results + summary to JSON.
 
     Uses dataclasses.asdict for summary, result.star.model_dump() for Pydantic models.

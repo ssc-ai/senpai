@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -60,9 +60,11 @@ _ORPHAN_CLUSTER_GAP_S: float = 60.0
 
 
 def _utc_offset(run_state: RunState) -> timedelta:
-    """Best-effort UTC offset for the site, used to label observing nights by
-    their evening-local date the way burr does. Prefer the tz baked into
-    ``observation_date``; fall back to longitude/15; default to UTC.
+    """Best-effort UTC offset for the site, for labelling nights by evening-local date.
+
+    A night spans midnight UTC, so naming it by UTC date splits one night across two labels.
+    Prefers the timezone baked into ``observation_date``, falls back to longitude/15, and
+    defaults to UTC.
     """
     od = run_state.observation_date
     if od:
@@ -94,8 +96,10 @@ _NIGHT_DIR_RE = re.compile(r"^(?P<sensor>[A-Za-z][A-Za-z0-9-]*)_(?P<date>\d{8})$
 
 @dataclass(slots=True)
 class FrameRecord:
-    """One FITS frame located in the sensor data dir, enriched with what we
-    could learn from the filename + run_state command log.
+    """One FITS frame on disk, plus whatever could be worked out about it.
+
+    Enriched from the filename and the run_state command log, which is what turns a
+    directory of files back into the collection events that produced them.
     """
 
     path: Path
@@ -113,10 +117,12 @@ class FrameRecord:
 
     @property
     def timestamp(self) -> datetime | None:
+        """When the frame was taken, as parsed from its filename."""
         return self.parsed.timestamp
 
     @property
     def task(self) -> str | None:
+        """What the frame was taken for -- calsats, coverage, photometric standards."""
         return self.parsed.task
 
 
@@ -134,10 +140,12 @@ class FrameBatch:
 
     @property
     def paths(self) -> list[Path]:
+        """The batch's frame paths, which is what the collect pipeline takes."""
         return [f.path for f in self.frames]
 
     @property
     def has_intended_rate_frames(self) -> bool:
+        """Whether any frame was meant to be rate-tracked, which decides how the batch runs."""
         return any(f.intended_tracking_mode == "rate" for f in self.frames)
 
     @property
@@ -330,10 +338,11 @@ class BurrNight(BaseModel):
         attribution_window_s: float = _DEFAULT_ATTRIBUTION_WINDOW_S,
         seq_key: str | None = None,
     ) -> list[FrameRecord]:
-        """Scan the sensor data dir for FITS files, keep those whose filename
-        timestamp lands in the night window, and attribute each to a logged
-        command when possible. UUID-style filenames are kept but not attributed
-        here (header-based resolution is a separate, deferred concern).
+        """Find the night's frames on disk and attribute each to the command that took it.
+
+        Keeps FITS files whose filename timestamp lands in the night window. UUID-style
+        filenames are kept but not attributed here, since resolving those needs the headers
+        and that is deferred.
 
         When ``seq_key`` is given, each kept frame's ``seq_id`` is read from that
         FITS header keyword (via the shared
@@ -495,10 +504,11 @@ class BurrNight(BaseModel):
             )
 
     def _emit_command_and_orphan_batches(self, records: list[FrameRecord]) -> Iterator[FrameBatch]:
-        """Batch frames from the run_state command log where available, and
-        otherwise by clustering orphan frames per ``(task, pointing)`` and time
-        proximity. UUID-named / unparseable frames emit as singletons so they
-        aren't dropped.
+        """Group frames into batches, from the command log where possible and by clustering otherwise.
+
+        Orphan frames are clustered on ``(task, pointing)`` and time proximity. UUID-named or
+        unparseable frames are emitted as singletons rather than dropped -- a frame nobody can
+        attribute is still a frame that was taken.
         """
         # First pass: group by command identity.
         by_command: dict[int, list[FrameRecord]] = {}
@@ -568,10 +578,11 @@ class BurrNight(BaseModel):
 def _cluster_by_time_gap(
     records: list[FrameRecord],
     gap_s: float,
-    key=None,
+    key: Callable[[FrameRecord], str | None] | None = None,
 ) -> Iterator[list[FrameRecord]]:
-    """Greedy walk: start a new cluster whenever the gap to the previous
-    record's timestamp exceeds gap_s. Assumes records are sorted by timestamp.
+    """Cluster time-sorted records, breaking whenever the gap exceeds ``gap_s``.
+
+    A greedy single pass; assumes records are already sorted by timestamp.
 
     With ``key`` (a record → pointing-id callable) a cluster also breaks when
     the pointing id changes between adjacent frames — so command-less nights,
@@ -603,8 +614,10 @@ def _cluster_by_time_gap(
 
 
 def _infer_intended_modes(frames: list[FrameRecord]) -> None:
-    """Fill in ``intended_tracking_mode`` for frames the header + command log
-    left ambiguous, using burr's collection conventions.
+    """Infer the intended track mode for frames the header and command log left ambiguous.
+
+    Uses the collection conventions rather than the headers, because the headers are what
+    is wrong in these cases.
 
     Currently handles the calsat trailing-sidereal anchor: a calsat set is
     3 rate frames + a trailing **sidereal** frame, but burr writes

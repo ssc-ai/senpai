@@ -20,11 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 class FitsImage(BaseModel, arbitrary_types_allowed=True):
+    """A frame straight off disk: pixels and header, nothing done to them yet."""
+
     data: np.ndarray
     header: fits.Header
 
 
 class ProcessingStep(Enum):
+    """The calibration steps a frame can have had applied.
+
+    Recorded on the frame so a step can tell whether it has already run.
+    """
+
     DARK_SUBTRACT = "dark_subtract"
     FLAT_DIVIDE = "flat_divide"
     BACKGROUND_SUBTRACT = "background_subtract"
@@ -34,11 +41,25 @@ class ProcessingStep(Enum):
 
 
 class ProcessingMetadata(BaseModel):
+    """One applied step and the parameters it ran with.
+
+    The parameters are kept because a step is only reproducible with them: a background
+    subtraction at one box size is not the same operation as at another.
+    """
+
     step_type: ProcessingStep
     parameters: dict[str, float | str | int]  # Store relevant parameters for each step
 
 
 class ProcessedFitsImage(BaseModel):
+    """A frame partway through calibration, carrying the record of what has been done.
+
+    Holds the working pixels alongside the originals and any intermediate correction frames,
+    so a step can be inspected or undone rather than only trusted. ``processing_history`` is
+    what every calibration step checks before running, which is what makes the pipeline safe
+    to re-enter on a frame someone already partly calibrated.
+    """
+
     # The processed image data
     data: np.ndarray
 
@@ -71,6 +92,8 @@ class ProcessedFitsImage(BaseModel):
     processed_file_path: str | None = None
 
     class Config:
+        """Pydantic settings: numpy arrays and FITS headers are not pydantic-native."""
+
         arbitrary_types_allowed = True  # Needed for numpy arrays
 
     def scale_frame(self, scale_factor: float, method: str = "block_median") -> None:
@@ -194,6 +217,13 @@ class ProcessedFitsImage(BaseModel):
     def from_fits(
         cls, fits_file: fits.ImageHDU | fits.PrimaryHDU, file_path: str | None = None
     ) -> "ProcessedFitsImage":
+        """Build a frame from an open FITS HDU.
+
+        Exposure time is looked for under several keywords, since sensors disagree on which
+        one carries it. A frame with none is still returned -- the exposure is needed to turn
+        counts into a rate, not to detect anything -- but the header keys that looked related
+        are logged, because that is what someone diagnosing the omission will want.
+        """
         # Extract exposure time from header
         exposure_time = None
         for key in ["EXPTIME", "EXPOSURE", "TELAPSE"]:
@@ -223,10 +253,12 @@ class ProcessedFitsImage(BaseModel):
 
     @classmethod
     def from_file_bytes(cls, file_bytes: bytes, file_path: str | None = None) -> "ProcessedFitsImage":
+        """Build a frame from FITS bytes, for callers holding a file they never wrote to disk."""
         hdul = fits.open(BytesIO(file_bytes))
         return cls.from_fits(hdul[0], file_path=file_path)
 
     @classmethod
     def from_base64_string(cls, base64_string: str) -> "ProcessedFitsImage":
+        """Build a frame from a base64-encoded FITS file, as the API receives them."""
         file_bytes = base64.b64decode(base64_string)
         return cls.from_file_bytes(file_bytes)
