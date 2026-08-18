@@ -6,6 +6,8 @@ that mapping by finite difference at a pixel and turn it into the streak vector,
 convolution kernel appropriate to that position.
 """
 
+import logging
+
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -13,6 +15,8 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import pixel_to_skycoord, skycoord_to_pixel
 
 from senpai.engine.detection.kernels import rectangle_pyramoid
+
+logger = logging.getLogger(__name__)
 
 
 def local_jacobian(wcs: WCS, x: float, y: float, dsky: u.Quantity = 1 * u.arcsec) -> np.ndarray:
@@ -329,7 +333,9 @@ def get_local_streak_kernel(
         width_local = base_width
 
     if verbose:
-        print(
+        # info, not debug: the caller passed verbose=True, so this was asked for explicitly
+        # and should not then be filtered out by log level.
+        logger.info(
             f"Local streak kernel at ({x:.1f}, {y:.1f}): "
             f"length={length_local:.2f} px, width={width_local:.2f} px, angle={np.rad2deg(angle_local):.2f} deg"
         )

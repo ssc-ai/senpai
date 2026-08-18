@@ -1914,7 +1914,7 @@ def extract_streak_dims_mapping(
         length=np.median([s["length"] for s in characteristic_streaks]),
         fwhm=np.median([s["fwhm_minor"] for s in characteristic_streaks]),
     )
-    print(streak_measurement)
+    logger.debug(f"streak measurement from mapping: {streak_measurement}")
 
     # Create and return the StreakMeasurement object
 

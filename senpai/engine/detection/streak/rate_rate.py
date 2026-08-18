@@ -1,3 +1,17 @@
+"""Register two rate-track frames against each other, when neither one is sidereal.
+
+The ordinary path anchors a rate frame's WCS against a solved sidereal frame. A collect that
+never took a sidereal exposure -- or whose sidereal frame was clouded out -- has no such anchor,
+and this module is what keeps propagation alive: it cross-correlates the two rate frames
+directly and turns the peak into a pixel shift, which the caller then applies to carry the WCS
+across.
+
+The correlation is done on whitened, downsampled frames. Whitening flattens the power spectrum
+so the peak is driven by structure rather than by the brightest few stars; downsampling sheds
+PSF oversampling that costs time without adding information. Neither has to be precise, because
+a coarse shift is enough -- the catalog-star match afterwards is what pins it to sub-pixel.
+"""
+
 import logging
 
 import matplotlib.pyplot as plt
@@ -38,6 +52,16 @@ logger = logging.getLogger(__name__)
 
 
 def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> None:
+    """Remove the brightest streaks until the two frames' peak brightnesses agree.
+
+    A streak present in one frame and not the other correlates against noise and drags the
+    peak off the true shift. Comparing the 99.99th percentile of each frame is a cheap test
+    for that asymmetry; while it exceeds 20 percent, the brighter frame's brightest streak
+    is erased and the test repeats, up to five times.
+
+    Falling out of the loop still unbalanced is logged as a warning rather than treated as
+    fatal -- the correlation may still find the shift, just less reliably.
+    """
     max_r1 = np.percentile(rate1_img, 99.99)
     max_r2 = np.percentile(rate2_img, 99.99)
     pdthresh = 20.0
@@ -48,7 +72,7 @@ def strip_unbalanced_streaks(rate1_img: np.ndarray, rate2_img: np.ndarray) -> No
     while pd > pdthresh and attempts < max_attempts:
         attempts += 1
         logger.info(f"percent difference {pd:.1f}% is greater than threshold of {pdthresh:.1f}%")
-        print(max_r1, max_r2)
+        logger.debug(f"peak brightness rate1={max_r1:.1f} rate2={max_r2:.1f}")
 
         if max_r1 > max_r2:
             logger.info("removing near-saturation streak in rate1")
@@ -76,6 +100,13 @@ def refine_correlation_shift_by_global_shift(
     streak: StreakMetadata,
     shift: np.ndarray,
 ) -> np.ndarray:
+    """Correct a correlation shift for the two frames' own streak motion.
+
+    A cross-correlation between two rate-track frames locks onto the streaks, which have
+    themselves moved between exposures. The measured peak is therefore the frame-to-frame
+    shift plus that motion; subtracting the streak displacement leaves the shift the WCS
+    propagation actually wants.
+    """
     src_streak = rate_frame_source.streak
     if src_streak is None or src_streak.pixel_length is None or src_streak.fwhm is None:
         # No streak model on the source frame (failed extraction) — the
@@ -128,7 +159,17 @@ def refine_correlation_shift_by_global_shift(
     return np.array([shift[0] - x_shift, shift[1] - y_shift])
 
 
-def whiten_image(im, sigma=3, eps=1e-6):
+def whiten_image(im: np.ndarray, sigma: float = 3, eps: float = 1e-6) -> np.ndarray:
+    """Flatten an image's power spectrum, so correlation is driven by structure not brightness.
+
+    Divides each Fourier component by the square root of a smoothed power spectrum. Without
+    this, a cross-correlation peak is dominated by the handful of brightest sources; with
+    it, every spatial frequency contributes about equally and the peak reflects the frames'
+    shared structure.
+
+    ``sigma`` smooths the power spectrum before dividing, so the whitening does not simply
+    cancel the signal it is meant to normalize; ``eps`` keeps the division away from zero.
+    """
     # scipy.fft is the same pocketfft as numpy's but multithreaded with
     # workers — identical values, several times faster on full frames.
 
@@ -150,9 +191,11 @@ def whiten_image(im, sigma=3, eps=1e-6):
 
 
 def _block_median_downsample(img: np.ndarray, factor: int) -> np.ndarray:
-    """Downsample by f×f block MEDIAN (not mean) — robust to hot pixels / cosmics
-    that would otherwise spike the whitened cross-correlation. Trailing
-    rows/cols that don't fill a block are dropped.
+    """Downsample by f×f block median rather than mean.
+
+    The median is robust to hot pixels and cosmics, which would otherwise spike the
+    whitened cross-correlation. Trailing rows and columns that don't fill a block are
+    dropped.
     """
     if factor <= 1:
         return img
@@ -168,10 +211,11 @@ def cc_downsample_factor(
     target_fwhm: float = 3.0,
     min_side: int = 512,
 ) -> int:
-    """Downsample factor for the coarse cross-correlation, chosen by information
-    content: shed PSF oversampling down to ~target_fwhm px (FWHM 12 → factor 4),
-    with a size floor so small frames (e.g. 512²) are left at full resolution. The
-    shift only needs to be coarse — the catalog-star match refines to sub-pixel.
+    """Choose a downsample factor for the coarse cross-correlation, by information content.
+
+    Sheds PSF oversampling down to about ``target_fwhm`` pixels (FWHM 12 gives factor 4),
+    with a size floor so small frames (512² say) are left at full resolution. The shift
+    only needs to be coarse — the catalog-star match refines it to sub-pixel.
     """
     if not fwhm or fwhm <= target_fwhm:
         return 1
@@ -182,8 +226,18 @@ def cc_downsample_factor(
 
 
 def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFrame, frame_shift: FrameShift) -> None:
-    # Return the modified object
+    """Solve the pixel shift between two rate-track frames and record it on ``frame_shift``.
 
+    Only the SOURCE frame needs a solved starfield: this reads its catalog stars for
+    correlation masking and shift validation. The target's starfield is the *output* of the
+    shift, built downstream, so a target with ``starfield=None`` is the normal pre-solve
+    state rather than an error.
+
+    Mutates ``frame_shift`` in place and returns None. A source with no WCS at all (a fully
+    clouded frame) marks the shift processed-but-invalid rather than leaving it untouched --
+    the caller's loop pulls the next *unprocessed* shift, so returning without setting the
+    flag hands back the same shift forever.
+    """
     # Only the SOURCE frame needs a starfield: this solver reads
     # rate_frame_a.starfield.catalog_stars for cross-correlation masking and shift
     # validation (and would AttributeError on None), then the caller propagates
