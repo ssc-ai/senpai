@@ -1,5 +1,21 @@
+"""Measure a streak's length, rotation and PSF from the pixels it left behind.
+
+Several extractors live here because streaks do not all yield to the same treatment. A short
+streak is close enough to a point source that a matched filter against a synthetic kernel finds
+it (:func:`extract_streak_dims`, :func:`extract_streak_dims_robust`); a streak long enough to
+cross a good fraction of the frame is better mapped by thresholding and walking its connected
+pixels, since a kernel that long is both expensive to convolve and easily thrown off by a bend
+in the trail (:func:`extract_streak_dims_simple_long`, :func:`extract_streak_dims_mapping`).
+Which one runs is chosen by length upstream in the detection flow.
+
+:func:`extract_streak_from_metadata` is the odd one out and never looks at the pixels: given the
+mount's track rates and a solved WCS it predicts what the streak must be, which is what seeds
+the pixel-space searches and what their results are sanity-checked against.
+"""
+
 import logging
 import weakref
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import fft as sfft
@@ -24,12 +40,27 @@ from senpai.engine.models.metadata import FrameMetadata
 from senpai.engine.models.streak_measurement import StreakMeasurement
 from senpai.engine.utils.stats import fft_workers
 
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+
 logger = logging.getLogger(__name__)
 
 
 def extract_streak_from_metadata(
     metadata: FrameMetadata, plate_scale_arcsec: float, wcs_model: WCSModel
 ) -> StreakMeasurement | None:
+    """Predict a streak's length and rotation from track rates, without measuring pixels.
+
+    The mount's RA/Dec track rates times the exposure give the trail's length on the sky; the
+    WCS PC matrix rotates that direction into pixel space. Rotation comes back on [0, 180)
+    because a streak carries no direction — the two ends are indistinguishable in one frame
+    — and it is expressed to match the PCA convention the image-space measurements use, so
+    predicted and measured angles are directly comparable.
+
+    Returns None when the frame is not tracking or carries no exposure time, since there is
+    then nothing to predict from. FWHM is left unset: it is a property of the optics and the
+    seeing, not of the track, so only a pixel measurement can supply it.
+    """
     if not metadata.track_rate_dec_arcsec_per_second and not metadata.track_rate_ra_arcsec_per_second:
         return None
 
@@ -83,7 +114,7 @@ def extract_streak_from_metadata(
     )
 
 
-def prepare_rate_frame(rate_frame, padding: float = 0.05) -> np.ndarray:
+def prepare_rate_frame(rate_frame: "RateTrackFrame", padding: float = 0.05) -> np.ndarray:
     """Prepare rate frame for cross-correlation.
 
     Parameters
@@ -119,7 +150,7 @@ def prepare_rate_frame(rate_frame, padding: float = 0.05) -> np.ndarray:
     return rate_data
 
 
-def prepare_sidereal_frame(sidereal_frame, padding: float = 0.05) -> tuple[np.ndarray, bool]:
+def prepare_sidereal_frame(sidereal_frame: "SiderealFrame", padding: float = 0.05) -> tuple[np.ndarray, bool]:
     """Prepare sidereal frame for cross-correlation.
 
     Parameters
@@ -633,6 +664,20 @@ def extract_streak_dims_mapping(
     data: np.ndarray,
     n_streaks: int = 5,
 ) -> tuple[StreakMeasurement, np.ndarray]:
+    """Measure a streak by walking its connected pixels rather than matched-filtering for it.
+
+    Repeatedly takes the brightest remaining pixel, maps the cluster it belongs to, and erases
+    it so the next iteration finds a different source. No kernel is involved, so nothing has to
+    be assumed about length or rotation up front — which is what makes this usable on trails
+    long or bent enough that a straight kernel fits poorly.
+
+    Iterations are capped at ``n_streaks * 5`` so a frame full of noise above the fill
+    threshold cannot spin here indefinitely.
+
+    Returns the best candidate's measurement together with the copy of the image the walked
+    streaks were removed from, which is what downstream photometry wants — the same frame,
+    less the trails.
+    """
     # Make a copy of the data for streak detection
     data_mapped = data.copy()
     # Make another copy for outlier removal only
@@ -885,6 +930,7 @@ def refine_streak_length_by_overhang(
     fwhm: float,
 ) -> float:
     """Refine streak length by detecting overhang at the ends.
+
     Looks for sharp drops in intensity that indicate the streak extends beyond the data.
 
     Args:
@@ -974,8 +1020,10 @@ def extract_streak_dims_simple_long(
     rotation: float = None,
     fwhm: float = 4.0,
 ) -> tuple[StreakMeasurement, np.ndarray, float]:
-    """Extract streak dimensions for very long streaks using a simple threshold-based approach.
-    This method is optimized for streaks longer than ~100 pixels.
+    """Extract streak dimensions for very long streaks by thresholding.
+
+    Optimized for streaks longer than ~100 pixels: a kernel that long is expensive to
+    convolve and fits poorly if the trail bends.
 
     Args:
         data: Input image data
@@ -1160,8 +1208,9 @@ def extract_streak_dims_robust(
     rotation: float = None,
     fwhm: float | None = None,
 ) -> tuple[StreakMeasurement, np.ndarray, float]:
-    """Extract streak dimensions using a robust approach that combines matched filtering,
-    morphological analysis, and statistical validation.
+    """Extract streak dimensions, cross-checking three independent measurements.
+
+    Combines matched filtering, morphological analysis and statistical validation.
 
     Args:
         data: Input image data
@@ -1269,7 +1318,7 @@ def extract_streak_dims_robust(
     # iteration (only the small bounded region is touched). Mutates in place.
     eff_kernel = streak_mask_effective_kernel(mask_kernel)
 
-    def _mask(yy, xx):
+    def _mask(yy: int, xx: int) -> None:
         mask_streak_region(
             processed_mask,
             working_data,
@@ -1582,12 +1631,27 @@ def extract_streak_dims_robust(
 
 
 def extract_streak_dims(
-    data,
-    n_streaks=5,
-    length=None,
-    rotation=None,
+    data: np.ndarray,
+    n_streaks: int = 5,
+    length: float | None = None,
+    rotation: float | None = None,
     fwhm: float = 4.0,
-):
+) -> tuple[float, float, np.ndarray | None]:
+    """Measure a streak by matched-filtering the frame against a kernel of the expected shape.
+
+    Builds a rectangular-pyramid kernel from the seed ``length`` and ``rotation`` (both
+    required in practice — they normally come from :func:`extract_streak_from_metadata`),
+    convolves, then takes candidates from the response in descending order. Bright pixels on
+    the border are erased first: an edge artefact survives convolution as a strong response
+    and would otherwise be picked ahead of the real trail.
+
+    Candidate search stops after 30 attempts, so a frame yielding nothing kernel-shaped
+    terminates instead of scanning the whole response.
+
+    Returns ``(rotation, length, psf)`` with the length refined against the extracted cutout
+    where that succeeded and the seed value passed through where it did not. ``psf`` is None
+    when no candidate produced a usable cutout.
+    """
     logger.info("extracting streak params from image")
 
     kernel = rectangle_pyramoid(
@@ -1778,7 +1842,7 @@ def streak_fwhm_from_cutout(cutout_frame: np.ndarray, rotation: float) -> float:
         return None
 
 
-def streak_length_from_cutout(cutout_frame, plot=True):
+def streak_length_from_cutout(cutout_frame: np.ndarray, plot: bool = True) -> float:
     """Calculate streak length using FWHM-based analysis for robustness."""
     subcc = cutout_frame.copy()
     subcc = subcc.copy() - np.median(subcc)
@@ -2021,7 +2085,7 @@ def measure_gaussian_shift(centered_cutout: np.ndarray) -> tuple[np.ndarray, flo
     x_coords = np.arange(len(x_profile))
 
     # Define 1D Gaussian function
-    def gaussian(x, amplitude, center, sigma, offset):
+    def gaussian(x: np.ndarray, amplitude: float, center: float, sigma: float, offset: float) -> np.ndarray:
         return amplitude * np.exp(-((x - center) ** 2) / (2 * sigma**2)) + offset
 
     # Initial parameter guesses
@@ -2051,7 +2115,7 @@ def measure_gaussian_shift(centered_cutout: np.ndarray) -> tuple[np.ndarray, flo
     return shift, fwhm
 
 
-def estimate_fwhm_from_profiles(x_profile, y_profile):
+def estimate_fwhm_from_profiles(x_profile: np.ndarray, y_profile: np.ndarray) -> float:
     """Estimate FWHM from profiles when curve fitting fails."""
     # Find half-maximum points in both profiles
     half_max = 0.5
@@ -2362,10 +2426,11 @@ def streak_mask_effective_kernel(kernel: np.ndarray, threshold: float = 0.01) ->
 
 
 def _cached_working_bg(working_data: np.ndarray) -> float:
-    """Median background of working_data, cached by array identity (weakref-
-    validated against id reuse). Masking a handful of small regions doesn't shift
-    a 66 MP median, so computing it once per extraction (not ~30x) is exact enough
-    and avoids ~0.8 s/call.
+    """Median background of working_data, cached by array identity.
+
+    The cache is weakref-validated against id reuse. Masking a handful of small regions
+    doesn't shift a 66 MP median, so computing it once per extraction (not ~30x) is exact
+    enough and avoids ~0.8 s/call.
     """
     key = id(working_data)
     ent = _BG_CACHE.get(key)
@@ -2388,9 +2453,11 @@ def mask_streak_region(
     bg_value: float | None = None,
     response: np.ndarray | None = None,
     response_fill: float = -np.inf,
-):
-    """Mask a streak region's area of influence in ``processed_mask`` /
-    ``working_data`` (and optionally a ``response`` map used for peak-finding).
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mask out a streak region so the next candidate search cannot re-pick it.
+
+    Applies to ``processed_mask`` and ``working_data``, and optionally to a ``response``
+    map used for peak-finding.
 
     For speed in the candidate loop, pass a precomputed ``effective_kernel``
     (see :func:`streak_mask_effective_kernel`) and a ``bg_value`` so this routine
@@ -2399,11 +2466,19 @@ def mask_streak_region(
     full-frame boolean array. Results are identical to the old per-call version.
 
     Args:
+        processed_mask: boolean mask of already-consumed pixels; updated in place.
+        working_data: image the candidate search reads; masked pixels are set to background.
+        y_max: row of the region's centre.
+        x_max: column of the region's centre.
+        kernel: streak kernel whose self-convolution bounds the area of influence.
+        threshold: response fraction that counts as influenced, when the effective kernel
+            is computed here.
         effective_kernel: precomputed binary influence area (else computed here).
         bg_value: fill value for masked working_data (else full-frame median).
         response: optional peak-response array to also mask (set to
             ``response_fill``, default -inf, so a masked region won't be re-picked
             by argmax — replaces copying the whole response map each iteration).
+        response_fill: value written into ``response`` for masked pixels.
 
     Returns:
         tuple: (updated_processed_mask, updated_working_data)
@@ -2439,13 +2514,20 @@ def mask_streak_region(
     return processed_mask, working_data
 
 
-def is_valid_psf(cutout, processed_mask, y_max, x_max, cutout_size):
+def is_valid_psf(
+    cutout: np.ndarray,
+    processed_mask: np.ndarray,
+    y_max: int,
+    x_max: int,
+    cutout_size: int,
+) -> bool:
     """Check if a PSF cutout is valid by ensuring it doesn't overlap with masked regions.
 
     Args:
         cutout: The extracted PSF cutout
         processed_mask: The mask of processed regions
-        y_max, x_max: The coordinates of the detected streak
+        y_max: Row of the detected streak
+        x_max: Column of the detected streak
         cutout_size: Size of the cutout
 
     Returns:
