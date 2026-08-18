@@ -8,6 +8,7 @@ This module provides basic photometry tools for:
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from astropy.stats import mad_std, sigma_clip
@@ -15,6 +16,10 @@ from astropy.stats import mad_std, sigma_clip
 from senpai.engine.models.metadata import StreakMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from photutils.aperture import Aperture
+
     from senpai.engine.models.metadata import StreakMetadata
     from senpai.engine.photometry.color_terms import MultiBandCalibration
 
@@ -75,7 +80,8 @@ class SimplePhotometryResult:
     # Additional info
     instrumental_magnitude: float | None = None  # Instrumental magnitude
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the measured quantities to the precision the values actually carry."""
         self.flux = round(self.flux, 2)
         self.flux_err = round(self.flux_err, 2)
         self.snr = round(self.snr, 2)
@@ -134,7 +140,8 @@ class SimplePhotometrySummary:
     # these are recorded once per run in the result's top-level `photometry` block.
     aperture_geometry: dict | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the summary statistics to the precision the values actually carry."""
         self.median_snr = round(self.median_snr, 2)
         self.median_background = round(self.median_background, 2)
         self.limiting_magnitude = round(self.limiting_magnitude, 3)
@@ -344,7 +351,12 @@ def _guard_aperture_mask_footprint(n_apertures: int, mask_side_px: float, detail
         )
 
 
-def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
+def _shared_shape_aperture_sums(
+    data: np.ndarray,
+    positions: np.ndarray,
+    build_apertures: "Callable[[np.ndarray], list[Aperture]]",
+    subpixels: int = 5,
+) -> list[np.ndarray]:
     """Aperture sums for many apertures that share one shape.
 
     Every caller measures thousands of apertures with identical shape
@@ -425,6 +437,9 @@ def measure_simple_starfield_photometry(
         Starfield with detected and catalog stars
     config : SimplePhotometryConfig, optional
         Photometry configuration
+    frame_index : int, optional
+        Index of the frame within its collect. Only used to name the diagnostic plot, so
+        passing None simply suppresses it.
 
     Returns
     -------
@@ -715,7 +730,7 @@ def _save_simple_limiting_mag_plot(
     snrs: list[float],
     limiting_mag: float | None,
     min_snr: float,
-    output_path,
+    output_path: str | Path,
 ) -> None:
     """Sidereal counterpart to the rate-track limiting-mag diagnostic.
 
@@ -768,6 +783,9 @@ def measure_rate_starfield_photometry(
         Measured streak parameters (length, angle, FWHM)
     config : SimplePhotometryConfig, optional
         Photometry configuration
+    frame_index : int, optional
+        Index of the frame within its collect. Only used to name the diagnostic plot, so
+        passing None simply suppresses it.
 
     Returns
     -------
@@ -1511,7 +1529,7 @@ def _precompute_star_magnitudes(
     return mag_cache
 
 
-def _isotonic_completeness(comp_mag, comp_pct):
+def _isotonic_completeness(comp_mag: list[float], comp_pct: list[float]) -> tuple[np.ndarray, np.ndarray]:
     """Monotonic-decreasing (isotonic) smoothing of a completeness curve.
 
     Completeness is physically non-increasing with magnitude, so isotonic
@@ -1538,8 +1556,9 @@ def _completeness_limits(
     comp_pct: list[float],
     target: float = 0.5,
 ) -> tuple[float | None, float | None, float | None]:
-    """Limiting magnitudes from a completeness curve via isotonic smoothing +
-    threshold crossing (no parametric fit).
+    """Read limiting magnitudes off a completeness curve, without fitting a shape to it.
+
+    Isotonic smoothing plus a threshold crossing.
 
     The curve is de-spiked with a monotonic-decreasing regression, then we read
     the faint-most magnitude where it crosses each level. This ignores a flat
@@ -1570,7 +1589,7 @@ def _isolated_result_mask(
     starfield: StarField,
     pad: float = 2.0,
 ) -> list[bool]:
-    """True for results with no *brighter* catalog star within the aperture footprint.
+    """Mark the results with no *brighter* catalog star inside the aperture footprint.
 
     A faint star whose aperture overlaps a brighter neighbor picks up that neighbor's flux and
     reports a spuriously high SNR — which inflates the faint-end completeness into a fake floor
@@ -1610,9 +1629,17 @@ def _isolated_result_mask(
     return keep
 
 
-def _save_completeness_plot(comp_mag, comp_pct, m_target, m50, m90, output_path) -> None:
-    """Plot the completeness curve, its isotonic smooth, and the limiting-mag
-    crossings — the diagnostic for what the limiting-mag readout is doing.
+def _save_completeness_plot(
+    comp_mag: list[float],
+    comp_pct: list[float],
+    m_target: float | None,
+    m50: float | None,
+    m90: float | None,
+    output_path: str | Path,
+) -> None:
+    """Plot the completeness curve with its isotonic smooth and the limiting-mag crossings.
+
+    This is the diagnostic for what the limiting-mag readout is doing.
     """
     import matplotlib.pyplot as plt
 
@@ -1665,6 +1692,9 @@ def compute_completeness_curve(
         config: Photometry config (uses limiting_snr for threshold).
         bin_width: Magnitude bin width (default 0.5 mag).
         min_stars_per_bin: Minimum stars in a bin for meaningful statistics.
+        isolate: Restrict the sample to stars with no brighter catalog neighbour inside
+            the aperture footprint. A blended faint star reports a borrowed SNR, which
+            flattens the faint end into a floor the curve never rolls off from.
 
     Returns:
         (completeness_mag, completeness_pct) — parallel arrays sorted bright
@@ -2033,7 +2063,7 @@ def _estimate_simple_limiting_magnitude(
         completeness_limit_90: float | None = None
 
         def find_completeness_limit(target_completeness: float) -> float | None:
-            """Helper function to find limiting magnitude at a given completeness level."""
+            """Find the limiting magnitude at a given completeness level."""
             try:
                 # Use same bin width as plotting code for consistency (0.25 mag)
                 bin_width = 0.25
@@ -2433,8 +2463,10 @@ def _calculate_simple_zero_point(
             result_mag_cache[star_id] = _get_best_magnitude(r.star, config.preferred_filters if config else None)
 
     def _select(min_snr: float) -> list[tuple[float, float]]:
-        """Catalog (mag, flux) pairs from clean, well-measured stars at/above
-        ``min_snr``, excluding crowded and bright-neighbour-blended sources.
+        """Select catalog (mag, flux) pairs from clean, well-measured stars.
+
+        Takes stars at or above ``min_snr``, excluding crowded and
+        bright-neighbour-blended sources.
         """
         sel: list[tuple[float, float]] = []
         for r in results:

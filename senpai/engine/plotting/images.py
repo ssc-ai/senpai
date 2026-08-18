@@ -1,5 +1,18 @@
+"""Render a frame with its catalog, detections and streak drawn over the pixels.
+
+These are diagnostic images, not data products: everything here is for a human deciding whether
+a solve looks right. The plots are what make a bad WCS obvious -- catalog crosses that sit
+beside the stars rather than on them, a streak box at the wrong angle, SIP arrows that fan out
+instead of staying small.
+
+Matplotlib is set to the non-interactive Svg backend at import, before pyplot is imported,
+because the workers that produce these have no display and pyplot binds its backend on first
+import.
+"""
+
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib
 from astropy.coordinates import SkyCoord
@@ -19,6 +32,9 @@ from senpai.engine.models.starfield import StarField, StarListImage
 from senpai.engine.plotting.axes import prep_axes
 from senpai.engine.plotting.normalization import zscale
 
+if TYPE_CHECKING:
+    from photutils.aperture import Aperture
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,13 +45,27 @@ def plot_overs(
     detections: StarListImage | None = None,
     streak: StreakMetadata | None = None,
     streak_candidates: list | None = None,
-    centercross=True,
-    marker="+",
-    markersize=5,
-    linewidth=1,
+    centercross: bool = True,
+    marker: str = "+",
+    markersize: float = 5,
+    linewidth: float = 1,
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
-):
+) -> None:
+    """Draw catalog stars, detections and any streak onto an existing axes.
+
+    Each overlay is optional, so a caller can show just the pieces the question needs -- the
+    catalog alone to judge a WCS, detections alone to judge the detector, both together to
+    judge the match between them.
+
+    ``n_brightest`` trims the catalog to its brightest members. A dense field plots thousands
+    of crosses that obscure the image they are drawn on, and a WCS error is easier to see in
+    twenty well-separated stars than in two thousand overlapping ones.
+
+    With ``show_undistorted_catalog`` the catalog is projected twice, once through the full
+    SIP solution and once through the linear terms only, which is what makes the distortion
+    itself visible as the offset between the two.
+    """
     centers = None
     if starfield is not None:
         # Get all catalog stars
@@ -322,6 +352,11 @@ def plot_overs(
 
 
 def font_size(img: np.ndarray) -> float:
+    """Label size that stays legible at any frame size.
+
+    Scaled to the image's shorter side so a label occupies the same fraction of the plot
+    whether the frame is 512 or 4096 pixels, with a floor so it never vanishes entirely.
+    """
     return max(2, min(img.shape[1], img.shape[0]) * 0.01)
 
 
@@ -333,17 +368,29 @@ def plot_single_frame(
     streak: StreakMetadata | None = None,
     streak_candidates: list | None = None,
     output_file: str | Path | None = None,
-    scale=True,
-    marker="+",
-    centercross=False,
-    markersize=10,
+    scale: bool = True,
+    marker: str = "+",
+    centercross: bool = False,
+    markersize: float = 10,
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
     dpi: int | None = None,
     format: str | None = None,
     jpeg_quality: int = 95,
     png_compression: int = 6,
-):
+) -> tuple[plt.Figure, plt.Axes]:
+    """Render one frame with overlays, optionally writing it to disk.
+
+    ``scale`` applies a zscale stretch, which is what makes both a faint streak and a bright
+    star visible in the same 8-bit image; without it the linear range is dominated by the
+    brightest pixels.
+
+    DPI defaults by image size rather than to a constant: a full-frame 4096-square plot at
+    150 dpi is large enough that a night's worth becomes a real disk cost, so big images
+    render coarser.
+
+    Returns the figure and axes, so a caller can add to the plot before saving.
+    """
     logger.info(f"plotting frame {output_file if output_file else 'no output file'}")
 
     # Determine DPI - default to 150, but reduce for very large images to save space
@@ -440,7 +487,7 @@ def plot_single_frame(
         # (ra_ticks and dec_ticks are set based on equal pixel area division)
 
         # Function to place labels
-        def place_label(x, y, label_text, angle, on_x_axis=True):
+        def place_label(x: float, y: float, label_text: str, angle: float, on_x_axis: bool = True) -> None:
             if x >= 0 and x < width and y >= 0 and y < height:
                 fs = font_size(img)
                 if on_x_axis:
@@ -466,7 +513,7 @@ def plot_single_frame(
                 )
 
         # Helper function to normalize angle to [-90, 90] degrees
-        def normalize_angle(angle):
+        def normalize_angle(angle: float) -> float:
             if angle > 90:
                 angle -= 180
             elif angle < -90:
@@ -1057,12 +1104,18 @@ def plot_single_frame(
 
 
 def plot_photometry_frame(
-    img,
-    apertures=None,
-    annuli=None,
-    output_file=None,
-    scale=True,
-):
+    img: np.ndarray,
+    apertures: "Aperture | None" = None,
+    annuli: "Aperture | None" = None,
+    output_file: str | Path | None = None,
+    scale: bool = True,
+) -> None:
+    """Render a frame with photometry apertures and their background annuli drawn on it.
+
+    The annuli are the point of the plot: an aperture that looks well-placed can still measure
+    the wrong background if its annulus catches a neighbouring star, and that is visible here
+    and almost nowhere else.
+    """
     fig, ax = prep_axes(*img.shape)
 
     # minval = np.min(img.flatten())
@@ -1085,12 +1138,12 @@ def plot_photometry_frame(
 
 
 def plot_sip_distortions(
-    wcs,
+    wcs: WCS,
     grid_spacing: int = 50,
     plot_type: str = "arrows",
     output_file: str | None = None,
     figsize: tuple = (10, 8),
-    **kwargs,
+    **kwargs: float,
 ) -> tuple | None:
     """Plot SIP (Simple Imaging Polynomial) distortions across the field of view.
 
