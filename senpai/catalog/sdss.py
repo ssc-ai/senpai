@@ -1,3 +1,9 @@
+"""Query SDSS for catalog stars, by bounds or by line of sight.
+
+SDSS covers only part of the sky, so this is a supplement to the all-sky sources rather than an
+alternative to them -- useful where its photometry is better than what a general catalog gives.
+"""
+
 import logging
 from typing import Any
 

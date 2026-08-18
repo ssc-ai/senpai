@@ -1,3 +1,9 @@
+"""SENPAI: find satellites in ground-based optical frames.
+
+Importing the package configures logging, so a library consumer gets sane output without
+setting it up first.
+"""
+
 from importlib.metadata import PackageNotFoundError, version
 
 from senpai.core.logging import setup_logging

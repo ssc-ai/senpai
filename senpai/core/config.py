@@ -1,3 +1,15 @@
+"""The configuration schema, and the single instance the whole process reads.
+
+Every knob the engine takes is declared here as a typed field with a default, which is what
+makes a config file checkable rather than a bag of strings: a mistyped key or an out-of-range
+value fails at load with the field named, not silently at the point of use.
+
+Read configuration through the ``settings`` singleton rather than calling ``get_config()`` at
+each use. ``initialize_config`` replaces the instance, so a caller that needs a different
+config -- a test, or a CLI given ``--config`` -- sets it once at the top rather than threading
+an AppConfig through every signature.
+"""
+
 import logging
 from pathlib import Path
 from typing import Any, Literal, Optional

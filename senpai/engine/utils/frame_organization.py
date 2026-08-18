@@ -1,3 +1,11 @@
+"""Read a frame's identity and timestamp out of its header, tolerating sensor variation.
+
+Sensors disagree about how to spell a timestamp -- which keyword holds it, whether date and
+time are one field or two, what the fractional seconds look like. Grouping frames into collects
+depends on getting the time right, so the parsing here tries the known spellings rather than
+assuming one.
+"""
+
 import logging
 from datetime import datetime
 from pathlib import Path

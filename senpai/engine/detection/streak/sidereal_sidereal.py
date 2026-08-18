@@ -1,3 +1,9 @@
+"""Register one sidereal frame against another.
+
+The cheapest hop in the chain: both frames have point-like stars, so a correlation between them
+is well-conditioned and needs none of the streak handling the mixed-mode paths do.
+"""
+
 import logging
 
 import numpy as np

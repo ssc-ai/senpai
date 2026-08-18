@@ -1,3 +1,10 @@
+"""A frame, and the record of what has been done to it.
+
+An image carries its own processing history, so each calibration step can check whether it has
+already run. That is what makes the pipeline safe to re-enter on a partly-calibrated frame --
+subtracting the same dark twice leaves a negative pedestal that every later estimate inherits.
+"""
+
 import base64
 import logging
 from enum import Enum

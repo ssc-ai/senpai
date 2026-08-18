@@ -1,3 +1,10 @@
+"""Load a frame from whatever the sensor or the caller happened to hand over.
+
+FITS is the normal case, but frames also arrive as JPEG, as camera raw, or base64-encoded in an
+API request. Each loader returns the same image model, so nothing downstream has to know which
+it was.
+"""
+
 import json
 import logging
 from pathlib import Path

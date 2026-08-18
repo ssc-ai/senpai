@@ -1,3 +1,9 @@
+"""Axes sized so one image pixel is one plot pixel.
+
+Diagnostic frames are read by zooming in on individual sources, so the plot must not resample
+the data it is showing.
+"""
+
 import matplotlib
 
 matplotlib.use("Svg")

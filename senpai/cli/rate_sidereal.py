@@ -1,4 +1,10 @@
-# this is a CLI for the SENPAI algorithm for collecting stars from a series of images
+"""Run a collect made of both rate-tracked and sidereal frames, from the command line.
+
+The mixed case is the interesting one: the sidereal frames are what can be plate-solved, and the
+rate frames are where the satellites are, so the run only works if registration carries the
+solve from the former onto the latter.
+"""
+
 import json
 import logging
 import os

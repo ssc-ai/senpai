@@ -1,3 +1,5 @@
+"""Query Gaia for the catalog stars in a field, over the network."""
+
 import logging
 from typing import Any
 

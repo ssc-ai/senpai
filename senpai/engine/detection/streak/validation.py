@@ -1,3 +1,15 @@
+"""Decide whether a proposed frame-to-frame shift is real before committing to it.
+
+A cross-correlation always returns a peak, including on frames with nothing in common. Accepting
+it unchecked propagates a wrong WCS into every later frame in the collect, and the failure is
+silent -- the astrometry looks solved, just wrong.
+
+So a proposed shift is tested against the pixels: boxes around known stars are compared before
+and after the shift, and the shift is accepted only if it actually brings them into agreement.
+The lightweight check exists to reject bad candidates cheaply, before the expensive full
+validation runs.
+"""
+
 import logging
 import time
 

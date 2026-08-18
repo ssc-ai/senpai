@@ -1,3 +1,9 @@
+"""Where SENPAI keeps its own files, honouring the platform's conventions.
+
+Cache and config locations follow the usual environment variables when they are set, so a
+containerised or multi-user install can redirect them without code changes.
+"""
+
 import os
 from pathlib import Path
 

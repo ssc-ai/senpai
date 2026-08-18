@@ -1,3 +1,10 @@
+"""Endpoints that plate-solve, either from a source list or from an uploaded frame.
+
+Solving from sources is the cheaper contract: a caller that has already detected its own stars
+sends coordinates instead of pixels, and gets a WCS back without an image ever crossing the
+wire.
+"""
+
 import logging
 import time
 

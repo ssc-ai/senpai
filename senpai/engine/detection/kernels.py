@@ -1,3 +1,11 @@
+"""Convolution kernels shaped like the things being detected.
+
+A matched filter responds best when its kernel resembles the signal, so a point source is
+searched for with a PSF-shaped kernel and a streak with a rectangle of the streak's length and
+angle. The kernels here are built analytically from FWHM, length and angle rather than measured,
+which is what lets a search be seeded before anything has been detected.
+"""
+
 import functools
 import logging
 

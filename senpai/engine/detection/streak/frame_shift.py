@@ -1,3 +1,11 @@
+"""Drive one frame-to-frame WCS shift, and keep the chain of them self-consistent.
+
+Registration is pairwise, but the frames form a chain: each solved frame becomes the anchor for
+the next. That makes a single bad hop expensive, because everything after it inherits the error,
+which is why ``enforce_chain_consistency`` exists -- it checks a new hop against the rate the
+chain has been moving at rather than judging it alone.
+"""
+
 import logging
 
 import numpy as np

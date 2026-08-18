@@ -1,3 +1,10 @@
+"""Synthesize frames with known contents, for tests that need a ground truth.
+
+Real frames have no truth attached: the answer a detector should give is itself an estimate. A
+generated frame's stars were placed at known positions with known fluxes, so a test can assert
+what the detector must find rather than that it found what it found last time.
+"""
+
 import logging
 
 import numpy as np

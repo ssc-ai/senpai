@@ -1,3 +1,10 @@
+"""A streak's measured length, angle and width, plus angle arithmetic.
+
+Streak angles need their own comparison because a streak has no direction: its two ends are
+indistinguishable in a single frame, so 5 degrees and 185 degrees are the same streak and a
+naive subtraction reports a 180-degree disagreement between identical measurements.
+"""
+
 import numpy as np
 from pydantic import BaseModel, model_validator
 

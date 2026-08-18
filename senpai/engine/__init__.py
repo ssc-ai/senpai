@@ -1,3 +1,5 @@
+"""The detection engine: everything between a raw frame and a satellite observation."""
+
 import logging
 
 # from engine.utils.astropy import setup_astropy

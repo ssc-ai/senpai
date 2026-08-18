@@ -1,3 +1,10 @@
+"""Stretch a frame's values into a range an 8-bit display can show.
+
+An astronomical frame spans a dynamic range no screen has: a bright star can be thousands of
+times the sky level. Shown linearly, everything except the brightest sources is black, so a
+stretch is what makes a faint streak and a bright star visible in the same image.
+"""
+
 import matplotlib
 from astropy.visualization import ZScaleInterval
 

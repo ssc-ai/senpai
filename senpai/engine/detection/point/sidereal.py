@@ -1,3 +1,15 @@
+"""Find point sources in a sidereally-tracked frame, and measure their widths.
+
+On a sidereal frame the stars are points and the satellites are streaks, so this is the star
+detector: its output feeds the plate solve, and the FWHM it measures sets the kernel size
+everything downstream convolves with.
+
+FWHM estimation is deliberately robust rather than simple. A frame's brightest stars are often
+saturated, and a Gaussian fit to a flat-topped profile returns a width that is too large, which
+would then inflate every kernel in the collect -- so the saturation level is estimated first and
+fits are taken from unsaturated stars.
+"""
+
 import logging
 
 import numpy as np

@@ -1,3 +1,10 @@
+"""Logging setup, safe for a pipeline that runs across processes.
+
+The rotating file handler is the reason this module exists: the ordinary one truncates or
+interleaves when several worker processes hold the same file open, so rotation is coordinated
+instead of assumed.
+"""
+
 import logging
 import logging.config
 import logging.handlers

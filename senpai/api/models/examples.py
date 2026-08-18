@@ -1,3 +1,9 @@
+"""Example payloads, so the generated API documentation shows real shapes.
+
+A schema tells a reader which fields exist; an example tells them what a plausible value looks
+like, which is the part that makes an endpoint usable without reading the engine.
+"""
+
 from typing import Any
 
 from pydantic import BaseModel

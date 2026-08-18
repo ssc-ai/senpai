@@ -1,3 +1,10 @@
+"""Register a rate-tracked frame against a solved sidereal frame.
+
+This is the ordinary anchoring path. The sidereal frame has a plate solve; the rate frame does
+not, because its stars are streaked and a star matcher will not solve it. Correlating the two
+gives the pixel shift that carries the sidereal frame's WCS onto the rate frame.
+"""
+
 import logging
 
 import matplotlib.pyplot as plt
