@@ -1,3 +1,12 @@
+"""Masking streaks and clusters out of a frame, so the next measurement is not fooled.
+
+A bright streak or a saturated cluster distorts whatever is measured next -- a
+cross-correlation locks onto it, a background estimate rises around it, a FWHM fit follows
+its wing. These helpers find such a feature by flood-filling from a seed and replace it with
+a fill value, and the bounded variants cap the fill so a runaway region cannot consume the
+frame.
+"""
+
 import numpy as np
 from scipy.ndimage import (
     binary_dilation,
@@ -7,13 +16,15 @@ from scipy.ndimage import (
 )
 
 
-def percent_difference(a, b):
+def percent_difference(a: float, b: float) -> float:
+    """Difference between two values as a percentage of their mean; 0 when both are 0."""
     if a == 0 and b == 0:
         return 0.0
     return abs(a - b) / ((a + b) / 2) * 100
 
 
-def mask_tol(img, center, pixel_tol=30):
+def mask_tol(img: np.ndarray, center: tuple[float, float], pixel_tol: int = 30) -> np.ndarray:
+    """Build a circular mask of radius `pixel_tol` around `center`."""
     mask = np.zeros(shape=img.shape)
     radius = pixel_tol
 
@@ -29,7 +40,12 @@ def mask_tol(img, center, pixel_tol=30):
     return mask
 
 
-def map_cluster(image, start_point, flux_threshold, pad_size=0):
+def map_cluster(
+    image: np.ndarray,
+    start_point: tuple[int, int],
+    flux_threshold: float,
+    pad_size: int = 0,
+) -> np.ndarray:
     """Map a cluster starting from a given point until a specified flux threshold is met."""
     # Create a binary mask where true values are below the flux threshold
     threshold_mask = image <= flux_threshold
@@ -65,7 +81,14 @@ def map_cluster(image, start_point, flux_threshold, pad_size=0):
     return padded_cluster
 
 
-def map_cluster_bounded(image, start_point, flux_threshold, max_radius=500, max_pixels=10000, pad_size=0):
+def map_cluster_bounded(
+    image: np.ndarray,
+    start_point: tuple[int, int],
+    flux_threshold: float,
+    max_radius: int = 500,
+    max_pixels: int = 10000,
+    pad_size: int = 0,
+) -> np.ndarray:
     """Map a cluster with hard limits on radius and pixel count to prevent runaway flood fills.
 
     Args:
@@ -139,7 +162,7 @@ def analyze_source_shape_fwhm(
     image: np.ndarray,
     y_coords: np.ndarray,
     x_coords: np.ndarray,
-    weights: np.ndarray = None,
+    weights: np.ndarray | None = None,
 ) -> dict:
     """Analyze the shape of a source using FWHM-based thresholding for robust measurements.
 
@@ -303,9 +326,9 @@ def remove_streak_at_point_robust(
     start_point: tuple[int, int],
     box_size: int,
     fill_mode: np.ufunc = np.mean,
-    thresholds: list[float] = None,
+    thresholds: list[float] | None = None,
     pad_size: int = 2,
-    logger=None,
+    logger: object | None = None,
 ) -> tuple[np.ndarray, dict]:
     """Remove a streak using robust connected component analysis.
 
@@ -466,6 +489,7 @@ def remove_streak_at_point_enriched(
     max_radius: int = None,
     max_pixels: int = None,
 ) -> tuple[np.ndarray, dict]:
+    """Remove a streak at a point, also returning the shape it measured."""
     # Always bound the flood fill. An unbounded fill runs away across the whole
     # frame whenever a bright feature connects large regions above the threshold
     # — e.g. a dead row/column, or overlapping streaks in a crowded field — and
@@ -516,22 +540,26 @@ def remove_streak_at_point(
     max_radius: int = None,
     max_pixels: int = None,
 ) -> np.ndarray:
+    """Remove the streak found at `start_point`, filling it from its surroundings."""
     image, _ = remove_streak_at_point_enriched(image, start_point, fill_min, fill_mode, max_radius, max_pixels)
     return image
 
 
 def remove_brightest_streak(image: np.ndarray, fill_min: float) -> np.ndarray:
+    """Remove the single brightest streak in the frame."""
     start_point = np.unravel_index(np.argmax(image), image.shape)
     return remove_streak_at_point(image, start_point, fill_min)
 
 
 def mask_all_but_border(image: np.ndarray, n_pixels: int = 1) -> np.ndarray:
+    """Zero everything except an `n_pixels`-wide border."""
     border_pixels = image.copy()
     border_pixels[n_pixels:-n_pixels, n_pixels:-n_pixels] = 0.0
     return border_pixels
 
 
 def mask_border(image: np.ndarray, n_pixels: int = 1) -> np.ndarray:
+    """Zero an `n_pixels`-wide border, leaving the interior intact."""
     pixels = image.copy()
     pixels[0:n_pixels, :] = 0.0
     pixels[-n_pixels:, :] = 0.0
@@ -541,6 +569,7 @@ def mask_border(image: np.ndarray, n_pixels: int = 1) -> np.ndarray:
 
 
 def remove_n_brightest_streaks(image: np.ndarray, n: int) -> tuple[np.ndarray, int]:
+    """Remove the `n` brightest streaks, returning the frame and how many were removed."""
     removed_streaks = 0
     fill_min = np.median(image) + 0.5 * np.std(image)
 
@@ -619,6 +648,7 @@ def _border_crossing_mask(image: np.ndarray) -> np.ndarray | None:
 
 
 def remove_border_crossing_streaks(image: np.ndarray) -> np.ndarray:
+    """Remove streaks touching the frame edge, whose length cannot be measured."""
     # Remove edge targets (streaks crossing the frame border).
     mask = _border_crossing_mask(image)
     if mask is not None:
@@ -699,7 +729,13 @@ def remove_border_crossing_streaks_pairwise(
     return image_a, image_b, int(fill_a.sum()), int(fill_b.sum())
 
 
-def map_cluster_with_peaks(image, start_point, flux_threshold, pad_size=0, min_separation=5):
+def map_cluster_with_peaks(
+    image: np.ndarray,
+    start_point: tuple[int, int],
+    flux_threshold: float,
+    pad_size: int = 0,
+    min_separation: int = 5,
+) -> tuple[np.ndarray, list]:
     """Map a cluster and identify multiple peaks within it.
 
     Returns:
