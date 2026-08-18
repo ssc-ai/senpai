@@ -4,7 +4,7 @@ import logging
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.jacobian import get_local_streak_kernel
 from senpai.engine.models.senpai import RateTrackFrame
 
@@ -20,8 +20,7 @@ def plot_variable_kernel_grid(
     """Diagnostic: plot a grid of local streak kernels across the field of view."""
     from matplotlib import pyplot as plt
 
-    config = get_config()
-    if not config.plotting.debug or frame.streak is None:
+    if not settings.plotting.debug or frame.streak is None:
         return
 
     height, width = frame.frame.data.shape
@@ -66,7 +65,7 @@ def plot_variable_kernel_grid(
     fig.suptitle(f"Variable streak kernels - frame {frame.index}", fontsize=10)
     fig.tight_layout()
 
-    output_path = config.runtime.output_dir / f"{frame.index}_variable_kernel_grid.png"
+    output_path = settings.runtime.output_dir / f"{frame.index}_variable_kernel_grid.png"
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     logger.info("Saved variable-kernel grid diagnostic to %s", output_path)
@@ -86,8 +85,7 @@ def plot_variable_kernel_star_diagnostic(
     """Diagnostic: plot image cutout, local kernel, and correlation with peak marked."""
     from matplotlib import pyplot as plt
 
-    config = get_config()
-    if not config.plotting.debug:
+    if not settings.plotting.debug:
         return
 
     ih, iw = image_cutout.shape
@@ -134,7 +132,7 @@ def plot_variable_kernel_star_diagnostic(
     )
     fig.tight_layout()
 
-    output_path = config.runtime.output_dir / f"{frame.index}_variable_kernel_star_{star_index}.png"
+    output_path = settings.runtime.output_dir / f"{frame.index}_variable_kernel_star_{star_index}.png"
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     logger.info("Saved variable-kernel star diagnostic to %s", output_path)

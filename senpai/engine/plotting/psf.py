@@ -344,9 +344,9 @@ def stack_streaks(
 def paper_ready_enabled() -> bool:
     """Report whether ``config.plotting.paper_ready`` asks for title-less copies."""
     try:
-        from senpai.core.config import get_config
+        from senpai.core.config import settings
 
-        return bool(getattr(get_config().plotting, "paper_ready", False))
+        return bool(getattr(settings.plotting, "paper_ready", False))
     except Exception:
         return False
 

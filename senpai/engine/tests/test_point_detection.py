@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import get_config, initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
 from senpai.engine.detection.point.satellite import (
@@ -301,8 +301,7 @@ def _rate_frame(data: np.ndarray, pixel_fwhm: float = 4.0) -> RateTrackFrame:
 
 
 def test_satellite_extract_detects_point_source() -> None:
-    cfg = get_config()
-    cfg.detection.snr_threshold = 3.0
+    settings.detection.snr_threshold = 3.0
     sigma = 2.0  # FWHM ~4.7 px, matches pixel_fwhm guess
     # A grid of point sources so DAOStarFinder reaches its >=50 source floor;
     # one bright target plus many fainter companions.
@@ -320,7 +319,7 @@ def test_satellite_extract_detects_point_source() -> None:
     detected = [(d.x, d.y) for d in result.detections]
     assert _match_count(detected, [target], tol=2.0) == 1
     for det in result.detections:
-        assert det.snr is not None and det.snr > cfg.detection.snr_threshold
+        assert det.snr is not None and det.snr > settings.detection.snr_threshold
 
 
 def test_satellite_extract_high_snr_threshold_filters_all() -> None:
@@ -331,13 +330,12 @@ def test_satellite_extract_high_snr_threshold_filters_all() -> None:
     for x, y in positions:
         _add_gaussian(data, x, y, 30000.0, sigma)
     frame = _rate_frame(data, pixel_fwhm=SIGMA_TO_FWHM * sigma)
-    cfg = get_config()
-    original = cfg.detection.snr_threshold
-    cfg.detection.snr_threshold = 1.0e9  # impossibly high -> nothing survives
+    original = settings.detection.snr_threshold
+    settings.detection.snr_threshold = 1.0e9  # impossibly high -> nothing survives
     try:
         result = extract_satellite_points(frame)
     finally:
-        cfg.detection.snr_threshold = original
+        settings.detection.snr_threshold = original
     assert len(result.detections) == 0
 
 
@@ -349,8 +347,7 @@ def test_satellite_extract_assigns_no_radec_without_wcs() -> None:
     for x, y in positions:
         _add_gaussian(data, x, y, 45000.0, sigma)
     frame = _rate_frame(data, pixel_fwhm=SIGMA_TO_FWHM * sigma)
-    cfg = get_config()
-    cfg.detection.snr_threshold = 3.0
+    settings.detection.snr_threshold = 3.0
     result = extract_satellite_points(frame)
     assert len(result.detections) > 0
     for det in result.detections:

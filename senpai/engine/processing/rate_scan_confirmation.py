@@ -594,13 +594,12 @@ def _rate_scan_candidate(
         zp = ref_frame.photometry_summary.get("zero_point")
         zp_err = ref_frame.photometry_summary.get("zero_point_err")
         if zp is not None:
-            from senpai.core.config import get_config
+            from senpai.core.config import settings
             from senpai.engine.detection.streak.sidereal_streak import (
                 StreakCandidate,
                 measure_streak_candidate_photometry,
             )
 
-            config = get_config()
             obs_filter = ref_frame.frame_metadata.observation_filter if ref_frame.frame_metadata else None
             multiband = None
             multiband_raw = ref_frame.photometry_summary.get("multiband_calibration")
@@ -633,7 +632,7 @@ def _rate_scan_candidate(
                     zero_point_err=zp_err,
                     exposure_time=exposure_time,
                     fwhm=fwhm,
-                    gain=config.photometry.gain,
+                    gain=settings.photometry.gain,
                     multiband_calibration=multiband,
                     observation_filter=obs_filter,
                 )

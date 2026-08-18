@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import griddata
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.photometry.utils import (
     SimplePhotometryResult,
@@ -54,8 +54,9 @@ def plot_magnitude_vs_snr(
     # Use same magnitude selection logic as limiting magnitude calculation
     # to ensure consistency between plot and calculation AND to avoid mixing
     # different magnitude systems (e.g., Johnson_V vs Gaia_G)
-    cfg = get_config()
-    preferred_filters = getattr(cfg.photometry, "preferred_filters", None) if hasattr(cfg, "photometry") else None
+    preferred_filters = (
+        getattr(settings.photometry, "preferred_filters", None) if hasattr(settings, "photometry") else None
+    )
 
     # Find a common magnitude system for all stars
     magnitudes = []
@@ -158,8 +159,7 @@ def plot_magnitude_vs_snr(
     limiting_snr = summary.limiting_snr
     if limiting_snr is None:
         # Fallback to config if not stored in summary
-        cfg = get_config()
-        limiting_snr = getattr(cfg.photometry, "limiting_snr", 3.0)
+        limiting_snr = getattr(settings.photometry, "limiting_snr", 3.0)
 
     if limiting_snr > 0:
         ax.axhline(
@@ -190,8 +190,7 @@ def plot_magnitude_vs_snr(
             label=f"Limiting Mag [90%]: {summary.limiting_magnitude_90:.1f}",
         )
     # Plot completeness vs magnitude on a secondary y-axis
-    cfg = get_config()
-    limiting_snr = getattr(cfg.photometry, "limiting_snr", 3.0)
+    limiting_snr = getattr(settings.photometry, "limiting_snr", 3.0)
 
     ax2 = ax.twinx()
     if len(magnitudes) > 0:

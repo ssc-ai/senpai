@@ -27,7 +27,7 @@ import senpai.catalog.gaia as gaia
 import senpai.catalog.sdss as sdss
 from senpai.catalog import sstrc7_source as sstr7
 from senpai.catalog.constants import CatalogType
-from senpai.core.config import get_config, get_or_initialize_config, settings
+from senpai.core.config import get_or_initialize_config, settings
 from senpai.engine.models.astrometry import WCSModel
 from senpai.engine.models.starfield import ImageMetadata, StarInSpace, StarListSpace
 from senpai.exceptions import SiderealSolveError
@@ -841,17 +841,16 @@ def query_catalog_gaia(
     max_stars: int | None = None,
 ) -> StarListSpace:
     """Query Gaia for the stars on a frame, reusing cached sky regions where possible."""
-    cfg = get_config()
 
     # Apply default faint limit from config if not provided
     if faint_lim is None:
-        faint_conf = getattr(cfg.star_catalog, "faint_limit", None)
+        faint_conf = getattr(settings.star_catalog, "faint_limit", None)
         faint_lim = int(faint_conf) if faint_conf is not None else None
 
     # Report the actual source: _query_gaia_sky swaps the online TAP for the local
     # mirror when star_catalog.type == "gaia_local" (see _online there). Log honestly
     # so a mirror-backed run doesn't look like it's hammering the network.
-    _cat_src = "local mirror" if getattr(cfg.star_catalog, "type", "gaia") == "gaia_local" else "online"
+    _cat_src = "local mirror" if getattr(settings.star_catalog, "type", "gaia") == "gaia_local" else "online"
     logger.info("Querying Gaia catalog (%s)", _cat_src)
     start_time = time.time()
 
@@ -1090,9 +1089,8 @@ def query_catalog(
     distortion-correct positions. Sidereal refinement already re-projects with SIP via
     ``existing_stars_from_wcs``; this flag is the equivalent for one-shot callers.
     """
-    config = get_config()
-    catalog = config.star_catalog.type
-    catalog_path = config.star_catalog.path
+    catalog = settings.star_catalog.type
+    catalog_path = settings.star_catalog.path
 
     if catalog == "sstrc7":
         result = query_catalog_sstr7(wcs, catalog_path, faint_lim, bright_lim, proper_motion_date, max_stars)
@@ -1112,7 +1110,7 @@ def query_catalog(
     # with it — observed ~30 GB/worker on one batch, enough to OOM a j8 pool.
     # Stratified by magnitude so the faint bins survive for completeness; callers
     # passing an explicit max_stars keep the brightest-N semantics above.
-    cap = getattr(config.star_catalog, "max_stars_per_frame", None)
+    cap = getattr(settings.star_catalog, "max_stars_per_frame", None)
     if max_stars is None and cap and len(result.stars) > cap:
         n_before = len(result.stars)
         result.stars = _stratified_mag_cap(result.stars, cap)

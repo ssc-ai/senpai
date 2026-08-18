@@ -25,7 +25,6 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from scipy.signal import correlate
 
-from senpai.core.config import get_config
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
@@ -184,7 +183,6 @@ def confirm_streaks_via_stamps(
 
     With a single frame total, candidates are returned as unconfirmed.
     """
-    config = get_config()
     min_snr_boost = 1.2  # Require at least 20% SNR improvement from stacking
 
     # Frames with independent streak detections — used as reference frames
@@ -787,12 +785,11 @@ def _confirm_single_candidate(
             except Exception:
                 pass
         if zp is not None:
-            from senpai.core.config import get_config
+            from senpai.core.config import settings
             from senpai.engine.detection.streak.sidereal_streak import (
                 measure_streak_candidate_photometry,
             )
 
-            config = get_config()
             obs_filter = ref_frame.frame_metadata.observation_filter if ref_frame.frame_metadata else None
 
             # Build a temporary candidate with refined measurements for photometry
@@ -816,7 +813,7 @@ def _confirm_single_candidate(
                     zero_point_err=zp_err,
                     exposure_time=exposure_time,
                     fwhm=fwhm,
-                    gain=config.photometry.gain,
+                    gain=settings.photometry.gain,
                     multiband_calibration=multiband,
                     observation_filter=obs_filter,
                 )
@@ -1356,7 +1353,7 @@ def _propagate_to_frame_candidates(
             zp = phot_summary.get("zero_point")
             zp_err = phot_summary.get("zero_point_err")
             if zp is not None:
-                from senpai.core.config import get_config
+                from senpai.core.config import settings
                 from senpai.engine.detection.streak.sidereal_streak import (
                     StreakCandidate as SC,
                 )
@@ -1364,7 +1361,6 @@ def _propagate_to_frame_candidates(
                     measure_streak_candidate_photometry,
                 )
 
-                config = get_config()
                 obs_filter = frame.frame_metadata.observation_filter if frame.frame_metadata else None
                 exp_time = frame.frame_metadata.exposure_time_seconds if frame.frame_metadata else None
 
@@ -1401,7 +1397,7 @@ def _propagate_to_frame_candidates(
                         zero_point_err=zp_err,
                         exposure_time=exp_time,
                         fwhm=fwhm,
-                        gain=config.photometry.gain,
+                        gain=settings.photometry.gain,
                         multiband_calibration=multiband,
                         observation_filter=obs_filter,
                     )

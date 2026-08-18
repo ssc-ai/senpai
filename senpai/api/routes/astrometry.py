@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from senpai.api.models.examples import StarListImageExample
 from senpai.astrometry import solve_field
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.point.sidereal import extract_point_sources
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.starfield import StarField, StarListImage
@@ -21,11 +21,10 @@ logger = logging.getLogger(__name__)
 @router.get("/")
 async def index(request: Request):
     logger.info("GET / - Fetching API info")
-    config = get_config()
     return JSONResponse(
         {
             "api": request.base_url.__str__(),  # This gets the full URL path
-            "config": config.model_dump(),  # This converts the config to a dictionary with all fields
+            "config": settings.model_dump(),  # This converts the config to a dictionary with all fields
         }
     )
 

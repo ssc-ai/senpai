@@ -26,7 +26,7 @@ from scipy.ndimage import median_filter as _medfilt
 from scipy.optimize import curve_fit
 from scipy.signal import convolve
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.kernels import rectangle_pyramoid
 from senpai.engine.detection.streak.masking import (
     analyze_source_shape_fwhm,
@@ -548,7 +548,7 @@ def refine_robust_streak(
     # Plot the PSF/refinement diagnostic. Gated on the dedicated `psfs` flag
     # (small, ~<1MB) OR the broad `debug` flag (which also emits the heavy
     # kernel/CC plots) — so these can be kept on inline without the brutal ones.
-    _plt_cfg = getattr(get_config(), "plotting", None)
+    _plt_cfg = getattr(settings, "plotting", None)
     if _plt_cfg is not None and (_plt_cfg.psfs or _plt_cfg.debug):
         import matplotlib.pyplot as plt
 
@@ -619,7 +619,7 @@ def refine_robust_streak(
         else:
             filename = "streak_psf_refinement.png"
 
-        output_path = get_config().runtime.output_dir / filename
+        output_path = settings.runtime.output_dir / filename
         plt.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close()
         logger.info(f"Plotted PSF refinement to {output_path}")

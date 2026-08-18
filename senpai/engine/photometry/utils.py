@@ -28,7 +28,7 @@ from photutils.aperture import (
 )
 from scipy.spatial import cKDTree
 
-from senpai.core.config import PhotometryConfig, get_config, settings
+from senpai.core.config import PhotometryConfig, settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.starfield import SatelliteListImage, StarField, StarInSpace
@@ -607,8 +607,7 @@ def measure_simple_starfield_photometry(
     flux = flux_sum - background_level * aper_area_arr
 
     # Noise model: gain/read noise from config, background noise EMPIRICAL.
-    cfg = get_config()
-    phot_cfg = getattr(cfg, "photometry", None)
+    phot_cfg = getattr(settings, "photometry", None)
     if phot_cfg is not None:
         gain = float(getattr(phot_cfg, "gain", 1.0))  # e-/ADU
         include_read_noise = bool(getattr(phot_cfg, "include_read_noise", False))
@@ -699,13 +698,13 @@ def measure_simple_starfield_photometry(
     # (estimate_limiting_magnitude_from_photometry); sidereal frames never go
     # through that path, so without this they'd silently skip the plot even
     # with ``plotting.photometry`` on. Same axes/lines as the rate version.
-    if frame_index is not None and get_config().plotting.photometry and summary.stars_mag and summary.stars_snr:
+    if frame_index is not None and settings.plotting.photometry and summary.stars_mag and summary.stars_snr:
         _save_simple_limiting_mag_plot(
             mags=summary.stars_mag,
             snrs=summary.stars_snr,
             limiting_mag=summary.limiting_magnitude_50 or summary.limiting_magnitude,
-            min_snr=float(get_config().photometry.limiting_snr or 3.0),
-            output_path=get_config().runtime.output_dir / f"frame_{frame_index}_limiting_mag.png",
+            min_snr=float(settings.photometry.limiting_snr or 3.0),
+            output_path=settings.runtime.output_dir / f"frame_{frame_index}_limiting_mag.png",
         )
 
     return results, summary
@@ -954,8 +953,7 @@ def measure_rate_starfield_photometry(
     flux = flux_sum - background_level * aper_area_arr
 
     # Noise model (same as circular version: empirical background std).
-    cfg = get_config()
-    phot_cfg = getattr(cfg, "photometry", None)
+    phot_cfg = getattr(settings, "photometry", None)
     if phot_cfg is not None:
         gain = float(getattr(phot_cfg, "gain", 1.0))
         include_read_noise = bool(getattr(phot_cfg, "include_read_noise", False))
@@ -1122,8 +1120,7 @@ def measure_detection_photometry(
         return
 
     # Get gain and read noise from config
-    cfg = get_config()
-    phot_cfg = getattr(cfg, "photometry", None)
+    phot_cfg = getattr(settings, "photometry", None)
     if phot_cfg is not None:
         gain = float(getattr(phot_cfg, "gain", 1.0))
         include_read_noise = bool(getattr(phot_cfg, "include_read_noise", False))
@@ -1820,14 +1817,14 @@ def _calculate_simple_photometry_summary(
     # Always emit the completeness diagnostic when we have a curve — so the
     # readout is visible even when it falls back. Uses the GLOBAL config for the
     # plotting flag (the photometry `config` here has no `.plotting`).
-    if comp_mag and frame_index is not None and get_config().plotting.photometry:
+    if comp_mag and frame_index is not None and settings.plotting.photometry:
         _save_completeness_plot(
             comp_mag,
             comp_pct,
             lim_target,
             lim_50 or limiting_magnitude_50,
             lim_90 or limiting_magnitude_90,
-            get_config().runtime.output_dir / f"frame_{frame_index}_completeness.png",
+            settings.runtime.output_dir / f"frame_{frame_index}_completeness.png",
         )
 
     # Compact per-star (catalog_mag, snr, zp_offset) arrays for downstream
@@ -2666,18 +2663,18 @@ def calculate_star_snrs_with_aperture_photometry(
     # rate-track (rectangular apertures) — previously only the rate branch
     # produced this, so sidereal frames had no aperture overlay despite the
     # config flag being on.
-    if plot and get_config().plotting.photometry:
+    if plot and settings.plotting.photometry:
         from senpai.engine.plotting.images import plot_photometry_frame
 
         plot_photometry_frame(
             counts_array,
             apertures=apertures,
             annuli=bg_apertures,
-            output_file=get_config().runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
+            output_file=settings.runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
         )
         logger.info(
             "Saved aperture photometry plot to %s",
-            get_config().runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
+            settings.runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
         )
 
     return results
@@ -2721,8 +2718,7 @@ def estimate_limiting_magnitude_from_photometry(
 
     # Simple linear regression + completeness hybrid
     try:
-        cfg = get_config()
-        completeness_target = float(getattr(cfg.photometry, "limiting_completeness_fraction", 0.5))
+        completeness_target = float(getattr(settings.photometry, "limiting_completeness_fraction", 0.5))
 
         # Group stars by magnitude bins to calculate completeness and weights
         bin_width = 0.5  # magnitude bin width
@@ -2800,7 +2796,7 @@ def estimate_limiting_magnitude_from_photometry(
         # (default) prefers a completeness roll-over within the data, falling back to the
         # SNR-fit crossing when completeness sits at the faint edge (catalog truncation, not a
         # real limit); 'linear_fit' always uses the SNR-fit crossing.
-        if cfg.photometry.refinement_limiting_magnitude_method == "completeness_hybrid":
+        if settings.photometry.refinement_limiting_magnitude_method == "completeness_hybrid":
             data_faint_edge = float(np.max(filtered_magnitudes))
             comp = completeness_limit
             limiting_mag = comp if comp is not None and comp < data_faint_edge - 0.5 else fit_limiting_mag
@@ -2808,7 +2804,7 @@ def estimate_limiting_magnitude_from_photometry(
             limiting_mag = fit_limiting_mag
 
         # Optional diagnostic plot
-        if cfg.plotting.photometry:
+        if settings.plotting.photometry:
             import matplotlib.pyplot as plt
 
             _fig, ax = plt.subplots(figsize=(8, 6))
@@ -2844,7 +2840,7 @@ def estimate_limiting_magnitude_from_photometry(
             ax.grid(True, alpha=0.3)
             ax.legend()
 
-            output_path = cfg.runtime.output_dir / f"frame_{frame.index}_limiting_mag.png"
+            output_path = settings.runtime.output_dir / f"frame_{frame.index}_limiting_mag.png"
             plt.savefig(output_path)
             plt.close()
             logger.info("Saved limiting magnitude diagnostic to %s", output_path)

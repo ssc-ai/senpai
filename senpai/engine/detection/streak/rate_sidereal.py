@@ -3,7 +3,7 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.streak.extraction import (
     cross_corr,
     extract_streak_dims_robust,
@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 
 def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrackFrame, frame_shift: FrameShift):
-    config = get_config()
 
     # A fully-cloudy anchor gets no WCS, so its starfield (and detection
     # metadata / fwhm) is None — reading it crashed the whole calsat batch.
@@ -140,11 +139,11 @@ def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrac
         # Set everything outside mask to minimum value
         cross_correlated_image[~mask] = np.min(cross_correlated_image)
 
-        if config.plotting.debug:
+        if settings.plotting.debug:
             plot_single_frame(
                 cross_correlated_image,
                 scale=False,
-                output_file=config.runtime.output_dir / f"masked_cc_{sidereal_frame.index}-{rate_frame.index}.png",
+                output_file=settings.runtime.output_dir / f"masked_cc_{sidereal_frame.index}-{rate_frame.index}.png",
             )
     else:
         logger.info("Skipping cross-correlation masking (no reliable initial estimate or length too short)")
@@ -198,7 +197,7 @@ def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrac
         pixel_shift_rate_to_sidereal_xy = -1 * measure_streak_shift_centroid(
             subcc, expected_max_distance=expected_distance, intensity_threshold=0.5
         )
-        if config.plotting.debug:
+        if settings.plotting.debug:
             _, ax = plot_single_frame(
                 subcc,
                 scale=False,
@@ -229,7 +228,7 @@ def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrac
             )
 
             plt.savefig(
-                config.runtime.output_dir
+                settings.runtime.output_dir
                 / f"sidereal_to_rate_cc_{sidereal_frame.index}-{rate_frame.index}-{trials}.png"
             )
             plt.close("all")
@@ -373,11 +372,11 @@ def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrac
         frame_shift.error_message = "Could not extract valid streak from rate frame"
         return
 
-    if config.plotting.debug and psf is not None:
+    if settings.plotting.debug and psf is not None:
         plot_single_frame(
             psf,
             scale=False,
-            output_file=config.runtime.output_dir / f"{rate_frame.index}_streak_psf.png",
+            output_file=settings.runtime.output_dir / f"{rate_frame.index}_streak_psf.png",
         )
 
     # The reported rate comes from the streak length — model-free, no cross-frame

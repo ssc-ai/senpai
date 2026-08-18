@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import convolve
 
 # from senpai.engine.utils.preprocessing import background_subtract
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.kernels import rectangle_pyramoid
 from senpai.engine.detection.streak.extraction import (
     cross_corr,
@@ -272,11 +272,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
         if fr.streak is not None and np.all(np.isfinite([fr.streak.cosine_angle, fr.streak.sine_angle])):
             drift_axis = (fr.streak.cosine_angle, fr.streak.sine_angle)
             break
-    if (
-        get_config().streak.symmetric_border_removal
-        and pixel_track_rate_per_second is not None
-        and drift_axis is not None
-    ):
+    if settings.streak.symmetric_border_removal and pixel_track_rate_per_second is not None and drift_axis is not None:
         drift_mag = pixel_track_rate_per_second * (
             frame_exposure_gap_seconds + 0.5 * (rate_a_exposure_time + rate_b_exposure_time)
         )
@@ -411,14 +407,13 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
             # Set everything outside mask to minimum value
             cross_correlated_image[~mask] = np.min(cross_correlated_image)
 
-        if get_config().plotting.debug:
+        if settings.plotting.debug:
             from senpai.engine.plotting.images import plot_single_frame
 
             plot_single_frame(
                 cross_correlated_image,
                 scale=False,
-                output_file=get_config().runtime.output_dir
-                / f"masked_cc_{rate_frame_a.index}_{rate_frame_b.index}.png",
+                output_file=settings.runtime.output_dir / f"masked_cc_{rate_frame_a.index}_{rate_frame_b.index}.png",
             )
 
     # mask center of subcc
@@ -548,7 +543,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
         if shift_correction != (0.0, 0.0):
             logger.info(f"Trial {trials}: Shift correction = ({shift_correction[0]:.2f}, {shift_correction[1]:.2f})")
 
-        if get_config().plotting.debug:
+        if settings.plotting.debug:
             from senpai.engine.plotting.images import plot_single_frame
 
             fig, ax = plot_single_frame(
@@ -572,8 +567,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
             )
 
             plt.savefig(
-                get_config().runtime.output_dir
-                / f"rate_to_rate_cc_{rate_frame_a.index}_{rate_frame_b.index}_{trials}.png"
+                settings.runtime.output_dir / f"rate_to_rate_cc_{rate_frame_a.index}_{rate_frame_b.index}_{trials}.png"
             )
             plt.close("all")
 
@@ -688,13 +682,13 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
         psf, frame_extraction_measurement, frame_index=rate_frame_b.index
     )
 
-    if get_config().plotting.debug and psf is not None:
+    if settings.plotting.debug and psf is not None:
         from senpai.engine.plotting.images import plot_single_frame
 
         plot_single_frame(
             psf,
             scale=False,
-            output_file=get_config().runtime.output_dir / f"{rate_frame_b.index}_streak_psf.png",
+            output_file=settings.runtime.output_dir / f"{rate_frame_b.index}_streak_psf.png",
         )
 
     # Sanity-check the (already star-validated) shift against the directly-measured

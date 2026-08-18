@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.streak.rate_rate import solve_rate_from_rate
 from senpai.engine.detection.streak.rate_sidereal import solve_rate_from_sidereal
 from senpai.engine.detection.streak.sidereal_sidereal import solve_sidereal_from_sidereal
@@ -78,7 +78,7 @@ def enforce_chain_consistency(senpai_run: SenpaiRun, frame_shift: FrameShift) ->
     and before WCS propagation; a rejected hop leaves its target frame
     without a WCS, which is strictly better than a confidently wrong one.
     """
-    gate = get_config().chain_gate
+    gate = settings.chain_gate
     if not gate.enable or not (frame_shift.is_valid and frame_shift.processed):
         return
 

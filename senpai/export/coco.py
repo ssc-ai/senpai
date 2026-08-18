@@ -980,10 +980,9 @@ class SenpaiCocoExporter:
                 else:
                     # Try to find and apply master dark
                     try:
-                        from senpai.core.config import get_config
+                        from senpai.core.config import settings
 
-                        config = get_config()
-                        if config.calibrations.auto_apply_darks and config.calibrations.master_darks_dir:
+                        if settings.calibrations.auto_apply_darks and settings.calibrations.master_darks_dir:
                             # Create a temporary ProcessedFitsImage to use the dark subtraction function
                             from senpai.engine.models.images import ProcessedFitsImage
                             from senpai.engine.models.metadata import ImageMetadata
@@ -994,7 +993,7 @@ class SenpaiCocoExporter:
                                 metadata=ImageMetadata(width=processed_data.shape[1], height=processed_data.shape[0]),
                                 data_type=processed_data.dtype,
                             )
-                            temp_image = apply_dark_subtraction(temp_image, config.calibrations.master_darks_dir)
+                            temp_image = apply_dark_subtraction(temp_image, settings.calibrations.master_darks_dir)
                             processed_data = temp_image.data
                             logger.debug("Applied dark subtraction from master dark")
                     except Exception as e:

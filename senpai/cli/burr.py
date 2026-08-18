@@ -34,7 +34,7 @@ from senpai.astrometry import enforce_indices, require_astrometry_install
 from senpai.catalog.runner import enforce_catalog
 from senpai.cli.calibrate import main as calibrate_main
 from senpai.cli.common import ensure_output_dir, save_run_metadata
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import get_config, initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.core.logging import set_log_level
 from senpai.engine.models.senpai import SenpaiRunResult
@@ -174,7 +174,7 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
     batches (e.g. by TASKID), so the hint mislabels real rate frames as sidereal.
     We keep it only as a last resort for a frame with no TRKMODE at all.
     """
-    mode_keys = get_config().headers.tracking.track_mode_keys or ["TRKMODE"]
+    mode_keys = settings.headers.tracking.track_mode_keys or ["TRKMODE"]
     path_to_intent: dict[str, str | None] = {str(r.path): r.intended_tracking_mode for r in batch.frames}
     filled: dict[str, str] = {}
     for img in file_list:
@@ -446,9 +446,9 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
                 initializer=_worker_init,
                 initargs=(
                     str(args.config),
-                    get_config().logging.level,
+                    settings.logging.level,
                     args.detect,
-                    get_config().runtime.save_processed_fits,
+                    settings.runtime.save_processed_fits,
                     args.detect and not args.no_streaks,
                 ),
             ) as ex:

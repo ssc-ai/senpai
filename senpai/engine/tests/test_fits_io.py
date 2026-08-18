@@ -20,7 +20,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 import pytest
 from astropy.io.fits import Header
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import get_config, initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.metadata import TrackMode
 from senpai.engine.utils import fits_io
@@ -39,7 +39,7 @@ def restore_headers():
     Tests that need multiple candidate keys / alternate formats mutate the
     in-memory config; this keeps the singleton clean for sibling tests.
     """
-    cfg = get_config().headers
+    cfg = settings.headers
     snapshot = {
         "exptime": list(cfg.exposure_time.exposure_time_keys),
         "obs_keys": list(cfg.observation_time.observation_time_keys),

@@ -868,9 +868,9 @@ class SenpaiRun(BaseModel):
             f.photometry_summary for f in self.rate_track_frames
         ):
             try:
-                from senpai.core.config import get_config
+                from senpai.core.config import settings
 
-                pcfg = get_config().photometry
+                pcfg = settings.photometry
                 photometry_block = {
                     "aperture_radius_factor": pcfg.aperture_radius_factor,
                     "bg_inner_factor": pcfg.bg_inner_factor,

@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.photometry.utils import (
     _completeness_limits,
@@ -131,7 +131,7 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
     if comp_mag and comp_pct:
         comp_path = out_dir / f"frame_{frame.index}_completeness.png"
         if force or not comp_path.exists():
-            target = float(get_config().photometry.limiting_completeness_fraction)
+            target = float(settings.photometry.limiting_completeness_fraction)
             m_target, m50, m90 = _completeness_limits(comp_mag, comp_pct, target=target)
             _save_completeness_plot(comp_mag, comp_pct, m_target, m50, m90, comp_path)
             written.append(comp_path)
@@ -142,7 +142,7 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
         lim_path = out_dir / f"frame_{frame.index}_limiting_mag.png"
         if force or not lim_path.exists():
             limiting = ps.get("limiting_magnitude_50") or ps.get("limiting_magnitude")
-            min_snr = float(ps.get("limiting_snr", get_config().photometry.limiting_snr))
+            min_snr = float(ps.get("limiting_snr", settings.photometry.limiting_snr))
             _save_simple_limiting_mag_plot(stars_mag, stars_snr, limiting, min_snr, lim_path)
             written.append(lim_path)
     return written
@@ -200,14 +200,13 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     else:
         frame_obj = SiderealFrame(**common)
 
-    cfg = get_config()
-    cfg.runtime.output_dir = out_dir
-    prev = cfg.plotting.photometry
-    cfg.plotting.photometry = True
+    settings.runtime.output_dir = out_dir
+    prev = settings.plotting.photometry
+    settings.plotting.photometry = True
     try:
         calculate_star_snrs_with_aperture_photometry(frame_obj, stars, plot=True)
     finally:
-        cfg.plotting.photometry = prev
+        settings.plotting.photometry = prev
     return [ap_path] if ap_path.exists() else []
 
 

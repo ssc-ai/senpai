@@ -12,7 +12,7 @@ from scipy.ndimage import maximum_filter
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import ConvexHull
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.astrometry import WCSMetadata, WCSModel
 from senpai.engine.models.metadata import StreakMetadata
 from senpai.engine.models.starfield import StarInImage, StarInSpace
@@ -704,7 +704,6 @@ def update_starfield_wcs(
         limiting_magnitude: Optional limiting magnitude for catalog query.
 
     """
-    config = get_config()
 
     frame.starfield.wcs = new_wcs
     frame.starfield.wcs_metadata = WCSMetadata.from_wcsmodel(new_wcs)
@@ -716,16 +715,16 @@ def update_starfield_wcs(
     catalog_stars = catalog_stars_from_wcs(new_wcs, limiting_magnitude=limiting_magnitude)
 
     # Apply radius filtering if configured
-    if config.astrometry.reduce_field_by_radius is not None:
+    if settings.astrometry.reduce_field_by_radius is not None:
         catalog_stars = filter_catalog_stars_by_radius(
             catalog_stars,
             frame.frame.metadata,
-            config.astrometry.reduce_field_by_radius,
+            settings.astrometry.reduce_field_by_radius,
         )
         logger.info(
             "Filtered catalog stars to %i stars within %.2f%% of image circle",
             len(catalog_stars.stars),
-            config.astrometry.reduce_field_by_radius * 100,
+            settings.astrometry.reduce_field_by_radius * 100,
         )
 
     # CRITICAL: Update pixel coordinates using full WCS with SIP distortion

@@ -9,7 +9,7 @@ import numpy as np
 
 from senpai.astrometry import solve_field
 from senpai.catalog.runner import query_catalog
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.point.satellite import extract_point_sources
 from senpai.engine.detection.streak.rate_extraction import (
     build_streak_metadata,
@@ -55,7 +55,6 @@ def process_rate_fits_rate(
         DeprecationWarning,
         stacklevel=2,
     )
-    config = get_config()
 
     timestamp = extract_uct_time_from_header(fits_image.header)
     frame_metadata = FrameMetadata.from_header(fits_image.header)
@@ -94,14 +93,14 @@ def process_rate_fits_rate(
             rate_frame.pixel_track_rate_per_second = float(rate_frame.streak.pixel_length) / float(exp)
 
     # 2) Persist streak artifacts
-    output_dir = Path(config.runtime.output_dir)
+    output_dir = Path(settings.runtime.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if measurement is not None:
         with open(output_dir / "streak_measurement.json", "w") as f:
             json.dump(measurement.model_dump(mode="json"), f, indent=4)
 
-    if psf is not None and (config.plotting.debug or config.plotting.review):
+    if psf is not None and (settings.plotting.debug or settings.plotting.review):
         plot_single_frame(
             psf,
             scale=False,
@@ -120,7 +119,7 @@ def process_rate_fits_rate(
         )
 
         # Plot detections going into astrometry (similar to sidereal_detections.png)
-        if (config.plotting.debug or config.plotting.review) and sources:
+        if (settings.plotting.debug or settings.plotting.review) and sources:
             sources_for_plot = StarListImage(
                 detections=sources,
                 image_metadata=ImageMetadata(
@@ -182,7 +181,7 @@ def process_rate_fits_rate(
                     json.dump(wcs_starfield.model_dump(mode="json"), f, indent=4)
 
                 # Perform object detection if requested
-                if config.detection.detect:
+                if settings.detection.detect:
                     try:
                         # Ensure detection_metadata is set on starfield (needed by extract_point_sources)
                         # Use FWHM from streak measurement
@@ -215,7 +214,7 @@ def process_rate_fits_rate(
                             fits_image,
                             wcs_starfield,
                             rate_frame.streak,
-                            config.photometry,
+                            settings.photometry,
                         )
                         logger.info(f"Photometry summary: {photometry_summary}")
 
@@ -244,7 +243,7 @@ def process_rate_fits_rate(
                         )
 
                         # Create photometry plots if enabled
-                        if config.plotting.photometry:
+                        if settings.plotting.photometry:
                             plot_photometry_summary(
                                 photometry_results,
                                 photometry_summary,
@@ -275,7 +274,7 @@ def process_rate_fits_rate(
                             photometry_summary.zero_point,
                             photometry_summary.zero_point_err,
                             exposure_time=(frame_metadata.exposure_time_seconds if frame_metadata else None),
-                            config=config.photometry,
+                            config=settings.photometry,
                             multiband_calibration=photometry_summary.multiband_calibration,
                             observation_filter=(frame_metadata.observation_filter if frame_metadata else None),
                         )
@@ -283,7 +282,7 @@ def process_rate_fits_rate(
                         logger.warning(f"Detection photometry failed: {e}", exc_info=True)
 
                 # Plot final solved frame (after photometry and detection)
-                if config.plotting.debug or config.plotting.review:
+                if settings.plotting.debug or settings.plotting.review:
                     plot_single_frame(
                         fits_image.data,
                         starfield=wcs_starfield,

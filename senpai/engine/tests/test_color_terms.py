@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.metadata import ImageMetadata
 from senpai.engine.models.starfield import StarField, StarInSpace
@@ -28,8 +28,8 @@ from senpai.engine.photometry.utils import SimplePhotometryConfig, SimplePhotome
 @pytest.fixture(scope="module", autouse=True)
 def _config() -> None:
     initialize_config(CONFIG_DIR / "burr.yaml")
-    get_config().plotting.photometry = False
-    get_config().plotting.debug = False
+    settings.plotting.photometry = False
+    settings.plotting.debug = False
 
 
 def _synth_arrays(zp, color_coeff, n=40, noise=0.01, seed: int = 0):

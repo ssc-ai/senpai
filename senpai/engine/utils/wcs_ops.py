@@ -4,7 +4,7 @@ import logging
 import math
 
 from senpai.catalog.runner import query_catalog
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
 from senpai.engine.models.astrometry import WCSMetadata, WCSModel, WCSStatus
 from senpai.engine.models.starfield import StarField, StarInSpace, StarListSpace
@@ -165,8 +165,7 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
     )
 
     # Apply radius filtering if configured
-    config = get_config()
-    if config.astrometry.reduce_field_by_radius is not None:
+    if settings.astrometry.reduce_field_by_radius is not None:
         from senpai.engine.models.starfield import StarListSpace
 
         wrapped = StarListSpace(
@@ -176,13 +175,13 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
         wrapped = filter_catalog_stars_by_radius(
             wrapped,
             target_frame.frame.metadata,
-            config.astrometry.reduce_field_by_radius,
+            settings.astrometry.reduce_field_by_radius,
         )
         target_stars_catalog_list = wrapped.stars
         logger.info(
             "Filtered catalog stars to %i stars within %.2f%% of image circle",
             len(target_stars_catalog_list),
-            config.astrometry.reduce_field_by_radius * 100,
+            settings.astrometry.reduce_field_by_radius * 100,
         )
 
     # Build image metadata from source frame (same image dimensions, similar boresight)

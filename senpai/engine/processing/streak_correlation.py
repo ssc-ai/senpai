@@ -14,7 +14,7 @@ import uuid
 import numpy as np
 from astropy.stats import sigma_clipped_stats
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.streak.sidereal_streak import (
     detect_streaks_in_sidereal,
     measure_streak_candidate_photometry,
@@ -55,7 +55,6 @@ def detect_streaks_in_sidereal_frames(
         for use in multi-frame DE-based confirmation.
 
     """
-    config = get_config()
     de_data: dict[int, tuple[np.ndarray, float, np.ndarray]] = {}
 
     for frame in senpai_run.sidereal_frames:
@@ -100,7 +99,7 @@ def detect_streaks_in_sidereal_frames(
                         zero_point_err=zp_err,
                         exposure_time=exposure_time,
                         fwhm=fwhm,
-                        gain=config.photometry.gain,
+                        gain=settings.photometry.gain,
                         multiband_calibration=multiband_cal,
                         observation_filter=obs_filter,
                     )
@@ -131,8 +130,7 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
     2. Filters out candidates matching the star streak angle+length (smeared stars)
     3. Stores remaining candidates on frame.streak_candidates
     """
-    config = get_config()
-    angle_tol = config.detection.streak_angle_tolerance_deg
+    angle_tol = settings.detection.streak_angle_tolerance_deg
 
     for frame in senpai_run.rate_track_frames:
         if frame.starfield is None or not frame.starfield.fit:
@@ -198,7 +196,7 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
                         zero_point_err=zp_err,
                         exposure_time=exposure_time,
                         fwhm=fwhm,
-                        gain=config.photometry.gain,
+                        gain=settings.photometry.gain,
                         multiband_calibration=multiband_cal,
                         observation_filter=obs_filter,
                     )
@@ -268,9 +266,8 @@ def correlate_streaks_across_frames(senpai_run: SenpaiRun) -> list[CorrelatedStr
 
     Returns a list of CorrelatedStreak objects.
     """
-    config = get_config()
-    angle_tol = config.detection.streak_angle_tolerance_deg
-    radius_fwhm = config.detection.streak_correlation_radius_fwhm
+    angle_tol = settings.detection.streak_angle_tolerance_deg
+    radius_fwhm = settings.detection.streak_correlation_radius_fwhm
 
     # Collect all frames with streak candidates, sorted by index
     frames_with_streaks = [f for f in senpai_run.sidereal_frames if f.streak_candidates]
@@ -526,9 +523,8 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
     sign combinations are tried.  A match also resolves the streak's
     180-degree direction ambiguity.
     """
-    config = get_config()
-    angle_tol = config.detection.streak_angle_tolerance_deg
-    radius_fwhm = config.detection.streak_correlation_radius_fwhm
+    angle_tol = settings.detection.streak_angle_tolerance_deg
+    radius_fwhm = settings.detection.streak_correlation_radius_fwhm
 
     if not senpai_run.rate_track_frames or not senpai_run.sidereal_frames:
         return

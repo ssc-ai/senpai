@@ -8,7 +8,7 @@ from typing import Literal
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import get_config, settings
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
 from senpai.engine.detection.point.satellite import extract_point_sources
 from senpai.engine.detection.point.sidereal import validate_point_detection
@@ -831,14 +831,13 @@ def _write_sequence_gif(image_paths: list, gif_path) -> None:
 
 
 def final_plots(senpai_run: SenpaiRun, output_dir: Path):
-    config = get_config()
 
-    run_id = config.runtime.run_id
+    run_id = settings.runtime.run_id
 
     # Per-frame empirical PSF panels (stacked stars for sidereal, stacked streak
     # for rate). A small .npy stamp is saved next to each PNG so the panel can be
     # regenerated later (see engine.plotting.replot) without the raw FITS.
-    if config.plotting.psfs:
+    if settings.plotting.psfs:
         from senpai.engine.plotting.psf import plot_rate_frame, plot_sidereal_frame
 
         for f in senpai_run.sidereal_frames:
@@ -858,7 +857,7 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
 
     for image_frame in senpai_run.sidereal_frames:
         output_file = output_dir / f"final_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 starfield=image_frame.starfield,
@@ -867,7 +866,7 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
                 output_file=output_file,
             )
         output_file = output_dir / f"raw_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 output_file=output_file,
@@ -875,7 +874,7 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
 
     for image_frame in senpai_run.rate_track_frames:
         output_file = output_dir / f"final_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 starfield=image_frame.starfield,
@@ -886,13 +885,13 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
             )
 
         output_file = output_dir / f"raw_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 output_file=output_file,
             )
 
-    if config.plotting.review:
+    if settings.plotting.review:
         # Collect all plot filenames and sort by frame index
         plot_files = []
         plot_rate_files = []

@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.detection.streak.validation import (
     extract_box_statistics,
@@ -39,7 +39,7 @@ from senpai.engine.models.starfield import StarInSpace
 def _config() -> None:
     initialize_config(CONFIG_DIR / "burr.yaml")
     # Validation has debug-plot paths gated on config.plotting.debug; keep off.
-    get_config().plotting.debug = False
+    settings.plotting.debug = False
 
 
 @pytest.fixture(autouse=True)

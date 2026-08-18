@@ -12,7 +12,7 @@ from pstats import SortKey
 
 import yaml
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +85,7 @@ def profile_run(func, *args, run_id: str = "profile", **kwargs):
     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
     ps.print_stats(30)
 
-    config = get_config()
-    with open(config.runtime.output_dir / f"profile_{run_id}.txt", "w") as f:
+    with open(settings.runtime.output_dir / f"profile_{run_id}.txt", "w") as f:
         f.write(s.getvalue())
 
     logger.info("Profile results saved to profile_%s.txt", run_id)

@@ -12,7 +12,7 @@ import logging
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.astrometry import WCSQualityMetrics
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetr
     metrics when the refinement produced a refit. Returns None (and logs) when
     validation is disabled or the frame has no usable catalog.
     """
-    config = get_config().wcs_validation
+    config = settings.wcs_validation
     if not config.enable:
         return None
 

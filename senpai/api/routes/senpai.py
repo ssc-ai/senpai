@@ -18,7 +18,7 @@ from senpai.api.models.returns import (
     frame_result_from_rate,
     frame_result_from_sidereal,
 )
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.processing.collect import process_senpai_collect
 from senpai.engine.utils.file_io import load_base64_files
@@ -79,8 +79,7 @@ def _run_collect_pipeline(
 
 @router.get("/")
 async def index(request: Request):
-    config = get_config()
-    return {"api": str(request.base_url), "version": config.version}
+    return {"api": str(request.base_url), "version": settings.version}
 
 
 # ---------------------------------------------------------------------------

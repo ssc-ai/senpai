@@ -17,7 +17,7 @@ import pytest
 from astropy.io import fits
 from scipy.spatial import cKDTree
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import CollectionMetadata, FWHMMetadata, ImageMetadata
@@ -49,8 +49,8 @@ SIGMA = FWHM / 2.355
 def _config() -> None:
     """Process-wide config singleton, plotting off (no files written)."""
     initialize_config(CONFIG_DIR / "burr.yaml")
-    get_config().plotting.photometry = False
-    get_config().plotting.debug = False
+    settings.plotting.photometry = False
+    settings.plotting.debug = False
 
 
 def _cfg(**kw) -> SimplePhotometryConfig:
@@ -279,7 +279,7 @@ def test_run_result_records_aperture_policy() -> None:
         sidereal_frames=[frame],
     )
     block = run.to_result().photometry
-    pcfg = get_config().photometry
+    pcfg = settings.photometry
     assert block is not None
     assert block["aperture_radius_factor"] == pcfg.aperture_radius_factor
     assert block["bg_inner_factor"] == pcfg.bg_inner_factor

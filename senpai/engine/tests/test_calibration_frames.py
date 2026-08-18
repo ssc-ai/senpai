@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
 from senpai.engine.models.metadata import ImageMetadata
@@ -38,7 +38,7 @@ from senpai.engine.utils.preprocessing import (
 @pytest.fixture(scope="module", autouse=True)
 def _config() -> None:
     initialize_config(CONFIG_DIR / "burr.yaml")
-    get_config().plotting.debug = False
+    settings.plotting.debug = False
 
 
 def _write_fits(path: Path, data: np.ndarray, **header_kw) -> Path:

@@ -4,7 +4,7 @@ import time
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.starfield import StarInSpace
 from senpai.engine.models.streak_measurement import StreakMeasurement
@@ -266,17 +266,16 @@ def validate_shift_lightweight(
         tuple: (valid, correlation, streak_measurement, shift_correction)
 
     """
-    config = get_config()
     target_frame = target.frame.data
     source_frame = source.frame.data
 
     start_time = time.time()
 
     # Get config parameters
-    base_box_size = config.validation.box_size
-    n_random_trials = config.validation.n_random_trials
-    random_radius = config.validation.random_radius_pixels
-    max_stars = config.validation.max_validation_stars
+    base_box_size = settings.validation.box_size
+    n_random_trials = settings.validation.n_random_trials
+    random_radius = settings.validation.random_radius_pixels
+    max_stars = settings.validation.max_validation_stars
 
     # Adaptive box size: increase for wide streaks to capture full flux
     # fwhm_exclusion represents the streak width perpendicular to motion
@@ -342,7 +341,7 @@ def validate_shift_lightweight(
     # chain. If the negated shift correlates decisively better, the proposed
     # shift is the wrong branch of that ambiguity — reject it here so the
     # solver can try again rather than poison every downstream frame.
-    if config.validation.test_negated_shift and shift_magnitude > 5.0:
+    if settings.validation.test_negated_shift and shift_magnitude > 5.0:
         negated_corr, negated_n_stars, _ = quick_correlation_from_boxes(
             target_frame,
             source_frame,
@@ -353,7 +352,7 @@ def validate_shift_lightweight(
             max_stars,
             debug_label="NEGATED",
         )
-        if negated_n_stars >= 4 and negated_corr > proposed_corr * config.validation.negated_rejection_ratio:
+        if negated_n_stars >= 4 and negated_corr > proposed_corr * settings.validation.negated_rejection_ratio:
             logger.warning(
                 "Rejecting proposed shift (%.1f, %.1f): its negation correlates "
                 "better (%.3f vs %.3f) — direction ambiguity",
@@ -624,9 +623,9 @@ def validate_shift_lightweight(
 
     # 4. Validate based on "near-best" criterion
     # Accept if proposed is within a few percent of the best AND has reasonable absolute correlation
-    min_corr_ratio = config.validation.min_correlation_ratio
-    min_absolute_corr = config.validation.min_absolute_correlation
-    lenient_absolute_corr = config.validation.lenient_absolute_correlation
+    min_corr_ratio = settings.validation.min_correlation_ratio
+    min_absolute_corr = settings.validation.min_absolute_correlation
+    lenient_absolute_corr = settings.validation.lenient_absolute_correlation
 
     # SPECIAL CASE: If proposed is FAR better than ALL random trials (all negative/near-zero)
     # then we should be very lenient with absolute threshold - it's clearly the only real signal
@@ -671,7 +670,7 @@ def validate_shift_lightweight(
         # (was a hardcoded 0.99, which razor-thin-rejected correct shifts at
         # ratio ~0.987 → fell through to a flipped shift); the random-trials noise
         # guard below + the absolute-correlation floor still catch bad shifts.
-        min_corr_ratio = max(min_corr_ratio, config.validation.fewer_stars_correlation_ratio)
+        min_corr_ratio = max(min_corr_ratio, settings.validation.fewer_stars_correlation_ratio)
 
     # CRITICAL: If proposed has significantly fewer stars than MULTIPLE random trials,
     # this strongly suggests we're matching noise and the proposed shift is wrong
@@ -683,8 +682,10 @@ def validate_shift_lightweight(
             f"than proposed ({proposed_n_stars}). This suggests noise correlation!"
         )
         # Require much stricter validation (config-driven).
-        min_corr_ratio = config.validation.noise_correlation_ratio
-        effective_min_absolute_corr = max(effective_min_absolute_corr, config.validation.noise_min_absolute_correlation)
+        min_corr_ratio = settings.validation.noise_correlation_ratio
+        effective_min_absolute_corr = max(
+            effective_min_absolute_corr, settings.validation.noise_min_absolute_correlation
+        )
 
     valid = (corr_ratio >= min_corr_ratio) and (proposed_corr >= effective_min_absolute_corr)
 
@@ -721,7 +722,7 @@ def validate_shift_lightweight(
             )
 
     # Debug plotting if enabled
-    if config.plotting.debug:
+    if settings.plotting.debug:
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
@@ -853,7 +854,7 @@ def validate_shift_lightweight(
         ax.set_ylabel("Y (pixels)")
 
         output_file = (
-            config.runtime.output_dir / f"lightweight_validation_{source.index}_to_{target.index}_trial_{trial}.png"
+            settings.runtime.output_dir / f"lightweight_validation_{source.index}_to_{target.index}_trial_{trial}.png"
         )
         plt.tight_layout()
         plt.savefig(output_file, dpi=150, bbox_inches="tight")

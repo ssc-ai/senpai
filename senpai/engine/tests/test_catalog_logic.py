@@ -279,7 +279,7 @@ def test_query_catalog_gaia_faint_limit_from_config(monkeypatch: pytest.MonkeyPa
     # Fake config with a star_catalog.faint_limit = 17.0
     fake_catalog = types.SimpleNamespace(faint_limit=17.0)
     fake_cfg = types.SimpleNamespace(star_catalog=fake_catalog)
-    monkeypatch.setattr(runner, "get_config", lambda: fake_cfg)
+    monkeypatch.setattr(runner, "settings", fake_cfg)
 
     # Build a real-ish WCSModel only to satisfy validation downstream
     wcs = _wcs_model()
@@ -298,7 +298,7 @@ def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch: pytes
     monkeypatch.setattr(runner, "_query_catalog_gaia_cached", fake_cached)
     monkeypatch.setattr(runner, "_make_wcs_hashable", lambda wcs: ("k",))
     fake_cfg = types.SimpleNamespace(star_catalog=types.SimpleNamespace(faint_limit=None))
-    monkeypatch.setattr(runner, "get_config", lambda: fake_cfg)
+    monkeypatch.setattr(runner, "settings", fake_cfg)
 
     runner.query_catalog_gaia(_wcs_model(), faint_lim=None)
     assert captured["faint_lim"] is None

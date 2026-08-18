@@ -12,7 +12,7 @@ from photutils.utils.exceptions import NoDetectionsWarning
 from scipy.ndimage import median_filter
 from scipy.signal import fftconvolve
 
-from senpai.core.config import get_config, settings
+from senpai.core.config import settings
 from senpai.engine.detection.point.sidereal import validate_point_detection
 from senpai.engine.detection.streak.masking import percent_difference
 from senpai.engine.models.senpai import RateTrackFrame
@@ -289,7 +289,6 @@ def filter_point_sources(
         List of filtered (x, y) coordinates for confirmed point sources
 
     """
-    config = get_config()
     filtered_detections = []
     cutout_size = int(3 * pixel_seeing)
 
@@ -299,21 +298,21 @@ def filter_point_sources(
         # Generate cutout and check if it's on the edge
         cutout = generate_cutout(frame.frame.data, detection, cutout_size, plot=False)
         if cutout.shape[0] != cutout.shape[1]:
-            if config.detection.verbose:
+            if settings.detection.verbose:
                 logger.warning(f"[{idx + 1}] [FILTERING] Detection is on edge of image")
             continue
 
         # Normalize cutout
         cutout = cutout - np.min(cutout)
         if np.sum(cutout) == 0:
-            if config.detection.verbose:
+            if settings.detection.verbose:
                 logger.warning(f"[{idx + 1}] [FILTERING] No signal in cutout")
             continue
 
         # Check for hot pixels (too much flux in a single pixel)
         hot_pixel_concentration = np.max(cutout) / np.sum(cutout)
         if hot_pixel_concentration > hot_pixel_threshold:
-            if config.detection.verbose:
+            if settings.detection.verbose:
                 logger.warning(
                     f"[{idx + 1}] [FILTERING] Brightest pixel contains {hot_pixel_concentration:.2f} of total flux"
                 )
@@ -326,7 +325,7 @@ def filter_point_sources(
         dist = euclidean_distance(p1, p2)
         max_separation = pixel_seeing * 2.0  # Allow up to 2x seeing for bright sources
         if dist > max_separation:
-            if config.detection.verbose:
+            if settings.detection.verbose:
                 logger.warning(
                     f"[{idx + 1}] [FILTERING] Two brightest pixels separated by {dist:.1f} pixels "
                     f"(seeing is {pixel_seeing:.1f}, max allowed is {max_separation:.1f})"
@@ -347,7 +346,7 @@ def filter_point_sources(
             # cosmic-ray hits (~1-2 px).
             narrow_limit = max(pixel_seeing / 3.5, 1.2)
             if fx < narrow_limit or fy < narrow_limit:
-                if config.detection.verbose:
+                if settings.detection.verbose:
                     logger.warning(
                         f"[{idx + 1}] [FILTERING] PSF too narrow (FWHM={fcomb:.2f}) compared to seeing={pixel_seeing:.2f}"
                     )
@@ -357,7 +356,7 @@ def filter_point_sources(
             # Also check average FWHM to catch cases where one dimension is OK but average is too wide
             max_fwhm = max(fx, fy)
             if max_fwhm > pixel_seeing * 1.5 or fcomb > pixel_seeing * 1.5:
-                if config.detection.verbose:
+                if settings.detection.verbose:
                     logger.warning(
                         f"[{idx + 1}] [FILTERING] PSF too wide (FWHM_x={fx:.2f}, FWHM_y={fy:.2f}, "
                         f"avg={fcomb:.2f}) compared to seeing={pixel_seeing:.2f}"
@@ -367,7 +366,7 @@ def filter_point_sources(
             # Check if PSF is non-circular (could be a streak)
             # Use stricter threshold (40% instead of 55%) to catch more streak-like detections
             if percent_difference(fx, fy) > 40:
-                if config.detection.verbose:
+                if settings.detection.verbose:
                     logger.warning(
                         f"[{idx + 1}] [FILTERING] PSF not round (difference between x and y FWHM={percent_difference(fx, fy):.2f}%)"
                     )
@@ -377,20 +376,20 @@ def filter_point_sources(
             # For point sources, both dimensions should be similar
             fwhm_ratio = max(fx, fy) / min(fx, fy) if min(fx, fy) > 0 else float("inf")
             if fwhm_ratio > 2.0:
-                if config.detection.verbose:
+                if settings.detection.verbose:
                     logger.warning(
                         f"[{idx + 1}] [FILTERING] PSF aspect ratio too high (ratio={fwhm_ratio:.2f}, likely a streak)"
                     )
                 continue
 
         except Exception as e:
-            if config.detection.verbose:
+            if settings.detection.verbose:
                 logger.warning(f"[{idx + 1}] [FILTERING] Failed to fit Gaussian: {e!s}")
             continue
 
-        if config.plotting.debug:
+        if settings.plotting.debug:
             fig, ax = plot_single_frame(cutout)
-            plt.savefig(config.runtime.output_dir / f"detection_cutout_{idx}.png")
+            plt.savefig(settings.runtime.output_dir / f"detection_cutout_{idx}.png")
             plt.close("all")
 
         pixel_fwhm = (fx + fy) / 2
@@ -626,7 +625,6 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
 
     logger.info("Extracting point sources")
 
-    config = get_config()
     # Get the image data
     image_data = frame.frame.data
 
@@ -783,7 +781,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     logger.info(f"Estimated seeing: {pixel_seeing:.2f} pixels")
 
     # Plot initial detections before filtering for debugging
-    if config.plotting.debug and config.runtime.output_dir:
+    if settings.plotting.debug and settings.runtime.output_dir:
         try:
             # Create temporary detections list for plotting
             temp_detections = []
@@ -806,7 +804,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
             plot_single_frame(
                 image_data_sub,
                 detections=temp_detections_list,
-                output_file=config.runtime.output_dir / "detections_initial.png",
+                output_file=settings.runtime.output_dir / "detections_initial.png",
                 scale=True,
             )
             logger.info(f"Plotted {len(all_detections)} initial detections to detections_initial.png")
@@ -884,10 +882,10 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
             detection_type="point",
         )
 
-        if config.detection.snr_threshold and star.snr > config.detection.snr_threshold:
+        if settings.detection.snr_threshold and star.snr > settings.detection.snr_threshold:
             stars.append(star)
 
-    if config.detection.snr_threshold:
+    if settings.detection.snr_threshold:
         logger.info(f"After SNR filtering, {len(stars)} detections remain")
 
     return SatelliteListImage(detections=stars, image_metadata=frame.starfield.image_metadata)
