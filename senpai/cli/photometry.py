@@ -34,8 +34,8 @@ from senpai.engine.processing.photometry_pipeline import process_image_photometr
 logger = logging.getLogger(__name__)
 
 
-def main():
-    """Main CLI function."""
+def main() -> None:
+    """Run the photometry CLI."""
     parser = argparse.ArgumentParser(description="Perform photometry on FITS images")
 
     # Required arguments

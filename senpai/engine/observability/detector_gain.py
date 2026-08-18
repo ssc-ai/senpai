@@ -44,6 +44,8 @@ _NAME_RE = re.compile(r"^(?P<ts>[^_]+)_(?P<field>.+)_f(?P<idx>\d+)$")
 
 @dataclass
 class FrameKey:
+    """A frame identified by what pairs it with its neighbour: field, time and burst index."""
+
     path: Path
     timestamp: str
     field: str
@@ -59,7 +61,7 @@ def parse_frame_key(path: str | Path) -> FrameKey | None:
     return FrameKey(p, m["ts"], m["field"], int(m["idx"]))
 
 
-def find_burst_pairs(paths) -> list[tuple[Path, Path]]:
+def find_burst_pairs(paths: list[Path]) -> list[tuple[Path, Path]]:
     """Consecutive same-field exposures (a burst) -> difference pairs.
 
     Two time-adjacent frames pair only when they share a field token and their
@@ -132,6 +134,12 @@ def ptc_point(frame1: np.ndarray, frame2: np.ndarray, patch: int = 128) -> tuple
 
 @dataclass
 class GainFit:
+    """A fitted detector gain, with the interval and the fit it came from.
+
+    Gain is the reciprocal of the variance-versus-level slope, so the bounds come from the
+    slope interval rather than being propagated by hand.
+    """
+
     gain: float  # e-/ADU = 1 / slope
     gain_lo: float  # from the Theil-Sen 95% slope interval
     gain_hi: float

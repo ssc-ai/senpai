@@ -4,6 +4,7 @@ import concurrent.futures
 import contextlib
 import logging
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import click
@@ -34,7 +35,8 @@ def setup_routes(app: FastAPI) -> None:
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Hold a process pool for the app's lifetime, so a request never pays to start one."""
     max_workers_env = os.getenv("SENPAI_EXECUTOR_WORKERS")
     max_workers = int(max_workers_env) if max_workers_env else DEFAULT_EXECUTOR_MAX_WORKERS
     executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, initializer=_init_pool_worker)
@@ -50,7 +52,7 @@ async def lifespan(app: FastAPI):
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _init_pool_worker():
+def _init_pool_worker() -> None:
 
     cfg_path = os.getenv("SENPAI_CONFIG")
     if cfg_path:

@@ -31,11 +31,13 @@ def extract_box_statistics(
     box_size: int = 11,
 ) -> dict:
     """Extract simple statistics from a box around a position.
-    Much faster than flood-fill for validation purposes.
+
+    Much faster than flood-fill, and enough for validation.
 
     Args:
         image: The image data
-        x, y: Center position
+        x: Centre column
+        y: Centre row
         box_size: Size of box to extract (should be odd)
 
     Returns:
@@ -81,7 +83,8 @@ def quick_correlation_from_boxes(
     Args:
         target_frame: Target frame data
         source_frame: Source frame data
-        shift_x, shift_y: Shift to apply to source positions
+        shift_x: Column shift to apply to source positions
+        shift_y: Row shift to apply to source positions
         catalog_stars: List of catalog stars
         box_size: Size of box around each star
         max_stars: Maximum number of stars to use

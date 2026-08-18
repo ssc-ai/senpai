@@ -64,9 +64,10 @@ from senpai.engine.utils.darks import find_best_dark_for_exposure
 
 @dataclass
 class _FlatSource:
-    """A validated flat frame, referenced by path; data is re-read lazily
-    chunk-by-chunk during combination so full frames never co-reside in
-    memory (a night of unbinned 8120^2 twilight flats is ~50 GB).
+    """A validated flat frame, referenced by path rather than held in memory.
+
+    Data is re-read lazily chunk-by-chunk during combination so full frames never co-reside:
+    a night of unbinned 8120-square twilight flats is about 50 GB.
     """
 
     path: Path
@@ -507,7 +508,7 @@ def _combine_flat_sources(
     return master_flat
 
 
-def main():
+def main() -> None:
     """CLI interface for creating master flat fields."""
     parser = argparse.ArgumentParser(
         description="Create master flat fields from a directory of flat field FITS files",
@@ -689,7 +690,7 @@ def _create_master_flat_from_files(
     dark_directory: str | Path | None = None,
     max_dark_exptime_ratio: float = 10.0,
 ) -> tuple[np.ndarray, fits.Header]:
-    """Helper function to create master flat from a specific list of files."""
+    """Create a master flat from a specific list of files."""
     valid_sources, valid_headers, dark_subtracted_count = _validate_flat_sources(
         fits_files,
         min_median=min_median,

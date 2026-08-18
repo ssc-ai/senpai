@@ -243,8 +243,8 @@ def analyze_catalog_magnitudes(
     return results
 
 
-def main():
-    """Main CLI function."""
+def main() -> int:
+    """Run the catalog magnitude analysis CLI."""
     parser = argparse.ArgumentParser(description="Analyze magnitude distribution of stars in the SSTR7 catalog")
     parser.add_argument(
         "--config",

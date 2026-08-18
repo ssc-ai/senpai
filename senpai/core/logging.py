@@ -31,6 +31,7 @@ class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """
 
     def rotate(self, source: str, dest: str) -> None:
+        """Rotate, tolerating another process having already rotated the same file."""
         try:
             super().rotate(source, dest)
         except FileNotFoundError:
@@ -39,11 +40,13 @@ class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
 
 
 class LogMode(str, Enum):
+    """Which logging preset to apply."""
+
     LOCAL = "local"
 
 
 def get_local_config() -> dict[str, Any]:
-    """Configuration for local development with timestamps and color."""
+    """Log with timestamps and colour, for local development."""
     return {
         "version": 1,
         "disable_existing_loggers": False,

@@ -53,6 +53,12 @@ def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
 
 
 def histogram_equalization(img_in: np.ndarray, img_dtype: np.dtype = np.uint16) -> np.ndarray:
+    """Flatten a frame's intensity histogram, spreading contrast across the whole range.
+
+    More aggressive than a zscale stretch: it maximizes local contrast everywhere at the
+    cost of any consistent relationship between pixel value and flux, so it is for looking
+    rather than measuring.
+    """
     cast_img = img_in.astype(img_dtype)
 
     # Get bit depth from dtype

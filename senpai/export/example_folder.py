@@ -15,8 +15,8 @@ from pathlib import Path
 from senpai.export.cli import export_folder
 
 
-def main():
-    """Main function for the example script."""
+def main() -> None:
+    """Run the example export script."""
     parser = argparse.ArgumentParser(
         description="Example script for exporting SENPAI runs to COCO format",
         formatter_class=argparse.RawDescriptionHelpFormatter,

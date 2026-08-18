@@ -7,6 +7,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.modeling import fitting, models
+from astropy.table import Table
 from photutils.detection.daofinder import _DAOStarFinderCatalog, _StarFinderKernel
 from photutils.utils.exceptions import NoDetectionsWarning
 from scipy.ndimage import median_filter
@@ -82,9 +83,10 @@ def _dao_sources_at_threshold(
     sharphi: float,
     roundlo: float,
     roundhi: float,
-):
-    """Exact ``DAOStarFinder(...)(data_sub)`` result at ``threshold``,
-    reusing a shared convolution and precomputed local maxima.
+) -> Table | None:
+    """Reproduce ``DAOStarFinder(...)(data_sub)`` exactly at ``threshold``, but cheaply.
+
+    Reuses a shared convolution and precomputed local maxima.
 
     The adaptive-threshold search varies only the threshold scalar, but
     ``DAOStarFinder`` recomputes the identical kernel convolution and
@@ -251,6 +253,7 @@ def generate_cutout(frame: np.ndarray, detection: tuple[float, float], side: int
         frame: Full image array
         detection: (x, y) coordinates of the detection
         side: Half-width of the cutout in pixels
+        plot: Draw the cutout, for debugging by eye
 
     Returns:
         Square cutout of the image

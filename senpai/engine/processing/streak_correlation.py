@@ -10,6 +10,7 @@ Given a SenpaiRun with multiple sidereal frames, this module:
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.stats import sigma_clipped_stats
@@ -21,10 +22,13 @@ from senpai.engine.detection.streak.sidereal_streak import (
 )
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
 
+if TYPE_CHECKING:
+    from senpai.engine.photometry.color_terms import MultiBandCalibration
+
 logger = logging.getLogger(__name__)
 
 
-def _deserialize_multiband(raw):
+def _deserialize_multiband(raw: dict | None) -> "MultiBandCalibration | None":
     """Deserialize multiband_calibration from dict (photometry_summary) to MultiBandCalibration."""
     if raw is None:
         return None

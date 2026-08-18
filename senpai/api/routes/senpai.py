@@ -33,6 +33,8 @@ router = APIRouter()
 
 
 class FilePayloadItem(BaseModel):
+    """One uploaded frame, with the sequence position it occupies in its collect."""
+
     file: str = Field(..., description="Base64-encoded FITS file bytes")
     sequence_id: int | None = Field(None, description="Sequence ID for ordering")
     sequence_count: int | None = Field(None, description="Total sequence count")
@@ -78,7 +80,8 @@ def _run_collect_pipeline(
 
 
 @router.get("/")
-async def index(request: Request):
+async def index(request: Request) -> dict[str, str]:
+    """Report the API root and the running version."""
     return {"api": str(request.base_url), "version": settings.version}
 
 

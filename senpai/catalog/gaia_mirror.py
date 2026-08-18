@@ -1,5 +1,7 @@
-"""Build a trimmed local Gaia DR3 mirror (G <= mag_limit) for offline catalog
-queries — the data-engineering side of [[project-local-gaia-mirror]].
+"""Build a trimmed local Gaia DR3 mirror, so catalog queries work offline.
+
+Keeps stars down to ``mag_limit``. The data-engineering side of
+[[project-local-gaia-mirror]].
 
 Online Gaia TAP fetches dominate the burr per-batch runtime (~120-170 s/batch).
 A trimmed all-sky mirror turns each fetch into a sub-second local read. Only the

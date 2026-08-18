@@ -7,7 +7,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def jsonable(value):
+def jsonable(value: object) -> object:
     """Best-effort conversion of common scientific/Python types to JSON-safe primitives."""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value

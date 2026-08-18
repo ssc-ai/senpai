@@ -16,6 +16,7 @@ from senpai.catalog.runner import query_catalog
 from senpai.core.config import get_config
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
 from senpai.engine.detection.point.sidereal import extract_point_sources
+from senpai.engine.models.astrometry import WCSModel
 from senpai.engine.models.metadata import (
     DetectionMetadata,
     FrameMetadata,
@@ -31,7 +32,12 @@ from senpai.engine.utils.propagate_wcs import refine_sidereal_frame
 logger = logging.getLogger(__name__)
 
 
-def process_astrometry_json_sidereal(sources: StarListImage, wcs=None) -> StarField:
+def process_astrometry_json_sidereal(sources: StarListImage, wcs: WCSModel | None = None) -> StarField:
+    """Solve a WCS from an already-detected source list, without touching pixels.
+
+    This is the sources-only entry point: a caller that has done its own detection sends
+    coordinates and gets a solved starfield back.
+    """
     wcs_starfield = solve_field(sources, wcs)
 
     return wcs_starfield

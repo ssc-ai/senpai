@@ -184,7 +184,7 @@ def _save_photometry_plots(
     photometry_results: list,
     starfield: StarField,
     output_dir: Path,
-):
+) -> None:
     """Save diagnostic plots for photometry results."""
     try:
         from senpai.engine.plotting.images import plot_single_frame
@@ -206,7 +206,7 @@ def _save_aperture_visualization(
     image: ProcessedFitsImage,
     photometry_results: list,
     output_dir: Path,
-):
+) -> None:
     """Save aperture visualization for photometry results."""
     try:
         import matplotlib.pyplot as plt

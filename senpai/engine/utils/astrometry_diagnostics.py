@@ -44,7 +44,7 @@ def calculate_residual_errors(wcs_model: WCSModel, stars_with_radec_xy: list[tup
     y_errors = np.array(y_errors)
     radial_errors = np.array(radial_errors)
 
-    def calc_stats(errors):
+    def calc_stats(errors: np.ndarray) -> dict[str, float]:
         return {
             "min": float(np.min(errors)),
             "max": float(np.max(errors)),
@@ -67,7 +67,7 @@ def calculate_residual_errors(wcs_model: WCSModel, stars_with_radec_xy: list[tup
     }
 
 
-def log_residual_errors(phase_name: str, error_dict: dict):
+def log_residual_errors(phase_name: str, error_dict: dict) -> None:
     """Log residual error statistics in a formatted way.
 
     Args:

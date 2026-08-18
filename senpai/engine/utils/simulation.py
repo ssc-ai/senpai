@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def add_gaussian(source: dict, image: np.ndarray) -> None:
+    """Add one Gaussian source to an image in place."""
     x_mean, y_mean = source["x_mean"], source["y_mean"]
     x_stddev, y_stddev = source["x_stddev"], source["y_stddev"]
     amplitude = source["amplitude"]

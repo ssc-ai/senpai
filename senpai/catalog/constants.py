@@ -53,7 +53,7 @@ class GaiaFilter(Enum):
     RP = "RP"
 
 
-def get_filters_for_catalog(catalog_type: CatalogType):
+def get_filters_for_catalog(catalog_type: CatalogType) -> list[str]:
     """Get available filters for a given catalog type.
 
     Args:

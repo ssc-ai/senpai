@@ -237,7 +237,7 @@ def test_astrometry_install() -> bool:
     return astroeasy.test_install(docker_image=config.astrometry.docker_image)
 
 
-def require_astrometry_install():
+def require_astrometry_install() -> None:
     """Raise if astrometry.net is not installed."""
     if not test_astrometry_install():
         raise ValueError("Astrometry.net is not installed or not in PATH")
@@ -252,7 +252,7 @@ def examine_indices() -> bool:
     )
 
 
-def enforce_indices():
+def enforce_indices() -> None:
     """Raise if configured index files are missing or incomplete."""
     config = get_or_initialize_config()
     if not examine_indices():

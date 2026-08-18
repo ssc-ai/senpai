@@ -47,6 +47,12 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 @dataclass(frozen=True, slots=True)
 class ParsedFilename:
+    """What a burr FITS filename encodes, once parsed.
+
+    Every field is optional because UUID-style names carry none of it -- those frames have
+    to be attributed from their headers instead.
+    """
+
     path: Path
     timestamp: datetime | None  # tz-aware UTC, or None for UUID-style names
     task: str | None  # e.g. "calsats"; None for UUID-style
@@ -56,6 +62,7 @@ class ParsedFilename:
 
     @property
     def command_verb(self) -> str | None:
+        """The scheduler command that would have produced this task, if the task is known."""
         return TASK_TO_COMMAND.get(self.task) if self.task else None
 
 

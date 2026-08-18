@@ -38,7 +38,9 @@ from senpai.engine.plotting.images import plot_single_frame
 logger = logging.getLogger(__name__)
 
 
-def solve_rate_from_sidereal(sidereal_frame: SiderealFrame, rate_frame: RateTrackFrame, frame_shift: FrameShift):
+def solve_rate_from_sidereal(
+    sidereal_frame: SiderealFrame, rate_frame: RateTrackFrame, frame_shift: FrameShift
+) -> None:
 
     # A fully-cloudy anchor gets no WCS, so its starfield (and detection
     # metadata / fwhm) is None — reading it crashed the whole calsat batch.

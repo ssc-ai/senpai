@@ -500,7 +500,7 @@ def _create_descriptive_filename(
     return output_dir / descriptive_filename
 
 
-def main():
+def main() -> None:
     """CLI interface for creating master darks."""
     parser = argparse.ArgumentParser(
         description="Create master dark frames from a directory of dark frame FITS files",
@@ -642,7 +642,7 @@ def _create_master_dark_from_files(
     sigma: float,
     maxiters: int,
 ) -> tuple[np.ndarray, fits.Header]:
-    """Helper function to create master dark from a specific list of files."""
+    """Create a master dark from a specific list of files."""
     # Load and validate frames
     valid_frames = []
     valid_headers = []
@@ -717,7 +717,7 @@ def _create_master_dark_standard(
     sigma: float,
     maxiters: int,
 ) -> np.ndarray:
-    """Standard in-memory processing for smaller datasets."""
+    """Combine frames in memory, for datasets small enough to hold at once."""
     # Stack frames for sigma-clipped mean combination
     frame_stack = np.stack(valid_frames, axis=0)
 

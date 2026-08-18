@@ -21,6 +21,7 @@ string.
 """
 
 import logging
+from pathlib import Path
 
 import numpy as np
 import sstrc7
@@ -44,7 +45,7 @@ MAG_DECIMALS = 3
 BAND_NAMES = tuple(sstrc7.BAND_NAMES)
 
 
-def resolve_catalog_path(path: str | None = None):
+def resolve_catalog_path(path: str | None = None) -> Path:
     """Resolve the catalog directory.
 
     An explicit path (senpai's `catalog.path` config) wins; otherwise the

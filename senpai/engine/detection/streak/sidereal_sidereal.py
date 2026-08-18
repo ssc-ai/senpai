@@ -22,7 +22,9 @@ from senpai.engine.models.senpai import FrameShift, SiderealFrame
 logger = logging.getLogger(__name__)
 
 
-def solve_sidereal_from_sidereal(frame_source: SiderealFrame, frame_target: SiderealFrame, frame_shift: FrameShift):
+def solve_sidereal_from_sidereal(
+    frame_source: SiderealFrame, frame_target: SiderealFrame, frame_shift: FrameShift
+) -> None:
     sidereal_source_data, source_is_synthetic = prepare_sidereal_frame(frame_source)
     sidereal_target_data, target_is_synthetic = prepare_sidereal_frame(frame_target)
 

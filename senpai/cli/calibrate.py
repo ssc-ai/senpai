@@ -1,5 +1,6 @@
-"""Build a per-night photometric + observability calibration from processed
-batches, and render the night-level plots.
+"""Build a night's photometric and observability calibration, and plot it.
+
+Runs over already-processed batches.
 
 Aggregates a night's per-batch ``senpai_*.json`` into ``night_calibration.json``
 + ``plot_data.json`` and renders the night plots (search rate, slew model, PSF

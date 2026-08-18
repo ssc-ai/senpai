@@ -1956,7 +1956,7 @@ def plot_star_distribution_debug(
     mag_step: float,
     query_fov: float | None = None,
     only_extremes: bool = False,
-):
+) -> None:
     """Create debug plots showing RA vs Dec scatter of stars for each magnitude bin.
 
     Args:
@@ -2083,7 +2083,7 @@ def plot_star_distribution_debug_corridor(
     query_y_fov: float,
     corridor_width: float | None = None,
     corridor_height: float | None = None,
-):
+) -> None:
     """Create debug plots for corridor mode showing star distribution with Earth/Moon positions.
 
     Args:
@@ -2241,7 +2241,7 @@ def plot_coverage_results(
     output_dir: Path,
     min_threshold: int = 4,
     coverage_threshold: int = 8,
-):
+) -> None:
     """Generate coverage plots from aggregated statistics or JSON file.
 
     Args:
@@ -2564,7 +2564,7 @@ def _plot_coverage_percentage_single(
     plt.close()
 
 
-def main():
+def main() -> int:
     """Run the coverage CLI."""
     parser = argparse.ArgumentParser(
         description="Analyze sky coverage for different FOVs and magnitude limits",

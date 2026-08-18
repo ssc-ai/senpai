@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def initialize_engine():
+def initialize_engine() -> None:
     """Initialize all required engine components."""
     logger.info("Initializing engine...")
 

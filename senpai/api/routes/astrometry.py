@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/")
-async def index(request: Request):
+async def index(request: Request) -> JSONResponse:
+    """Report the astrometry endpoints and the running version."""
     logger.info("GET / - Fetching API info")
     return JSONResponse(
         {

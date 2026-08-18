@@ -64,9 +64,11 @@ def query_by_ra_dec_bounds(
     return [_to_star(r, primary_filter, faint_lim) for r in a]
 
 
-def _to_star(row, primary_filter: str, faint_lim: float) -> dict[str, Any]:
-    """Build the same star dict as gaia.query_by_ra_dec_bounds (radians, synthetic
-    Johnson_V / Sloan_r from BP-RP, proper motion in rad/s).
+def _to_star(row: dict, primary_filter: str, faint_lim: float) -> dict[str, Any]:
+    """Build the same star dict the online Gaia query returns, so callers cannot tell them apart.
+
+    Radians throughout, synthetic Johnson_V / Sloan_r derived from BP-RP, proper motion in
+    rad/s.
     """
     g, bp, rp = float(row["g"]), float(row["bp"]), float(row["rp"])
     magnitudes: dict[str, float] = {}
