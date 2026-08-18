@@ -247,10 +247,13 @@ def solve_rate_from_sidereal(
             )
             plt.close("all")
 
-        # Pass streak rotation to validation to avoid sampling along streak direction
-        streak_rotation = None
+        # NOTE: validate_proposed_shift accepts `streak_rotation_deg`, which exists so the
+        # correlation boxes are not sampled along the trail. It is NOT supplied below, so this
+        # value is computed and unused. Wiring it up would change which shifts are accepted, so
+        # it is left for a change that can measure that.
+        _streak_rotation = None
         if streak_measurements.frame_extraction is not None:
-            streak_rotation = streak_measurements.frame_extraction.rotation
+            _streak_rotation = streak_measurements.frame_extraction.rotation
 
         valid, correlation_score, streak_measurements.validation, shift_correction = validate_proposed_shift(
             rate_frame,

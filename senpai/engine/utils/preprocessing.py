@@ -1168,7 +1168,6 @@ def scale_image_blur_decimate(image: ProcessedFitsImage, scale_factor: float) ->
     # Calculate target dimensions first
     target_height = int(image.data.shape[0] / scale_factor)
     target_width = int(image.data.shape[1] / scale_factor)
-    output_shape = (target_height, target_width)
 
     # Apply Gaussian blur to avoid aliasing
     # Sigma should be ~scale_factor/2 to prevent aliasing

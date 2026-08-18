@@ -16,6 +16,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from senpai.cli.common import save_run_metadata
 from senpai.core import config as cfg_mod
 from senpai.core.config import (
     AppConfig,
@@ -100,6 +101,22 @@ def test_get_config_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cfg_mod, "_config_instance", None)
     with pytest.raises(RuntimeError, match="not initialized"):
         get_config()
+
+
+def test_save_run_metadata_without_a_config_uses_the_singleton(tmp_path: Path) -> None:
+    """Called with no config, the run metadata is written from the process-wide settings.
+
+    Every CLI takes this path now that they no longer thread a config through. Nothing covered it,
+    and the first version of the change resolved the fallback into a local it then did not use --
+    which would have crashed on the first real run.
+    """
+    initialize_config(CONFIG_DIR / "local.yaml")
+    save_run_metadata(tmp_path, "senpai.cli.detect")
+
+    assert (tmp_path / "command.txt").is_file()
+    written = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert "app" in written
+    assert written["app"]["version"] == settings.version
 
 
 def test_settings_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:

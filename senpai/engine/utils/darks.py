@@ -234,7 +234,6 @@ def apply_dark_subtraction(
 
     # Clean the dark frame by removing hot pixels
 
-    sigma_clip = SigmaClip(sigma=5.0, maxiters=3)
     dark_median = np.median(master_dark_data)
     dark_std = np.std(master_dark_data)
 
@@ -582,7 +581,6 @@ def main() -> None:
 
             if len(frame_groups) == 1:
                 print("Only one group found, creating single master dark...")
-                output_path = args.output
             else:
                 print(f"Found {len(frame_groups)} groups with different headers:")
                 for i, (group_key, group_files) in enumerate(frame_groups.items()):

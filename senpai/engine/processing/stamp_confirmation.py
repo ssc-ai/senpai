@@ -571,7 +571,10 @@ def _confirm_single_candidate(
             return _make_unconfirmed(ref_frame, candidate)
         return None
 
-    # Resolve direction and refine streak from stacked profile
+    # Resolve direction. NOTE: the direction-matched frames/profiles/offsets that used to be
+    # selected here were never read -- the refinement below uses the candidate's own single-frame
+    # measurements -- so the stacked-profile refinement this comment once promised is not
+    # implemented. Only `direction_deg` is actually consumed.
     if confirmed and de_confirmed and not cc_confirmed:
         # DE-based confirmation: use DE direction
         if de_direction == "forward":
@@ -580,21 +583,12 @@ def _confirm_single_candidate(
         else:
             direction = "reverse"
             direction_deg = float((angle_deg + 180) % 360)
-        matched_frames = fwd_frames if direction == "forward" else rev_frames
-        matched_profiles = fwd_profiles if direction == "forward" else rev_profiles
-        matched_offsets = fwd_offsets if direction == "forward" else rev_offsets
     elif fwd_cc >= rev_cc:
         direction = "forward"
         direction_deg = float(angle_deg % 360)
-        matched_frames = fwd_frames
-        matched_profiles = fwd_profiles
-        matched_offsets = fwd_offsets
     else:
         direction = "reverse"
         direction_deg = float((angle_deg + 180) % 360)
-        matched_frames = rev_frames
-        matched_profiles = rev_profiles
-        matched_offsets = rev_offsets
 
     # --- Refine streak measurements ---
     exposure_time = None

@@ -619,7 +619,6 @@ def main() -> None:
 
             if len(frame_groups) == 1:
                 print("Only one group found, creating single master flat...")
-                output_path = args.output
             else:
                 print(f"Found {len(frame_groups)} groups with different headers:")
                 for i, (group_key, group_files) in enumerate(frame_groups.items()):

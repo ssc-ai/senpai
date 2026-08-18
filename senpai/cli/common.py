@@ -46,7 +46,7 @@ def save_run_metadata(output_dir: Path, module_name: str, config: AppConfig | No
 
     # config.yaml: wrap under "app" key to match the format expected by load_yaml
     with open(output_dir / "config.yaml", "w") as f:
-        yaml.safe_dump({"app": config.model_dump(mode="json")}, f, default_flow_style=False)
+        yaml.safe_dump({"app": cfg.model_dump(mode="json")}, f, default_flow_style=False)
     logger.info("Config saved to: %s", output_dir / "config.yaml")
 
 

@@ -752,8 +752,8 @@ def extract_streak_dims_mapping(
     orientations = np.where(orientations > 90, orientations - 180, orientations)
 
     # Calculate standard deviations for clustering thresholds
-    length_mean, length_std = np.mean(lengths), np.std(lengths) or 1.0
-    orient_mean, orient_std = (
+    _, length_std = np.mean(lengths), np.std(lengths) or 1.0
+    _, orient_std = (
         np.mean(orientations),
         np.std(orientations) or 10.0,
     )  # Default to 10° if std is 0
@@ -1307,7 +1307,6 @@ def extract_streak_dims_robust(
     cutout_size = int(max(length * 1.3, fwhm * 10))
 
     # Minimum distance between streak centers to avoid duplicates
-    min_distance = max(int(length * 0.5), 10)
 
     # Keep track of already processed regions
     processed_mask = np.zeros_like(filtered_data, dtype=bool)
@@ -1571,15 +1570,10 @@ def extract_streak_dims_robust(
             logger.info(f"Using original length estimate: {length:.1f}")
             final_length = length
 
-    # Sanity check on angle
-    angle_diffs = [
-        min(
-            abs(m["angle"] - rotation),
-            abs(m["angle"] - rotation + 180),
-            abs(m["angle"] - rotation - 180),
-        )
-        for m in selected_metrics
-    ]
+    # NOTE: a per-candidate angle-vs-seed comparison used to be computed here under a "sanity
+    # check on angle" comment, but its result was never tested, logged or returned -- so the check
+    # did not run. Removed rather than left computing nothing; deciding what it should assert, and
+    # what to do when it fails, is a detector question.
 
     """
     if np.median(angle_diffs) > 20:  # If median angle differs by more than 20 degrees
@@ -1768,7 +1762,6 @@ def extract_streak_dims(
     # plot_single_frame(psf, output_file="test3.png")
 
     streak_len = streak_length_from_cutout(psf)
-    fwhm_pixel = streak_fwhm_from_cutout(psf, rotation)
 
     # in case weird case with extremely precise point sources
     streak_len = np.max([fwhm, streak_len])
@@ -1907,7 +1900,6 @@ def streak_parameters_from_xcorr(
     # Normalize the cutout
     subcc = subcc.copy() - np.median(subcc)
     subcc /= np.max(subcc) if np.max(subcc) > 0 else 1.0
-    subc = np.array(subcc.shape) / 2
 
     # Use multiple thresholds to assess robustness
     thresholds = [0.3, 0.4, 0.5, 0.6]

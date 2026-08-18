@@ -28,7 +28,8 @@ from senpai.exceptions import SiderealSolveError
 class _FakeRow(dict):
     """Row supporting both row['k'] and hasattr(row, 'k') / row.k access."""
 
-    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - a table row's columns are heterogeneous
+    # A table row's columns are heterogeneous, so Any is the accurate annotation here.
+    def __getattr__(self, name: str) -> Any:
         try:
             return self[name]
         except KeyError as exc:  # pragma: no cover - defensive

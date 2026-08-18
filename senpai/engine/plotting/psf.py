@@ -398,7 +398,7 @@ def render_sidereal_psf(
         a, b = "x", "y"
     sh_ra, sh_dec = profile_shape(cut_ra), profile_shape(cut_dec)
     r, rad = radial_profile(stamp, half)
-    win = min(half, max(10.0, 3.0 * max(sh_ra["fwhm"], sh_dec["fwhm"])))
+    _win = min(half, max(10.0, 3.0 * max(sh_ra["fwhm"], sh_dec["fwhm"])))
     # TEMP: lock the 2D stamp panel to a fixed +/-21px window so panels are
     # directly comparable across frames. Revert to `win` (the adaptive window)
     # to restore auto-scaling.

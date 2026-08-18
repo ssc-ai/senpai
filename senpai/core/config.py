@@ -781,7 +781,9 @@ class _SettingsProxy:
     module already holding this import sees.
     """
 
-    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - forwards fields of every type
+    # Any is accurate rather than a placeholder: the proxy forwards config fields of every
+    # type, so there is no narrower annotation to give.
+    def __getattr__(self, name: str) -> Any:
         """Return `name` from the initialized config.
 
         Args:
@@ -798,7 +800,7 @@ class _SettingsProxy:
             raise RuntimeError("Config not initialized")
         return getattr(_config_instance, name)
 
-    def __setattr__(self, name: str, value: Any) -> None:  # noqa: ANN401 - see __getattr__
+    def __setattr__(self, name: str, value: Any) -> None:
         """Forward assignment to the config instance rather than shadowing it here.
 
         Without this, ``settings.debug = True`` would silently set an attribute on the
