@@ -841,7 +841,6 @@ def query_catalog_gaia(
     max_stars: int | None = None,
 ) -> StarListSpace:
     """Query Gaia for the stars on a frame, reusing cached sky regions where possible."""
-
     # Apply default faint limit from config if not provided
     if faint_lim is None:
         faint_conf = getattr(settings.star_catalog, "faint_limit", None)

@@ -27,7 +27,14 @@ logger = logging.getLogger(__name__)
 MAX_KERNEL_FINE_ELEMENTS = 500_000_000
 
 
-def shift_filter_subpx(filter, pix_shift):
+def shift_filter_subpx(filter: np.ndarray, pix_shift: np.ndarray) -> np.ndarray:
+    """Shift a kernel by a sub-pixel offset, keeping it non-negative and normalized in range.
+
+    The kernel is padded before shifting so interpolation at the edge does not wrap, and the
+    result is clamped: values below 1e-4 go to zero, negatives to a small positive floor.
+    Sub-pixel interpolation rings slightly, and a negative kernel weight would subtract
+    signal where it should add it.
+    """
     pad = (pix_shift + 0.5).round().astype(int)
 
     padded = np.pad(filter, ((pad[0], pad[0]), (pad[1], pad[1])))

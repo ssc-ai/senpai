@@ -20,7 +20,7 @@ class DatasetSplit:
     val: float = 0.2
     test: float = 0.1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate that ratios sum to 1.0."""
         total = self.train + self.val + self.test
         if abs(total - 1.0) > 1e-6:
@@ -30,7 +30,7 @@ class DatasetSplit:
 class DatasetSplitter:
     """Split COCO datasets into train/val/test sets."""
 
-    def __init__(self, split: DatasetSplit, random_seed: int | None = None):
+    def __init__(self, split: DatasetSplit, random_seed: int | None = None) -> None:
         """Initialize the dataset splitter.
 
         Args:
@@ -158,7 +158,11 @@ class DatasetSplitter:
 
         # Sort images by datetime to ensure temporal order
         # Look for datetime in various possible fields
-        def extract_datetime(img):
+        def extract_datetime(img: dict) -> datetime | str | float:
+            # The return type is a union rather than datetime because a metadata field is
+            # handed back as-is (mjd is a float, date_obs a string) while the filename path
+            # parses to a datetime. That mix is why the caller below wraps sort() in a
+            # try/except: a batch with both shapes raises on comparison.
             # Try different possible datetime fields
             datetime_fields = ["datetime", "date_obs", "date", "time", "timestamp", "mjd"]
             for field in datetime_fields:
@@ -323,7 +327,7 @@ class DatasetSplitter:
         annotations_dir: Path,
         split_name: str,
         exclude_sidereal_from_lines: bool,
-    ):
+    ) -> None:
         """Create combined annotation files for a split."""
         # Create points annotation file (satellites)
         points_data_dir = f"{split_name}/"
@@ -414,7 +418,7 @@ def split_coco_dataset(
     exclude_sidereal_from_lines: bool = True,
     temporal_split: bool = True,
 ) -> dict[str, list[str]]:
-    """Convenience function to split a COCO dataset.
+    """Split a COCO dataset into train/val/test, as a one-call wrapper.
 
     Args:
         input_dir: Directory containing COCO files

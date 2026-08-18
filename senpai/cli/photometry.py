@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for photometry measurements on FITS images.
+r"""CLI for photometry measurements on FITS images.
 
 This CLI provides a command-line interface for performing comprehensive
 photometry on astronomical images with WCS solutions.

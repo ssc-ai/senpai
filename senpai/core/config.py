@@ -186,7 +186,7 @@ class StarCatalogConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_catalog_config(self):
+    def validate_catalog_config(self) -> "StarCatalogConfig":
         """Validate that path is provided for local catalogs but not required for online catalogs."""
         # Online catalogs don't need a path
         if self.type in ["sdss", "gaia"]:
@@ -781,7 +781,7 @@ class _SettingsProxy:
     module already holding this import sees.
     """
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - forwards fields of every type
         """Return `name` from the initialized config.
 
         Args:
@@ -798,7 +798,7 @@ class _SettingsProxy:
             raise RuntimeError("Config not initialized")
         return getattr(_config_instance, name)
 
-    def __setattr__(self, name: str, value: Any) -> None:
+    def __setattr__(self, name: str, value: Any) -> None:  # noqa: ANN401 - see __getattr__
         """Forward assignment to the config instance rather than shadowing it here.
 
         Without this, ``settings.debug = True`` would silently set an attribute on the
@@ -873,10 +873,11 @@ def initialize_config(config_path: Path) -> AppConfig:
 
 
 def get_or_initialize_config(config_path: Path | None = None) -> AppConfig:
-    """Get a loaded config, if none, load config_path or LOCAL_OVERRIDE.
+    """Get a loaded config, loading config_path or LOCAL_OVERRIDE if there is none.
 
     Args:
-        AppConfig: Configuration instance
+        config_path: YAML to load when no config has been initialized yet. Falls back to
+            the local override path when omitted.
 
     Returns:
         AppConfig: Configuration instance

@@ -26,7 +26,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -79,11 +79,12 @@ def _batch_already_done(batch_dir: Path, batch_id: str) -> bool:
 
 
 @contextmanager
-def _tee_logs(log_path: Path):
-    """Tee root-logger output into ``log_path`` for the duration of the block,
-    so each batch's full senpai processing log is saved beside its outputs
-    (WCS solve, frame-to-frame shift solves, photometry — the record needed to
-    diagnose per-frame failures). Captures whatever level the root logger is
+def _tee_logs(log_path: Path) -> Iterator[None]:
+    """Tee root-logger output into ``log_path`` for the duration of the block.
+
+    Each batch's full processing log is saved beside its outputs -- the WCS solve, the
+    frame-to-frame shift solves, the photometry -- which is the record needed to diagnose a
+    per-frame failure after the fact. Captures whatever level the root logger is
     set to; set ``config.logging.level: DEBUG`` for the most detail.
     """
     root = logging.getLogger()
@@ -157,9 +158,10 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
     }
 
 
-def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
-    """Fill in tracking mode ONLY for frames whose header carries no usable
-    ``TRKMODE`` — never overwrite a present one.
+def _apply_intended_track_mode_overrides(file_list: list[Path], batch: FrameBatch) -> None:
+    """Fill in tracking mode only for frames whose header carries no usable ``TRKMODE``.
+
+    Never overwrites a present one.
 
     ``TRKMODE`` is authoritative: burr records sidereal vs rate as the mount
     *actually tracked*, and writes ``sidereal`` when it tracked sidereal (a raw
@@ -204,8 +206,9 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
 
 
 def _write_manifest(night_root: Path, night: BurrNight, entries: list[dict]) -> Path:
-    """A per-night manifest of what was processed, for the calibration and
-    dataset stages to consume without re-walking the data dir.
+    """Write a per-night manifest of what was processed.
+
+    The calibration and dataset stages consume it instead of re-walking the data dir.
 
     Merges with any existing manifest (keyed by ``batch_id``) so running `night`
     repeatedly against the same ``-o`` — e.g. one task at a time, or resuming —
@@ -660,9 +663,10 @@ def cmd_plots(args: argparse.Namespace) -> int:
 
 
 def _export_worker_init(config_path: str) -> None:
-    """Per-worker config init for parallel dataset export — spawned workers start
-    with no config singleton, so each loads it (the exporter may consult config
-    when rebuilding a processed frame in place from raw).
+    """Initialise the config singleton in a freshly spawned export worker.
+
+    A spawned worker starts with no singleton, and the exporter may consult config when
+    rebuilding a processed frame in place from raw, so each worker loads it once.
     """
     initialize_config(Path(config_path))
 
@@ -875,6 +879,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser, with one subcommand per night-processing stage."""
     parser = argparse.ArgumentParser(
         prog="senpai-burr",
         description="Drive senpai against burr-collected nights.",
@@ -1273,6 +1278,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to the selected subcommand."""
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)

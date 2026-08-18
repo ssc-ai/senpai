@@ -1,4 +1,4 @@
-"""Dark frame utilities for creating and applying master dark corrections.
+r"""Dark frame utilities for creating and applying master dark corrections.
 
 This module provides functions for:
 1. Creating master dark frames from directories of dark frame FITS files

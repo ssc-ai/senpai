@@ -1,4 +1,4 @@
-"""Flat field utilities for creating and applying master flat corrections.
+r"""Flat field utilities for creating and applying master flat corrections.
 
 This module provides functions for:
 1. Creating master flat fields from directories of flat frame FITS files

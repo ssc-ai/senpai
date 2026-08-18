@@ -704,7 +704,6 @@ def update_starfield_wcs(
         limiting_magnitude: Optional limiting magnitude for catalog query.
 
     """
-
     frame.starfield.wcs = new_wcs
     frame.starfield.wcs_metadata = WCSMetadata.from_wcsmodel(new_wcs)
 

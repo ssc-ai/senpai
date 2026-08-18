@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(verbose: bool = False) -> None:
-    """Setup logging configuration."""
+    """Configure logging for the export CLI."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -78,7 +78,7 @@ def export_single_run(
     logger.info("Export completed successfully")
 
 
-def _export_run_worker(args):
+def _export_run_worker(args: tuple) -> "dict | None":
     """Worker function for parallel export processing."""
     (
         run_file,
@@ -283,7 +283,7 @@ def split_dataset(
 
 
 def main() -> None:
-    """Main CLI entry point."""
+    """Run the export CLI."""
     parser = argparse.ArgumentParser(
         description="Export SENPAI data to COCO format",
         formatter_class=argparse.RawDescriptionHelpFormatter,

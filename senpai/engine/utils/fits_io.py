@@ -231,7 +231,6 @@ def extract_exposure_time_from_header(header: Header) -> float | None:
 
 def extract_observing_site_from_header(header: Header) -> SiteMetadata | None:
     """Return the observing site, or None when the header lacks its position."""
-
     latitude = None
     longitude = None
     altitude = None
@@ -276,7 +275,6 @@ def extract_observing_site_from_header(header: Header) -> SiteMetadata | None:
 
 def extract_boresight_from_header(header: Header) -> tuple[float, float]:
     """Return boresight RA/Dec in degrees, converting from Az/Alt when that is all there is."""
-
     ra = None
     dec = None
     azimuth = None
@@ -403,7 +401,6 @@ def _to_arcsec_per_second(value: float, unit: str) -> float:
 
 def extract_track_rates_from_header(header: Header) -> tuple[float, float, TrackMode]:
     """Return the mount track rates in arcsec/s and the resulting track mode."""
-
     ra_rate = None
     dec_rate = None
     track_mode = None

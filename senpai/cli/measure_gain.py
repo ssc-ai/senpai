@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure detector gain (e-/ADU) from raw frame pairs via photon transfer.
+r"""Measure detector gain (e-/ADU) from raw frame pairs via photon transfer.
 
 Pairs consecutive same-field exposures (a burst), differences each pair to cancel
 fixed pattern, and fits the lower envelope of difference-variance vs sky level --

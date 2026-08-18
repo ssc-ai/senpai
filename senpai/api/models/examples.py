@@ -32,12 +32,16 @@ _EXAMPLE_DETECTIONS: list[tuple[float, float, float]] = [
 
 
 class StarListImageExample(BaseModel):
-    def __init__(self):
+    """A worked StarListImage, for the endpoint documentation to show."""
+
+    def __init__(self) -> None:
+        """Build the example lazily -- the value is constructed on first access."""
         super().__init__()
         self._value: StarListImage | None = None
 
     @property
     def summary(self) -> str:
+        """One-line description, shown beside the example in the docs."""
         return "A list of stars in an image with image metadata"
 
     @property

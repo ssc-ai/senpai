@@ -2565,7 +2565,7 @@ def _plot_coverage_percentage_single(
 
 
 def main():
-    """Main CLI function."""
+    """Run the coverage CLI."""
     parser = argparse.ArgumentParser(
         description="Analyze sky coverage for different FOVs and magnitude limits",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

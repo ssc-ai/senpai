@@ -55,7 +55,6 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
                             These are adjustments to the existing WCS, not absolute shifts.
 
     """
-
     if frame.starfield.wcs_status != WCSStatus.PIXEL_SHIFTED_WCS:
         logger.error(
             "WCS status is not PIXEL_SHIFTED_WCS, skipping kernel convolution [call senpai.engine.utils.propagate_wcs.shift_wcs_by_pixel_shift first]"
@@ -375,7 +374,6 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
         frame (SiderealFrame): The sidereal frame containing the stars.
 
     """
-
     with fft_workers():
         convolved_image = convolve(
             frame.frame.data,
@@ -448,7 +446,6 @@ def refine_sidereal_with_catalog_stars(
         stats, or (shifted WCS, None) if the refit could not be attempted.
 
     """
-
     # First pass: Get global shift using astrometric fit stars
     global_shift_x, global_shift_y = get_global_shift_from_astrometric_stars(frame, convolved_image)
 
