@@ -126,14 +126,17 @@ class FramePhoto:
 
     @property
     def has_wcs(self) -> bool:
+        """Whether this frame carries a solved boresight, and so can be placed on the sky."""
         return self.ra_center_deg is not None and self.dec_center_deg is not None
 
 
 @dataclass(slots=True)
 class FrameTiming:
-    """Minimal timing + pointing record kept for EVERY frame in the night,
-    including frames that produced no photometry (dome closed, cloud, failed
-    plate-solve). Inter-frame overhead — readout + settle + slew — is mount
+    """Timing and pointing for one frame, kept whether or not the frame yielded photometry.
+
+    Retained for EVERY frame in the night, including frames that produced no photometry
+    (dome closed, cloud, failed plate-solve). Inter-frame overhead — readout + settle +
+    slew — is mount
     mechanics and frame cadence, independent of whether the photometry was
     usable, so the overhead model is fit from this complete timeline rather than
     only the minority of frames with trustworthy photometry.
@@ -275,9 +278,10 @@ def _extract_frame_photo(
     site: dict[str, Any] | None,
     track_mode_default: str,
 ) -> FramePhoto | None:
-    """Pull a FramePhoto from one serialized ``SiderealFrameSerializable`` or
-    ``RateTrackFrameSerializable``. Returns None for frames with no photometry
-    summary at all — they carry no calibration signal.
+    """Pull a FramePhoto out of one serialized sidereal or rate-track frame.
+
+    Returns None for frames with no photometry summary at all — they carry no calibration
+    signal.
     """
     summary = frame_dict.get("photometry_summary")
     if not summary:
@@ -419,8 +423,9 @@ def _extract_frame_photo(
 def _extract_frame_timing(
     frame_dict: dict[str, Any], track_mode_default: str
 ) -> tuple[FrameTiming, float, float] | None:
-    """Timestamp + exposure + commanded boresight pointing for ONE frame, for the
-    inter-frame overhead (slew/settle/readout) model.
+    """Read one frame's timestamp, exposure and commanded boresight for the overhead model.
+
+    Feeds the inter-frame overhead (slew/settle/readout) fit.
 
     Unlike :func:`_extract_frame_photo` this keeps frames with no photometry —
     slew/settle is mount mechanics, independent of the photometry — and reads the
@@ -465,10 +470,10 @@ def _fill_timing_altaz(
     decs: list[float],
     site: dict[str, Any] | None,
 ) -> None:
-    """Fill boresight alt/az on the timing records in place, in one vectorized
-    astropy call (mirrors :func:`_add_moon_geometry`). No-op when astropy or the
-    site is unavailable — alt/az stays None and the overhead model simply finds
-    no usable pairs and falls back.
+    """Fill boresight alt/az on the timing records in place, in one vectorized call.
+
+    Mirrors :func:`_add_moon_geometry`. A no-op when astropy or the site is unavailable —
+    alt/az stays None and the overhead model simply finds no usable pairs and falls back.
     """
     if not timings:
         return
@@ -562,8 +567,9 @@ class NightCalibration:
     source_dir: str | None = None
 
     def conditions(self) -> dict[str, Any]:
-        """One-line-per-night observing-conditions summary (PSF, sky, extinction,
-        Moon) for cross-night tracking. Medians over the night's frames.
+        """Summarize the night's observing conditions in one row, for cross-night tracking.
+
+        PSF, sky, extinction and Moon, as medians over the night's frames.
         """
 
         def _med(xs: list[float]) -> float | None:
@@ -615,6 +621,7 @@ class NightCalibration:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the whole calibration for ``night_calibration.json``."""
         return {
             "night_id": self.night_id,
             "sensor": self.sensor,
@@ -658,9 +665,10 @@ _CCD_WARM_MARGIN_C = 5.0
 
 
 def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
-    """Mark frames taken well above the night's CCD setpoint and return a summary
-    (or None when no CCDTEMP telemetry is present). The setpoint is the median
-    temperature — robust as long as warm frames aren't the majority.
+    """Mark frames taken well above the night's CCD setpoint.
+
+    Returns a summary, or None when no CCDTEMP telemetry is present. The setpoint is taken
+    as the median temperature — robust as long as warm frames aren't the majority.
     """
     temps = [f.ccd_temp_c for f in frames if f.ccd_temp_c is not None]
     if len(temps) < 5:
@@ -693,8 +701,9 @@ def _zp_frames(frames: list[FramePhoto]) -> list[FramePhoto]:
 
 
 def _isolated_flags(f: FramePhoto) -> list[bool]:
-    """Per-star isolation flags parallel to ``stars_mag``; legacy runs that
-    predate ``stars_isolated`` retention default to all-isolated.
+    """Per-star isolation flags, parallel to ``stars_mag``.
+
+    Legacy runs predating ``stars_isolated`` retention default to all-isolated.
     """
     return f.stars_isolated or [True] * len(f.stars_mag)
 
@@ -717,9 +726,10 @@ _MOON_SEP_MIN_DEG = 45.0
 
 
 def _moon_ok(f: FramePhoto, min_sep: float = _MOON_SEP_MIN_DEG) -> bool:
-    """False when the frame is within ``min_sep`` of an *above-horizon* Moon
-    (moonglow inflates sky background → depth loss). Frames with no Moon
-    geometry, or taken with the Moon down, pass.
+    """Reject frames sitting too close to an above-horizon Moon.
+
+    False within ``min_sep`` of the Moon, whose glow inflates the sky background and costs
+    depth. Frames with no Moon geometry, or taken with the Moon down, pass.
     """
     if f.moon_sep_deg is None:
         return True
@@ -765,7 +775,7 @@ _PLOT_SNR_FLOOR = 0.0
 
 
 def _snr_consistent(snr: float, mag: float, f: FramePhoto, tolerance: float = 5.0) -> bool:
-    """True when a star's measured SNR is plausible for its catalog magnitude.
+    """Check whether a star's measured SNR is plausible for its catalog magnitude.
 
     By definition SNR ≈ limiting_snr (3) at the frame's lim50 and scales with
     flux (×10^0.4 per mag) in the background-dominated regime, so the frame
@@ -883,10 +893,11 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
 
 
 def _fit_extinction(frames: list[FramePhoto]) -> dict[str, ExtinctionFit]:
-    """Per-filter cloud-robust Bouguer fit ``zero_point = m0 - k * airmass`` via
-    the upper-envelope method (see _extinction_envelope_fit). k = -slope. This is
-    the authoritative extinction used in night_calibration.json and for the
-    airmass-normalization across the SNR plots.
+    """Fit per-filter atmospheric extinction, robustly against cloud.
+
+    A Bouguer fit ``zero_point = m0 - k * airmass`` via the upper-envelope method (see
+    _extinction_envelope_fit), with k = -slope. This is the authoritative extinction used
+    in night_calibration.json and for the airmass-normalization across the SNR plots.
     """
     by_filter: dict[str, list[tuple[float, float]]] = {}
     for f in _zp_frames(frames):
@@ -937,9 +948,10 @@ def _summarize_limiting_mag(frames: list[FramePhoto], attr: str) -> dict[str, fl
 
 
 def analyze_night(night_dir: str | Path) -> NightCalibration:
-    """Build a :class:`NightCalibration` from the output of
-    ``python -m senpai.cli.burr night <night_dir> -o <output>`` — i.e. a dir
-    that contains ``manifest.json`` and a ``batches/`` tree of SenpaiRun JSONs.
+    """Build a :class:`NightCalibration` from a completed night run's output directory.
+
+    Expects the layout ``python -m senpai.cli.burr night <night_dir> -o <output>`` produces:
+    a ``manifest.json`` beside a ``batches/`` tree of SenpaiRun JSONs.
     """
     night_dir = Path(night_dir)
     manifest_path = night_dir / "manifest.json"
@@ -1053,8 +1065,9 @@ def save_calibration(calib: NightCalibration, output_dir: str | Path) -> Path:
 
 
 def _jsonify(obj: object) -> object:
-    """Recursively convert numpy / datetime values to JSON-native types so the
-    plotted arrays round-trip through plot_data.json.
+    """Convert numpy and datetime values to JSON-native types, recursively.
+
+    This is what lets the plotted arrays round-trip through plot_data.json.
     """
     if isinstance(obj, dict):
         return {k: _jsonify(v) for k, v in obj.items()}
@@ -1080,11 +1093,12 @@ _PLOT_BUILDERS: dict[str, tuple] = {}
 
 
 def build_plot_data(calib: NightCalibration) -> dict:
-    """Run ALL calibration plot analysis up front and return a JSON-serializable
-    dict — the actual plotted arrays (gray clouds, binned points, fit lines),
-    not the raw per-frame data. This is the single analysis stage; renderers
-    consume only this dict, so plots can be regenerated from plot_data.json
-    without reprocessing the batch JSONs.
+    """Run every calibration plot's analysis up front, returning a serializable result.
+
+    The dict holds the actual plotted arrays (gray clouds, binned points, fit lines), not
+    the raw per-frame data. This is the single analysis stage; renderers consume only this
+    dict, so plots can be regenerated from plot_data.json without reprocessing the batch
+    JSONs.
     """
     meta = {
         "night_id": calib.night_id,
@@ -1135,10 +1149,11 @@ _NIGHTS_COLS = [
 
 
 def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> str:
-    """Aggregate every night's conditions into one table for tracking PSF / sky /
-    extinction vs Moon phase & weather across nights. Reads each
-    ``<root>/*/calibration/night_calibration.json`` (its ``conditions`` block).
-    Returns the formatted table; optionally also writes a CSV.
+    """Aggregate every night's conditions into one cross-night table.
+
+    For tracking PSF, sky and extinction against Moon phase and weather over time. Reads
+    the ``conditions`` block of each ``<root>/*/calibration/night_calibration.json``.
+    Returns the formatted table, and optionally writes a CSV too.
     """
     root = Path(root)
     rows: list[dict] = []
@@ -1538,8 +1553,9 @@ _SLEW_DIST_BINS = [0.25, 0.5, 1, 2, 4, 8, 15, 25, 40, 60, 90, 180]
 
 
 def _angsep_deg(alt1: float, az1: float, alt2: float, az2: float) -> float:
-    """Great-circle separation (deg) in the mount's alt/az frame — the same
-    slew metric burr's coverage optimizer uses.
+    """Great-circle separation in degrees, in the mount's alt/az frame.
+
+    The same slew metric burr's coverage optimizer uses.
     """
     a1, a2 = math.radians(alt1), math.radians(alt2)
     d = math.sin((a2 - a1) / 2) ** 2 + math.cos(a1) * math.cos(a2) * math.sin(math.radians(az2 - az1) / 2) ** 2
@@ -1547,8 +1563,9 @@ def _angsep_deg(alt1: float, az1: float, alt2: float, az2: float) -> float:
 
 
 def _slew_pairs(timings: list[FrameTiming]) -> tuple[list, list[float], list[float]]:
-    """Time-consecutive (separation_deg, overhead_s) pairs shared by the slew fit
-    and its empirical fallback, so both see the same gap/clock filtering.
+    """Build the (separation_deg, overhead_s) pairs the slew fit and its fallback share.
+
+    Both consume this, so both see the same gap and clock filtering.
 
     Pairs are consecutive in time across ALL frames (sidereal and rate) — sorting
     a single track mode would skip over interleaved frames and inflate the gaps.
@@ -1577,10 +1594,11 @@ def _slew_pairs(timings: list[FrameTiming]) -> tuple[list, list[float], list[flo
 
 
 def _empirical_overhead(timings: list[FrameTiming]) -> tuple[float | None, str]:
-    """Best-effort inter-frame overhead when the full two-regime fit can't be
-    constrained (too few distinct slew distances — e.g. a night that parked on a
-    handful of fields). Uses the night's *observed* cadence rather than a flat
-    guess: the median overhead of pairs that actually slewed (≥ _SLEW_MIN_DEG —
+    """Estimate inter-frame overhead when the full two-regime fit cannot be constrained.
+
+    Happens with too few distinct slew distances — a night that parked on a handful of
+    fields, say. Uses the night's *observed* cadence rather than a flat guess: the median
+    overhead of pairs that actually slewed (≥ _SLEW_MIN_DEG —
     readout + settle + slew, the cadence-relevant quantity), or, when too few of
     those exist, the median over all usable pairs (at least readout + settle).
     Returns (overhead_s, label), or (None, "") when there's no usable timing at
@@ -1597,8 +1615,9 @@ def _empirical_overhead(timings: list[FrameTiming]) -> tuple[float | None, str]:
 
 
 def _fit_slew_model(timings: list[FrameTiming]) -> dict | None:
-    """Fit the inter-frame overhead model (readout + settle + slew) from the
-    night's time-ordered frames.
+    """Fit the inter-frame overhead model from the night's time-ordered frames.
+
+    The model covers readout, settle and slew.
 
     ``timings`` is the night's per-frame timing+pointing records (FrameTiming),
     which cover EVERY frame — including the non-photometry ones (dome closed,
@@ -1936,8 +1955,10 @@ _CONC_DEFOCUS = 0.7  # C below this ≈ defocused
 
 
 def _batch_result_paths(source_dir: str) -> dict[str, Path]:
-    """{batch_id: result JSON path}, re-anchored on source_dir when the
-    manifest's absolute paths are stale (drive remounted elsewhere).
+    """Map each batch id to its result JSON path.
+
+    Paths are re-anchored on source_dir when the manifest's absolute paths are stale, as
+    happens when the drive is remounted elsewhere.
     """
     md = json.loads((Path(source_dir) / "manifest.json").read_text())
     out: dict[str, Path] = {}
@@ -1974,8 +1995,10 @@ def _psf_stack_stamp(
     half: int,
     max_stars: int = _PSF_MAX_STARS,
 ) -> tuple[np_.ndarray | None, int]:
-    """Median-stacked, peak-normalized PSF stamp from a frame's bright, isolated,
-    unsaturated catalog stars. Returns (stamp2d, n_stars) or (None, 0).
+    """Build a median-stacked, peak-normalized PSF stamp for one frame.
+
+    Stacks the frame's bright, isolated, unsaturated catalog stars. Returns
+    ``(stamp2d, n_stars)``, or ``(None, 0)`` when no star qualified.
     """
     try:
         data = fits.getdata(fits_path).astype(np.float64)
@@ -2050,8 +2073,9 @@ def _radial_profile(
 
 
 def _cut_width(profile: np_.ndarray, np: ModuleType, level: float = 0.5) -> float:
-    """Full width at ``level`` × peak, from the outermost interpolated crossings
-    of a 1D cut through the peak.
+    """Measure full width at ``level`` times the peak.
+
+    Taken from the outermost interpolated crossings of a 1D cut through the peak.
     """
     profile = np.asarray(profile)
     thr = profile.max() * level
@@ -2100,11 +2124,14 @@ def _profile_shape(profile: np_.ndarray, np: ModuleType) -> dict:
 
 
 def _wcs_sky_axes(wcs_dict: dict) -> tuple[np_.ndarray, np_.ndarray] | None:
-    """Unit vectors in pixel (x, y) space pointing East (+RA) and North (+Dec)
-    at the frame center, from the solved WCS header dict. Returns
-    (east_unit, north_unit) or None. Lets us cut the PSF along sky axes so an
-    elongation reads directly as RA vs Dec tracking error rather than detector
-    x/y (this camera is rotated ~35° + flipped relative to the sky).
+    """Find the pixel-space directions of East and North at the frame centre.
+
+    Unit vectors in pixel (x, y) space pointing East (+RA) and North (+Dec), derived from
+    the solved WCS header dict. Returns ``(east_unit, north_unit)``, or None.
+
+    This is what lets the PSF be cut along sky axes, so an elongation reads directly as RA
+    versus Dec tracking error rather than as detector x/y — the camera is rotated ~35° and
+    flipped relative to the sky, so the two are not interchangeable.
     """
     if not wcs_dict:
         return None
@@ -2135,8 +2162,9 @@ def _wcs_sky_axes(wcs_dict: dict) -> tuple[np_.ndarray, np_.ndarray] | None:
 
 
 def _sample_line(stamp: np_.ndarray, half: int, unit: np_.ndarray, np: ModuleType) -> np_.ndarray:
-    """Sample the stamp along a line through its center in pixel direction
-    ``unit`` (x, y), one sample per pixel from -half to +half.
+    """Sample the stamp along a line through its centre.
+
+    Follows pixel direction ``unit`` (x, y), one sample per pixel from -half to +half.
     """
     t = np.arange(-half, half + 1.0)
     xs = half + t * unit[0]
@@ -3026,8 +3054,9 @@ def _render_snr_vs_moon_distance(d: dict, meta: dict, output_dir: str | Path, pl
 
 
 def _usable_cal_frames(calib: NightCalibration, zp_mode: str, zp_sig: float) -> list[FramePhoto]:
-    """Weather-masked calibration-taskset frames with Moon geometry (shared by
-    the two fixed-magnitude Moon plots).
+    """Select weather-masked calibration-taskset frames that carry Moon geometry.
+
+    Shared by the two fixed-magnitude Moon plots.
     """
     return [
         f
@@ -3380,9 +3409,10 @@ def _render_sky_background(d: dict, meta: dict, output_dir: str | Path, plt: Mod
 
 
 def _data_sky_background_altaz(calib: NightCalibration) -> dict | None:
-    """Sky brightness as a function of where the telescope was pointed (alt/az)
-    rather than Moon separation — the diagnostic that still works on a new-Moon
-    night, where the Moon-separation plot is uninformative.
+    """Plot sky brightness against where the telescope pointed, rather than Moon separation.
+
+    This is the diagnostic that still works on a new-Moon night, where the
+    Moon-separation plot is uninformative.
 
     Two signals: (1) the zenith trend — natural sky brightens toward the horizon
     (longer airglow/atmosphere path), so μ should rise toward zenith; (2)
