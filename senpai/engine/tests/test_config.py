@@ -1,5 +1,7 @@
-"""Tests for senpai.core.config — YAML loading, the process-wide singleton,
-and validation/defaults/frozen-ness of the AppConfig pydantic models.
+"""Tests for the configuration layer.
+
+Covers YAML loading, the process-wide singleton, and the validation, defaults and frozenness
+of the AppConfig models.
 
 The config singleton is process-wide and other test modules initialize it. These
 tests never permanently clear it: where uninitialized state is required, the
@@ -48,7 +50,8 @@ _MIN_ASTROMETRY = {
 _MIN_PLOTTING = {"debug": False, "review": False}
 
 
-def _min_app(**overrides) -> dict:
+def _min_app(**overrides: object) -> dict:
+    """Build the minimum app config dict, overridable per test."""
     data = {
         "version": "1.0.0",
         "astrometry": dict(_MIN_ASTROMETRY),
@@ -63,6 +66,7 @@ def _min_app(**overrides) -> dict:
 # load_yaml
 # --------------------------------------------------------------------------- #
 def test_load_yaml_valid_returns_app_section(tmp_path: Path) -> None:
+    """A valid file yields its app section."""
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump({"app": {"version": "9.9.9", "debug": True}}))
     data = load_yaml(p)
@@ -70,16 +74,19 @@ def test_load_yaml_valid_returns_app_section(tmp_path: Path) -> None:
 
 
 def test_load_yaml_missing_file_returns_empty(tmp_path: Path) -> None:
+    """A missing file yields an empty dict rather than raising."""
     assert load_yaml(tmp_path / "does_not_exist.yaml") == {}
 
 
 def test_load_yaml_no_app_key_returns_empty(tmp_path: Path) -> None:
+    """A file with no app key yields empty, so a mis-nested config fails visibly at validation."""
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump({"not_app": {"version": "1"}}))
     assert load_yaml(p) == {}
 
 
 def test_load_yaml_malformed_returns_empty(tmp_path: Path) -> None:
+    """Malformed YAML yields empty rather than propagating a parse error."""
     p = tmp_path / "bad.yaml"
     p.write_text("app: [unterminated\n  : :")
     assert load_yaml(p) == {}
@@ -89,6 +96,7 @@ def test_load_yaml_malformed_returns_empty(tmp_path: Path) -> None:
 # Singleton behaviour (get_config / initialize_config / get_or_initialize_config)
 # --------------------------------------------------------------------------- #
 def test_get_config_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The compatibility accessor raises when nothing has been loaded."""
     monkeypatch.setattr(cfg_mod, "_config_instance", None)
     with pytest.raises(RuntimeError, match="not initialized"):
         get_config()
@@ -154,6 +162,7 @@ def test_config_if_initialized_reports_absence(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_initialize_config_sets_singleton(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Initialising installs the instance the accessors then return."""
     monkeypatch.setattr(cfg_mod, "_config_instance", None)
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump({"app": _min_app(version="1.2.3")}))
@@ -164,12 +173,14 @@ def test_initialize_config_sets_singleton(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_get_or_initialize_uses_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The get-or-initialize helper returns an already-loaded config untouched."""
     sentinel = AppConfig(**_min_app(version="sentinel"))
     monkeypatch.setattr(cfg_mod, "_config_instance", sentinel)
     assert get_or_initialize_config() is sentinel
 
 
 def test_get_or_initialize_loads_path_when_uninitialized(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With nothing loaded, the helper loads the path it was given."""
     monkeypatch.setattr(cfg_mod, "_config_instance", None)
     p = tmp_path / "c.yaml"
     p.write_text(yaml.safe_dump({"app": _min_app(version="from-path")}))
@@ -181,17 +192,20 @@ def test_get_or_initialize_loads_path_when_uninitialized(tmp_path: Path, monkeyp
 # StarCatalogConfig validator
 # --------------------------------------------------------------------------- #
 def test_sstrc7_requires_path() -> None:
+    """A local catalog without a path is rejected: there is nothing to read."""
     with pytest.raises(ValidationError, match="path is required"):
         StarCatalogConfig(type="sstrc7")
 
 
 def test_sstrc7_with_path_ok() -> None:
+    """A local catalog with a path validates."""
     c = StarCatalogConfig(type="sstrc7", path="/some/path")
     assert c.path == "/some/path"
 
 
 @pytest.mark.parametrize("online", ["sdss", "gaia"])
 def test_online_catalogs_no_path_required(online: str) -> None:
+    """An online catalog needs no path."""
     c = StarCatalogConfig(type=online)
     assert c.path is None
     # default faint limit applied
@@ -199,6 +213,7 @@ def test_online_catalogs_no_path_required(online: str) -> None:
 
 
 def test_star_catalog_faint_limit_override() -> None:
+    """The catalog faint limit can be overridden from config."""
     c = StarCatalogConfig(type="gaia", faint_limit=None)
     assert c.faint_limit is None
 
@@ -207,6 +222,7 @@ def test_star_catalog_faint_limit_override() -> None:
 # Sub-config defaults
 # --------------------------------------------------------------------------- #
 def test_photometry_defaults() -> None:
+    """The photometry defaults are the documented ones."""
     p = PhotometryConfig()
     assert p.aperture_radius_factor == 2.0
     assert p.bg_inner_factor == 3.0
@@ -217,6 +233,7 @@ def test_photometry_defaults() -> None:
 
 
 def test_validation_defaults() -> None:
+    """The validation defaults are the documented ones."""
     v = ValidationConfig()
     assert v.box_size == 11
     assert v.n_random_trials == 8
@@ -225,6 +242,7 @@ def test_validation_defaults() -> None:
 
 
 def test_detection_defaults() -> None:
+    """The detection defaults are the documented ones."""
     d = DetectionConfig()
     assert d.detect is False
     assert d.detect_streaks is True
@@ -236,12 +254,14 @@ def test_detection_defaults() -> None:
 # Frozen-ness / mutability
 # --------------------------------------------------------------------------- #
 def test_appconfig_is_frozen() -> None:
+    """The top-level config is frozen, so a stray write fails rather than silently taking effect."""
     c = AppConfig(**_min_app())
     with pytest.raises(ValidationError):
         c.version = "2.0.0"
 
 
 def test_runtime_config_is_mutable() -> None:
+    """The runtime section is mutable, which the per-collect output paths depend on."""
     r = RuntimeConfig()
     r.run_id = "changed"
     r.output_dir = "/nonexistent/out"
@@ -250,6 +270,7 @@ def test_runtime_config_is_mutable() -> None:
 
 
 def test_appconfig_defaults_populate_subconfigs() -> None:
+    """Omitted sections are populated with their defaults rather than left absent."""
     c = AppConfig(**_min_app())
     assert isinstance(c.photometry, PhotometryConfig)
     assert isinstance(c.detection, DetectionConfig)
@@ -266,6 +287,10 @@ def test_appconfig_defaults_populate_subconfigs() -> None:
     ids=lambda p: p.name,
 )
 def test_all_shipped_configs_load(yaml_path: Path) -> None:
+    """Every shipped config file loads and validates.
+
+    A config that ships broken is only discovered when someone runs it.
+    """
     data = load_yaml(yaml_path)
     config = AppConfig(**data)
     assert config.version  # version is required and present in every shipped config
@@ -275,6 +300,7 @@ def test_all_shipped_configs_load(yaml_path: Path) -> None:
 # settings proxy
 # --------------------------------------------------------------------------- #
 def test_settings_proxy_reads_the_initialized_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy reads the loaded config."""
     cfg = AppConfig(**_min_app(version="proxy-read"))
     monkeypatch.setattr(cfg_mod, "_config_instance", cfg)
     assert cfg_mod.settings.version == "proxy-read"
@@ -282,6 +308,7 @@ def test_settings_proxy_reads_the_initialized_config(monkeypatch: pytest.MonkeyP
 
 
 def test_settings_proxy_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy raises when nothing has been loaded."""
     monkeypatch.setattr(cfg_mod, "_config_instance", None)
     with pytest.raises(RuntimeError, match="not initialized"):
         _ = cfg_mod.settings.detection
