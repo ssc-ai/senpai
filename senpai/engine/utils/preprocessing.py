@@ -20,7 +20,7 @@ from astropy.stats import SigmaClip
 from photutils.background import Background2D
 from scipy.ndimage import gaussian_filter, zoom
 
-from senpai.core.config import settings
+from senpai.core.config import config_if_initialized, settings
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingMetadata, ProcessingStep
 from senpai.engine.models.metadata import FWHMMetadata, StreakMetadata
 from senpai.engine.models.starfield import StarField
@@ -437,14 +437,8 @@ def auto_apply_calibrations(
 
     """
     if config is None:
-        try:
-            from senpai.core.config import get_config
-
-            config = get_config()
-        except ImportError:
-            logger.warning("Could not import config, skipping auto-calibration")
-            return image
-        except RuntimeError:
+        config = config_if_initialized()
+        if config is None:
             logger.warning("Config not initialized, skipping auto-calibration")
             return image
 
@@ -856,22 +850,8 @@ def preprocess_image(
     log_stats("loaded", image.data)
 
     if config is None:
-        try:
-            from senpai.core.config import get_config
-
-            config = get_config()
-        except ImportError:
-            logger.warning("Could not import config, applying default preprocessing")
-            # Apply default preprocessing steps only if not already applied
-            if not any(
-                step.step_type in [ProcessingStep.ROW_MEDIAN_SUBTRACT, ProcessingStep.COLUMN_MEDIAN_SUBTRACT]
-                for step in image.processing_history
-            ):
-                image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
-            if not any(step.step_type == ProcessingStep.BACKGROUND_SUBTRACT for step in image.processing_history):
-                image = remove_background(image, store_intermediates=store_intermediates)
-            return image
-        except RuntimeError:
+        config = config_if_initialized()
+        if config is None:
             logger.warning("Config not initialized, applying default preprocessing")
             # Apply default preprocessing steps only if not already applied
             if not any(
@@ -1558,11 +1538,8 @@ def apply_fwhm_optimization(
 
     """
     if config is None:
-        try:
-            from senpai.core.config import get_config
-
-            config = get_config()
-        except (ImportError, RuntimeError):
+        config = config_if_initialized()
+        if config is None:
             logger.warning("Config not available, skipping FWHM optimization")
             return image, starfield
 

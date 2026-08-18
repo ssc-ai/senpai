@@ -72,7 +72,7 @@ def main() -> None:
     output_dir = Path(args.output_dir) if args.output_dir else output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    save_run_metadata(output_dir, "senpai.cli.photometry", cfg)
+    save_run_metadata(output_dir, "senpai.cli.photometry")
 
     # Photometry configuration: config file values with CLI overrides
     overrides = {

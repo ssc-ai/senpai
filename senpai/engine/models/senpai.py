@@ -374,10 +374,9 @@ class SenpaiRun(BaseModel):
             else:
                 # Layered classification: authoritative TRKMODE first, then (only
                 # when the header can't decide) RA/DEC rates with a pixel arbiter.
-                from senpai.core.config import get_config
                 from senpai.engine.detection.track_mode import classify_track_mode
 
-                decision = classify_track_mode(frame.header, frame.data, get_config())
+                decision = classify_track_mode(frame.header, frame.data)
                 track_type, src, detail = decision.mode, decision.source, decision.detail
                 if track_type == TrackMode.UNKNOWN:
                     # No metadata and the pixels couldn't tell -> safe default.

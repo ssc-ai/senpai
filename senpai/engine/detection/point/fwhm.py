@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from senpai.core.config import settings
 from senpai.engine.models.metadata import FWHMMetadata
 
 if TYPE_CHECKING:
@@ -118,11 +119,9 @@ def measure_fwhm_from_catalog_stars(
 
     """
     logger.info(f"Measuring FWHM from {len(catalog_stars)} catalog stars")
-
-    if config is None:
-        from senpai.core.config import get_config
-
-        config = get_config()
+    # A caller may inject a different config (the COCO export rebuilds frames under the
+    # config the night run used); everything else reads the process-wide settings.
+    cfg = config if config is not None else settings
 
     # Limit the number of catalog stars considered for FWHM measurements to
     # keep this step fast even when Gaia returns tens of thousands of stars.
@@ -257,9 +256,9 @@ def measure_fwhm_from_catalog_stars(
         fwhm_vs_position=fwhm_vs_position,
         fwhm_vs_magnitude=fwhm_vs_magnitude,
         fwhm_vs_counts=fwhm_vs_counts,
-        is_oversampled=median_fwhm > config.calibrations.target_fwhm,
+        is_oversampled=median_fwhm > cfg.calibrations.target_fwhm,
         recommended_scale_factor=(
-            median_fwhm / config.calibrations.target_fwhm if median_fwhm > config.calibrations.target_fwhm else None
+            median_fwhm / cfg.calibrations.target_fwhm if median_fwhm > cfg.calibrations.target_fwhm else None
         ),
     )
 

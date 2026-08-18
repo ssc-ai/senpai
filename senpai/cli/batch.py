@@ -24,7 +24,7 @@ from tqdm import tqdm
 from senpai.astrometry import enforce_indices, require_astrometry_install
 from senpai.catalog.runner import enforce_catalog
 from senpai.cli.common import save_run_metadata, write_frame_quicklooks
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.core.logging import set_log_level
 from senpai.engine.models.images import ProcessedFitsImage
@@ -81,13 +81,12 @@ def process_single_dataset(
         os.makedirs(dataset_output_dir, exist_ok=True)
 
         # Update config for this run
-        config = get_config()
-        config.runtime.run_id = id_value
-        config.runtime.output_dir = dataset_output_dir
-        config.detection.detect = detect
+        settings.runtime.run_id = id_value
+        settings.runtime.output_dir = dataset_output_dir
+        settings.detection.detect = detect
 
         # Save run metadata for reproducibility
-        save_run_metadata(dataset_output_dir, "senpai.cli.batch", config)
+        save_run_metadata(dataset_output_dir, "senpai.cli.batch")
 
         # Process the dataset
         senpai_run = process_senpai_collect(file_list, id=id_value)

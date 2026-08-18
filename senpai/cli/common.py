@@ -28,8 +28,12 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-def save_run_metadata(output_dir: Path, module_name: str, config: AppConfig) -> None:
-    """Save command.txt and config.yaml to output_dir for reproducibility."""
+def save_run_metadata(output_dir: Path, module_name: str, config: AppConfig | None = None) -> None:
+    """Save command.txt and config.yaml to output_dir for reproducibility.
+
+    Reads the process-wide settings unless a caller passes a different config explicitly.
+    """
+    cfg = config if config is not None else settings
     output_dir = Path(output_dir)
 
     # command.txt: sys.argv with module_name replacing argv[0]

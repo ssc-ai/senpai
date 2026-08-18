@@ -34,7 +34,7 @@ from senpai.astrometry import enforce_indices, require_astrometry_install
 from senpai.catalog.runner import enforce_catalog
 from senpai.cli.calibrate import main as calibrate_main
 from senpai.cli.common import ensure_output_dir, save_run_metadata
-from senpai.core.config import get_config, initialize_config, settings
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.core.logging import set_log_level
 from senpai.engine.models.senpai import SenpaiRunResult
@@ -106,11 +106,10 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
     Returns a small manifest entry (paths + timing) for the night's manifest.
     """
     batch_dir.mkdir(parents=True, exist_ok=True)
-    config = get_config()
-    config.runtime.output_dir = batch_dir
-    config.runtime.run_id = batch.batch_id
+    settings.runtime.output_dir = batch_dir
+    settings.runtime.run_id = batch.batch_id
 
-    save_run_metadata(batch_dir, "senpai.cli.burr", config)
+    save_run_metadata(batch_dir, "senpai.cli.burr")
 
     t0 = time.time()
     with _tee_logs(batch_dir / "senpai.log"):

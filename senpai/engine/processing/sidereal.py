@@ -13,7 +13,7 @@ from typing import Literal
 
 from senpai.astrometry import solve_field
 from senpai.catalog.runner import query_catalog
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
 from senpai.engine.detection.point.sidereal import extract_point_sources
 from senpai.engine.models.astrometry import WCSModel
@@ -66,10 +66,9 @@ def process_astrometry_fits_sidereal(
     science batches without mutating global config. Omit it — the default — to use
     ``config.astrometry.pipeline_mode`` exactly as before.
     """
-    config = get_config()
-    pipeline_mode = pipeline_mode or config.astrometry.pipeline_mode
+    pipeline_mode = pipeline_mode or settings.astrometry.pipeline_mode
 
-    sextractor_mode = config.astrometry.source_extractor == "sextractor"
+    sextractor_mode = settings.astrometry.source_extractor == "sextractor"
     if sextractor_mode:
         # Bayesian-engine sidereal solve (config-gated; default upstream = point_detector).
         # Column/row-median + box-50 background-subtract the frame IN PLACE. This is
@@ -91,7 +90,7 @@ def process_astrometry_fits_sidereal(
 
     # Point-detector pass: the upstream source list + the FWHM used for detection metadata
     # and downstream (seeing propagated to rate frames).
-    sources, initial_fwhm = extract_point_sources(fits_image, max_detections=config.astrometry.max_sources)
+    sources, initial_fwhm = extract_point_sources(fits_image, max_detections=settings.astrometry.max_sources)
 
     # Inputs to the catalog-median FWHM measurement (below). The upstream path uses the point
     # detector's FWHM as the fit seed and its measured saturation level.
@@ -106,7 +105,7 @@ def process_astrometry_fits_sidereal(
         from senpai.engine.detection.point.sextractor import extract_sextractor_sources
 
         sextractor_detections = extract_sextractor_sources(
-            fits_image, max_detections=config.astrometry.max_sources
+            fits_image, max_detections=settings.astrometry.max_sources
         ).detections
         # Only replace the source list if SExtractor actually found something. It returns an
         # empty table when background estimation misbehaves, and assigning that unconditionally
@@ -128,7 +127,7 @@ def process_astrometry_fits_sidereal(
         )
 
         try:
-            _dfs, _df_fwhm, _ = extract_point_sources_daofind(fits_image, config.astrometry.max_sources, 1.0)
+            _dfs, _df_fwhm, _ = extract_point_sources_daofind(fits_image, settings.astrometry.max_sources, 1.0)
             if _df_fwhm and _df_fwhm > 0:
                 fwhm_seed = _df_fwhm
         except Exception as exc:
@@ -192,7 +191,6 @@ def process_astrometry_fits_sidereal(
                 fits_image,
                 _pre_catalog.stars,
                 fwhm_seed,
-                config,
                 sat_level=fwhm_sat_level,
             )
             wcs_starfield.detection_metadata = DetectionMetadata(pixel_fwhm=_pre_stats.median_fwhm)
@@ -248,7 +246,6 @@ def process_astrometry_fits_sidereal(
                 fits_image,
                 catalog.stars,
                 fwhm_seed,
-                config,
                 sat_level=fwhm_sat_level,
             )
         wcs_starfield.fwhm_stats = fwhm_stats
@@ -268,9 +265,11 @@ def process_astrometry_fits_sidereal(
             fwhm_vs_position=[],
             fwhm_vs_magnitude=[],
             fwhm_vs_counts=[],
-            is_oversampled=median_fwhm > config.calibrations.target_fwhm,
+            is_oversampled=median_fwhm > settings.calibrations.target_fwhm,
             recommended_scale_factor=(
-                median_fwhm / config.calibrations.target_fwhm if median_fwhm > config.calibrations.target_fwhm else None
+                median_fwhm / settings.calibrations.target_fwhm
+                if median_fwhm > settings.calibrations.target_fwhm
+                else None
             ),
         )
         wcs_starfield.fwhm_stats = fwhm_stats

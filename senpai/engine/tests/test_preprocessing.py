@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from senpai.core.config import get_config, initialize_config, settings
+from senpai.core.config import AppConfig, initialize_config, load_yaml, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
 from senpai.engine.models.metadata import FWHMMetadata, ImageMetadata
@@ -35,7 +35,7 @@ RNG = np.random.default_rng(20260603)
 @pytest.fixture(scope="module", autouse=True)
 def _config() -> None:
     """The global AppConfig singleton is process-wide; initialize from a
-    bundled YAML so get_config() does not raise for modules under test.
+    bundled YAML so reading ``settings`` does not raise for modules under test.
     """
     initialize_config(CONFIG_DIR / "burr.yaml")
     settings.plotting.debug = False
@@ -323,48 +323,69 @@ class TestPreprocessImage:
         header["EXPTIME"] = 5.0
         return _make_image(grad, header)
 
+    def test_explicit_config_overrides_the_singleton(self) -> None:
+        """A config passed in is used instead of the process-wide settings.
+
+        The COCO export relies on this: it rebuilds a frame under the config the night run
+        used, which is deliberately not the config the export process loaded.
+        """
+        settings.calibrations.auto_remove_row_median = True
+        settings.calibrations.auto_remove_column_median = True
+        settings.calibrations.auto_subtract_background = False
+        settings.calibrations.auto_apply_darks = False
+        settings.calibrations.auto_apply_flats = False
+
+        injected = AppConfig(**load_yaml(CONFIG_DIR / "local.yaml"))
+        injected.calibrations.auto_remove_row_median = False
+        injected.calibrations.auto_remove_column_median = False
+        injected.calibrations.auto_subtract_background = False
+        injected.calibrations.auto_apply_darks = False
+        injected.calibrations.auto_apply_flats = False
+
+        out = preprocess_image(self._config_image(), config=injected)
+        steps = {m.step_type for m in out.processing_history}
+        assert ProcessingStep.ROW_MEDIAN_SUBTRACT not in steps
+        assert ProcessingStep.COLUMN_MEDIAN_SUBTRACT not in steps
+
     def test_applies_configured_steps(self) -> None:
-        cfg = get_config()
-        cfg.calibrations.auto_remove_row_median = True
-        cfg.calibrations.auto_remove_column_median = True
-        cfg.calibrations.auto_subtract_background = True
-        cfg.calibrations.auto_apply_darks = False
-        cfg.calibrations.auto_apply_flats = False
+        settings.calibrations.auto_remove_row_median = True
+        settings.calibrations.auto_remove_column_median = True
+        settings.calibrations.auto_subtract_background = True
+        settings.calibrations.auto_apply_darks = False
+        settings.calibrations.auto_apply_flats = False
 
         img = self._config_image()
-        out = preprocess_image(img, config=cfg)
+        out = preprocess_image(img)
         steps = {m.step_type for m in out.processing_history}
         assert ProcessingStep.COLUMN_MEDIAN_SUBTRACT in steps
         assert ProcessingStep.ROW_MEDIAN_SUBTRACT in steps
         assert ProcessingStep.BACKGROUND_SUBTRACT in steps
 
     def test_idempotent_does_not_double_apply(self) -> None:
-        cfg = get_config()
-        cfg.calibrations.auto_remove_row_median = True
-        cfg.calibrations.auto_remove_column_median = True
-        cfg.calibrations.auto_subtract_background = False
-        cfg.calibrations.auto_apply_darks = False
-        cfg.calibrations.auto_apply_flats = False
+        settings.calibrations.auto_remove_row_median = True
+        settings.calibrations.auto_remove_column_median = True
+        settings.calibrations.auto_subtract_background = False
+        settings.calibrations.auto_apply_darks = False
+        settings.calibrations.auto_apply_flats = False
 
         img = self._config_image()
-        once = preprocess_image(img, config=cfg)
+        once = preprocess_image(img)
         n_col = sum(m.step_type == ProcessingStep.COLUMN_MEDIAN_SUBTRACT for m in once.processing_history)
-        twice = preprocess_image(once, config=cfg)
+        twice = preprocess_image(once)
         n_col_after = sum(m.step_type == ProcessingStep.COLUMN_MEDIAN_SUBTRACT for m in twice.processing_history)
         # Already-applied step is skipped on the second pass.
         assert n_col == 1
         assert n_col_after == 1
 
     def test_disabled_steps_are_skipped(self) -> None:
-        cfg = get_config()
-        cfg.calibrations.auto_remove_row_median = False
-        cfg.calibrations.auto_remove_column_median = False
-        cfg.calibrations.auto_subtract_background = False
-        cfg.calibrations.auto_apply_darks = False
-        cfg.calibrations.auto_apply_flats = False
+        settings.calibrations.auto_remove_row_median = False
+        settings.calibrations.auto_remove_column_median = False
+        settings.calibrations.auto_subtract_background = False
+        settings.calibrations.auto_apply_darks = False
+        settings.calibrations.auto_apply_flats = False
 
         img = self._config_image()
-        out = preprocess_image(img, config=cfg)
+        out = preprocess_image(img)
         steps = {m.step_type for m in out.processing_history}
         assert ProcessingStep.COLUMN_MEDIAN_SUBTRACT not in steps
         assert ProcessingStep.BACKGROUND_SUBTRACT not in steps

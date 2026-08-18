@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from senpai.core.config import get_config, initialize_config, settings
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
 from senpai.engine.detection.point.satellite import (
@@ -52,8 +52,7 @@ SIGMA_TO_FWHM = 2.0 * np.sqrt(2.0 * np.log(2.0))  # ~2.3548
 @pytest.fixture(scope="module", autouse=True)
 def _config():
     """Initialise the process-wide config singleton from a shipped YAML."""
-    initialize_config(CONFIG_DIR / "burr.yaml")
-    cfg = get_config()
+    cfg = initialize_config(CONFIG_DIR / "burr.yaml")
     cfg.plotting.debug = False
     return cfg
 

@@ -9,7 +9,7 @@ Instead we test the app at two levels, both fully hermetic and offline:
 * The route coroutines invoked directly with a lightweight fake ``Request``
   and pydantic-parsed bodies, with the heavy processing layer mocked.
 
-The config singleton is process-wide (get_config() raises if uninitialized)
+The config singleton is process-wide (reading ``settings`` raises if uninitialized)
 and shared with other test modules, so we initialize it once per session.
 """
 
@@ -21,15 +21,14 @@ from types import SimpleNamespace
 import pytest
 
 import senpai.api.main as main_mod
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _init_config():
     """Initialize the process-wide config singleton from local.yaml."""
-    initialize_config(LOCAL_APP_CONFIG_OVERRIDE)
-    return get_config()
+    return initialize_config(LOCAL_APP_CONFIG_OVERRIDE)
 
 
 class _InlineExecutor:

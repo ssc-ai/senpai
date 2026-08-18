@@ -22,10 +22,12 @@ from senpai.core.config import (
     RuntimeConfig,
     StarCatalogConfig,
     ValidationConfig,
+    config_if_initialized,
     get_config,
     get_or_initialize_config,
     initialize_config,
     load_yaml,
+    settings,
 )
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "resources" / "config"
@@ -90,6 +92,65 @@ def test_get_config_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cfg_mod, "_config_instance", None)
     with pytest.raises(RuntimeError, match="not initialized"):
         get_config()
+
+
+def test_settings_raises_when_uninitialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reading a field through the proxy fails the same way the accessor does."""
+    monkeypatch.setattr(cfg_mod, "_config_instance", None)
+    with pytest.raises(RuntimeError, match="not initialized"):
+        _ = settings.version
+
+
+def test_settings_resolves_at_access_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy reads whatever initialize_config most recently installed.
+
+    This is the property the whole codebase depends on: a module that imported ``settings`` at
+    import time still sees a config loaded afterwards, and sees a *replacement* config too.
+    """
+    monkeypatch.setattr(cfg_mod, "_config_instance", None)
+    first = tmp_path / "first.yaml"
+    first.write_text(yaml.safe_dump({"app": _min_app(version="1.0.0")}))
+    initialize_config(first)
+    assert settings.version == "1.0.0"
+
+    second = tmp_path / "second.yaml"
+    second.write_text(yaml.safe_dump({"app": _min_app(version="2.0.0")}))
+    initialize_config(second)
+    assert settings.version == "2.0.0"
+
+
+def test_settings_assignment_surfaces_the_frozen_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Assigning a top-level field through the proxy raises rather than silently shadowing.
+
+    This is what ``__setattr__`` is for. Without it the assignment would land on the proxy
+    object, read back happily, and hide the fact that the loaded config rejects the write.
+    """
+    sentinel = AppConfig(**_min_app(version="sentinel"))
+    monkeypatch.setattr(cfg_mod, "_config_instance", sentinel)
+    with pytest.raises(ValidationError):
+        settings.version = "assigned"
+    assert sentinel.version == "sentinel"
+
+
+def test_settings_nested_mutation_reaches_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mutating a nested section through the proxy reaches the loaded config.
+
+    The batch and burr entry points set ``settings.runtime.output_dir`` and
+    ``settings.runtime.run_id`` per collect, so this path is load-bearing rather than incidental.
+    """
+    sentinel = AppConfig(**_min_app(version="nested"))
+    monkeypatch.setattr(cfg_mod, "_config_instance", sentinel)
+    settings.runtime.run_id = "probe"
+    assert sentinel.runtime.run_id == "probe"
+
+
+def test_config_if_initialized_reports_absence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The degrade-gracefully accessor answers None rather than raising."""
+    monkeypatch.setattr(cfg_mod, "_config_instance", None)
+    assert config_if_initialized() is None
+    sentinel = AppConfig(**_min_app(version="present"))
+    monkeypatch.setattr(cfg_mod, "_config_instance", sentinel)
+    assert config_if_initialized() is sentinel
 
 
 def test_initialize_config_sets_singleton(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -76,7 +76,7 @@ if __name__ == "__main__":
     cfg = initialize_config(Path(args.config))
     cfg.runtime.output_dir = output_dir
     cfg.detection.detect_streaks = args.detect_streaks
-    save_run_metadata(output_dir, "senpai.cli.sidereal", cfg)
+    save_run_metadata(output_dir, "senpai.cli.sidereal")
     set_log_level(cfg.logging.level)
     test_astrometry_install()
     enforce_indices()

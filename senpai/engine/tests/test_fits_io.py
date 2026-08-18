@@ -20,7 +20,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 import pytest
 from astropy.io.fits import Header
 
-from senpai.core.config import get_config, initialize_config, settings
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.metadata import TrackMode
 from senpai.engine.utils import fits_io
@@ -28,8 +28,7 @@ from senpai.engine.utils import fits_io
 
 @pytest.fixture(scope="module", autouse=True)
 def _config():
-    initialize_config(CONFIG_DIR / "local.yaml")
-    return get_config()
+    return initialize_config(CONFIG_DIR / "local.yaml")
 
 
 @pytest.fixture

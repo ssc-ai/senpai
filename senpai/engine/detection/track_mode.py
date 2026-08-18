@@ -34,7 +34,7 @@ from scipy import ndimage
 if TYPE_CHECKING:
     from senpai.core.config import AppConfig
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.engine.models.metadata import TrackMode
 from senpai.engine.utils.fits_io import extract_header_value, extract_track_rates_from_header
@@ -199,11 +199,7 @@ def classify_track_mode(
 
     ``data`` (the 2-D image) enables the pixel arbiter; omit it to stay metadata-only.
     """
-    if config is None:
-        from senpai.core.config import get_config
-
-        config = get_config()
-    tcfg = config.headers.tracking
+    tcfg = (config if config is not None else settings).headers.tracking
     mode_keys = tcfg.track_mode_keys or ["TRKMODE"]
 
     # Tier 1 — authoritative TRKMODE.
@@ -274,9 +270,8 @@ def _main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     initialize_config(Path(args.config))
-    config = get_config()
-    mode_keys = config.headers.tracking.track_mode_keys or ["TRKMODE"]
-    thr = config.headers.tracking.sidereal_rate_threshold_arcsec_per_second
+    mode_keys = settings.headers.tracking.track_mode_keys or ["TRKMODE"]
+    thr = settings.headers.tracking.sidereal_rate_threshold_arcsec_per_second
 
     paths: list[str] = []
     for f in args.fits:
@@ -316,7 +311,7 @@ def _main(argv: list[str] | None = None) -> int:
             note = "" if verdict.mode != TrackMode.UNKNOWN else " (inconclusive->sidereal default)"
             print(f"  => DECISION    : {mode.value}  [forced from data]{note}")
         else:
-            d = classify_track_mode(header, data, config)
+            d = classify_track_mode(header, data)
             print(f"  => DECISION    : {d.mode.value}  via {d.source}" + (f"  [{d.detail}]" if d.detail else ""))
     return 0
 

@@ -828,6 +828,17 @@ class _SettingsProxy:
 settings = _SettingsProxy()
 
 
+def config_if_initialized() -> AppConfig | None:
+    """Return the loaded config, or None when none has been initialized.
+
+    For the callers whose contract is to degrade rather than fail -- preprocessing steps that skip
+    calibration when there is no config to read. They previously expressed this as a try/except
+    around ``get_config()``; asking directly says what is meant and cannot be confused with an
+    unrelated RuntimeError raised from deeper in the call.
+    """
+    return _config_instance
+
+
 def get_config() -> AppConfig:
     """Get the global config instance.
 
@@ -883,9 +894,8 @@ def get_or_initialize_config(config_path: Path | None = None) -> AppConfig:
         AppConfig: Configuration instance
 
     """
-    try:
-        config = get_config()
-    except RuntimeError:
+    config = config_if_initialized()
+    if config is None:
         if config_path:
             config = initialize_config(config_path)
         else:

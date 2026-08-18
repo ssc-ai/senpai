@@ -125,7 +125,7 @@ if __name__ == "__main__":
     config.runtime.output_dir = output_dir
     config.detection.detect = args.detect
 
-    save_run_metadata(output_dir, "senpai.cli.rate_sidereal", config)
+    save_run_metadata(output_dir, "senpai.cli.rate_sidereal")
 
     senpai_run = profile_run(process_senpai_collect, file_list, id=run_id, run_id=run_id)
 

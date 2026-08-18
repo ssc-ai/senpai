@@ -161,9 +161,9 @@ class SenpaiCocoExporter:
                 if cfg_path.is_file():
                     cfg = AppConfig(**load_yaml(cfg_path))  # load_yaml unwraps "app"
             if cfg is None:
-                from senpai.core.config import get_config
+                from senpai.core.config import config_if_initialized
 
-                cfg = get_config()  # raises if no run config + none initialized
+                cfg = config_if_initialized()
         except Exception as e:
             logger.warning(
                 "No config for in-place processed-frame rebuild (%s); COCO will "

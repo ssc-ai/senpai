@@ -80,7 +80,7 @@ if __name__ == "__main__":
     cfg.runtime.run_id = Path(args.fits).stem
     cfg.detection.detect = args.detect
     set_log_level(cfg.logging.level)
-    save_run_metadata(output_dir, "senpai.cli.rate", cfg)
+    save_run_metadata(output_dir, "senpai.cli.rate")
 
     if not args.no_wcs:
         test_astrometry_install()

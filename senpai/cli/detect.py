@@ -93,7 +93,7 @@ if __name__ == "__main__":
     config.detection.detect_streaks = args.detect
     set_log_level(config.logging.level)
 
-    save_run_metadata(output_dir, "senpai.cli.detect", config)
+    save_run_metadata(output_dir, "senpai.cli.detect")
 
     require_astrometry_install()
     enforce_indices()
