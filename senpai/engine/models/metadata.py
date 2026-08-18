@@ -16,6 +16,11 @@ from pydantic import BaseModel
 
 from senpai.engine.detection.kernels import rectangle_pyramoid
 
+#: Gap signatures already reported in this process, so a keyword a sensor never writes is
+#: warned about once rather than once per frame. Workers recycle per collect, so this resets
+#: with each collect.
+_WARNED_CAPABILITY_GAPS: set[tuple[str, ...]] = set()
+
 
 class TrackMode(Enum):
     """How the mount was driven while the frame was exposed."""
@@ -223,13 +228,27 @@ class FrameMetadata(BaseModel):
         return gaps
 
     def log_missing_capabilities(self, logger: logging.Logger, label: str = "frame") -> None:
-        """Emit one warning per missing-header capability gap (verbose by design)."""
+        """Report which header-gated capabilities this frame cannot run, once per set of gaps.
+
+        A sensor that omits a keyword omits it on every frame, so warning per frame says the same
+        thing once per frame and buries everything else: on a 134-collect benchmark run this one
+        call produced 2,880 of 4,537 warning lines, all the same two sentences. The first frame
+        with a given set of gaps warns; identical sets afterwards log at debug.
+
+        Because workers are recycled per collect, "first time" means first in this process, which
+        works out to once per collect -- the granularity that matters, since each collect's
+        degradations belong in its own log.
+        """
         gaps = self.missing_capabilities()
         if not gaps:
             return
-        logger.warning("%s: %d header value(s) missing — degrading gracefully:", label, len(gaps))
+        signature = tuple(missing for missing, _ in gaps)
+        first_time = signature not in _WARNED_CAPABILITY_GAPS
+        _WARNED_CAPABILITY_GAPS.add(signature)
+        emit = logger.warning if first_time else logger.debug
+        emit("%s: %d header value(s) missing — degrading gracefully:", label, len(gaps))
         for missing, disabled in gaps:
-            logger.warning("  - missing %s -> %s", missing, disabled)
+            emit("  - missing %s -> %s", missing, disabled)
 
     @classmethod
     def from_header(cls, header: Header) -> "FrameMetadata":

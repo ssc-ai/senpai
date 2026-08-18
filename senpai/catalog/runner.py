@@ -15,12 +15,15 @@ import logging
 import math
 import os
 import time
+import warnings
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from astropy.io import fits
+from astropy.utils.exceptions import AstropyWarning
 from astropy.wcs import WCS
 
 import senpai.catalog.gaia as gaia
@@ -33,6 +36,26 @@ from senpai.engine.models.starfield import ImageMetadata, StarInSpace, StarListS
 from senpai.exceptions import SiderealSolveError
 
 logger = logging.getLogger(__name__)
+
+
+def _linear_header(astropy_wcs: WCS) -> "fits.Header":
+    """Read the WCS's linear keywords, without astropy warning that it dropped the SIP ones.
+
+    Callers here read only CRVAL, CRPIX and the PC/CD matrix -- a field centre, a rotation, a
+    scale. ``to_header()`` therefore does exactly what is wanted when it excludes A_ORDER and
+    friends, and the AstropyWarning announcing that is noise: 544 lines of a 134-collect run,
+    all reporting an omission the caller asked for.
+
+    Narrowly scoped on purpose -- only this message, only around this call -- so a genuinely new
+    WCS warning still surfaces.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Some non-standard WCS keywords were excluded",
+            category=AstropyWarning,
+        )
+        return astropy_wcs.to_header()
 
 
 def _validate_catalog_coverage(
@@ -136,7 +159,7 @@ def _validate_catalog_coverage(
 def _make_wcs_hashable(wcs: WCSModel) -> tuple:
     """Convert WCS model to a hashable tuple for caching purposes."""
     astropy_wcs = wcs.to_astropy_wcs()
-    header = astropy_wcs.to_header()
+    header = _linear_header(astropy_wcs)
 
     # Extract key parameters that uniquely identify the WCS
     hashable_components = [
@@ -212,7 +235,7 @@ def _query_catalog_sstr7_cached(
     # solution whose CRPIX sits away from the image center (a propagated or re-anchored WCS)
     # then centers the box off-frame, leaving part of the image outside the queried region
     # with its stars simply absent.
-    header = astropy_wcs.to_header()
+    header = _linear_header(astropy_wcs)
     center_ra, center_dec = astropy_wcs.wcs_pix2world([[pixel_width / 2, pixel_height / 2]], 0)[0]
 
     # Extract rotation from WCS
@@ -392,7 +415,7 @@ def query_catalog_sdss(
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
-    header = astropy_wcs.to_header()
+    header = _linear_header(astropy_wcs)
     center_ra, center_dec = astropy_wcs.wcs_pix2world([[header["CRPIX1"], header["CRPIX2"]]], 0)[0]
 
     logger.info("Querying SDSS catalog online")
@@ -744,7 +767,7 @@ def _query_catalog_gaia_cached(
     fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
-    header = astropy_wcs.to_header()
+    header = _linear_header(astropy_wcs)
     center_ra, center_dec = astropy_wcs.wcs_pix2world([[header["CRPIX1"], header["CRPIX2"]]], 0)[0]
 
     # Use WCS to transform image corners to world coordinates
