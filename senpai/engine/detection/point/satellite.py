@@ -391,7 +391,7 @@ def filter_point_sources(
             continue
 
         if settings.plotting.debug:
-            fig, ax = plot_single_frame(cutout)
+            _fig, _ax = plot_single_frame(cutout)
             plt.savefig(settings.runtime.output_dir / f"detection_cutout_{idx}.png")
             plt.close("all")
 
@@ -532,7 +532,7 @@ def veto_catalog_star_detections(
     h, w = image_sub.shape if image_sub is not None else (0, 0)
 
     def _peak_snr_at(px: float, py: float, r: int) -> float | None:
-        ipx, ipy = int(round(px)), int(round(py))
+        ipx, ipy = round(px), round(py)
         patch = image_sub[
             max(0, ipy - r) : min(h, ipy + r + 1),
             max(0, ipx - r) : min(w, ipx + r + 1),
@@ -566,7 +566,7 @@ def veto_catalog_star_detections(
             # brightness, that star cannot be what we detected — a bright
             # tracked target must not be vetoed by a faint trail sweeping
             # past it.
-            det_peak = _peak_snr_at(detection[0], detection[1], max(2, int(round(pixel_seeing / 2))))
+            det_peak = _peak_snr_at(detection[0], detection[1], max(2, round(pixel_seeing / 2)))
             veto_this = False
             for si in near_idx:
                 sx, sy = star_xy[si]
@@ -637,7 +637,7 @@ def extract_point_sources(frame: RateTrackFrame) -> SatelliteListImage:
     logger.debug("Applied 3x3 median filter to remove hot pixels")
 
     # Calculate background statistics using sigma clipping
-    mean, median, std = robust_background_stats(image_data)
+    _mean, median, std = robust_background_stats(image_data)
 
     # Subtract background
     image_data_sub = image_data - median

@@ -155,7 +155,7 @@ def plot_overs(
                         f"WCS without SIP test: pixel ({centers[0][0] if len(centers) > 0 else 100}, {centers[0][1] if len(centers) > 0 else 100}) -> RA={test_ra:.6f}, Dec={test_dec:.6f}"
                     )
                 except Exception as e:
-                    logger.error(f"Failed to create WCS without SIP for plotting: {e}")
+                    logger.exception(f"Failed to create WCS without SIP for plotting: {e}")
                     wcs_no_sip = None
 
                 if wcs_no_sip is not None:
@@ -1116,7 +1116,7 @@ def plot_photometry_frame(
     the wrong background if its annulus catches a neighbouring star, and that is visible here
     and almost nowhere else.
     """
-    fig, ax = prep_axes(*img.shape)
+    _fig, ax = prep_axes(*img.shape)
 
     # minval = np.min(img.flatten())
     # maxval = (np.median(img.flatten()) - minval) * 4 + minval
@@ -1220,7 +1220,7 @@ def plot_sip_distortions(
     try:
         wcs_no_sip = WCS(header_no_sip, relax=True)
     except Exception as e:
-        logger.error(f"Failed to create WCS without SIP: {e}")
+        logger.exception(f"Failed to create WCS without SIP: {e}")
         return None
 
     # Convert world coordinates back to pixel coordinates using linear WCS (no SIP)

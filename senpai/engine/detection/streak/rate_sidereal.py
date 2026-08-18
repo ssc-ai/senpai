@@ -71,7 +71,7 @@ def solve_rate_from_sidereal(
 
     pixel_fwhm = sidereal_frame.starfield.detection_metadata.pixel_fwhm
 
-    sidereal_data, is_synthetic = prepare_sidereal_frame(sidereal_frame)
+    sidereal_data, _is_synthetic = prepare_sidereal_frame(sidereal_frame)
     rate_data = prepare_rate_frame(rate_frame)
 
     # whopping bright streaks can mess with correlation

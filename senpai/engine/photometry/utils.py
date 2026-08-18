@@ -744,7 +744,7 @@ def _save_simple_limiting_mag_plot(
     if not np.any(valid):
         return
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    _fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(
         mags_arr[valid], np.log10(snrs_arr[valid]), c="blue", alpha=0.4, s=14, label=f"Stars (n={int(valid.sum())})"
     )
@@ -1381,7 +1381,7 @@ def _has_bright_neighbor(
     return False
 
 
-def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] = None) -> float | None:
+def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] | None = None) -> float | None:
     """Get the best available magnitude for a star."""
     # Use a simple cache key based on star's magnitude attributes
     # Since stars are objects, we can't use lru_cache directly, but we can
@@ -1414,7 +1414,7 @@ def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] = None) 
     return None
 
 
-def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: list[str] = None) -> str | None:
+def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: list[str] | None = None) -> str | None:
     """Find the best magnitude system with the most star coverage.
 
     Tries each preferred filter in order and picks the first one that covers
@@ -1481,7 +1481,7 @@ def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: l
 
 
 def _precompute_star_magnitudes(
-    stars: list[StarInSpace], preferred_filters: list[str] = None
+    stars: list[StarInSpace], preferred_filters: list[str] | None = None
 ) -> dict[int, float | None]:
     """Pre-compute magnitudes for all stars using a consistent magnitude system.
 
@@ -1648,7 +1648,7 @@ def _save_completeness_plot(
         y = np.asarray(comp_pct, dtype=float) / 100.0
         xs, ys = _isotonic_completeness(comp_mag, comp_pct)
 
-        fig, ax = plt.subplots(figsize=(8, 5))
+        _fig, ax = plt.subplots(figsize=(8, 5))
         ax.plot(x, y, "o-", color="orange", alpha=0.7, label="completeness (isolated)")
         ax.plot(xs, ys, "r-", label="isotonic smooth")
         ax.axhline(0.5, ls=":", color="k", alpha=0.5)

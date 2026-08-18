@@ -189,7 +189,7 @@ def analyze_catalog_magnitudes(
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+        _fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
 
         # Histogram of magnitudes
         ax1.hist(

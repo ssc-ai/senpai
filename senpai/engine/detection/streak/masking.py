@@ -486,8 +486,8 @@ def remove_streak_at_point_enriched(
     start_point: tuple[int, int],
     fill_min: float,
     fill_mode: np.ufunc = np.mean,
-    max_radius: int = None,
-    max_pixels: int = None,
+    max_radius: int | None = None,
+    max_pixels: int | None = None,
 ) -> tuple[np.ndarray, dict]:
     """Remove a streak at a point, also returning the shape it measured."""
     # Always bound the flood fill. An unbounded fill runs away across the whole
@@ -537,8 +537,8 @@ def remove_streak_at_point(
     start_point: tuple[int, int],
     fill_min: float,
     fill_mode: np.ufunc = np.mean,
-    max_radius: int = None,
-    max_pixels: int = None,
+    max_radius: int | None = None,
+    max_pixels: int | None = None,
 ) -> np.ndarray:
     """Remove the streak found at `start_point`, filling it from its surroundings."""
     image, _ = remove_streak_at_point_enriched(image, start_point, fill_min, fill_mode, max_radius, max_pixels)

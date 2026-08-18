@@ -174,7 +174,7 @@ def download_chunks(
                 else:
                     failed += 1
                     consec_fail += 1
-                    logger.error(
+                    logger.exception(
                         "chunk %d/%d FAILED after %d attempts (%s); skipping — re-run later to fill the gap",
                         i + 1,
                         nchunks,

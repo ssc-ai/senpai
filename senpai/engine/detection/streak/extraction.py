@@ -209,7 +209,7 @@ def prepare_sidereal_frame(sidereal_frame: "SiderealFrame", padding: float = 0.0
 
 
 def refine_robust_streak(
-    psf: np.ndarray, seed: StreakMeasurement, frame_index: int = None
+    psf: np.ndarray, seed: StreakMeasurement, frame_index: int | None = None
 ) -> tuple[StreakMeasurement, float]:
     """Refine streak parameters using a two-stage approach.
 
@@ -552,7 +552,7 @@ def refine_robust_streak(
     if _plt_cfg is not None and (_plt_cfg.psfs or _plt_cfg.debug):
         import matplotlib.pyplot as plt
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        _fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
         # Plot rotated PSF with threshold contours
         im0 = axes[0].imshow(rotated_psf, origin="lower", cmap="viridis")
@@ -1016,8 +1016,8 @@ def refine_streak_length_by_overhang(
 
 def extract_streak_dims_simple_long(
     data: np.ndarray,
-    length: float = None,
-    rotation: float = None,
+    length: float | None = None,
+    rotation: float | None = None,
     fwhm: float = 4.0,
 ) -> tuple[StreakMeasurement, np.ndarray, float]:
     """Extract streak dimensions for very long streaks by thresholding.
@@ -1204,8 +1204,8 @@ def _estimate_streak_seed(data: np.ndarray, fwhm: float = 4.0, crop: int = 2048)
 def extract_streak_dims_robust(
     data: np.ndarray,
     n_streaks: int = 10,
-    length: float = None,
-    rotation: float = None,
+    length: float | None = None,
+    rotation: float | None = None,
     fwhm: float | None = None,
 ) -> tuple[StreakMeasurement, np.ndarray, float]:
     """Extract streak dimensions, cross-checking three independent measurements.
@@ -1412,7 +1412,7 @@ def extract_streak_dims_robust(
 
         # Find connected component containing peak
 
-        labeled, num_features = ndimage.label(binary_cutout)
+        labeled, _num_features = ndimage.label(binary_cutout)
         peak_y, peak_x = np.unravel_index(np.argmax(norm_cutout), norm_cutout.shape)
         peak_label = labeled[peak_y, peak_x]
 
@@ -2342,7 +2342,7 @@ def measure_psf_fwhm(data: np.ndarray, rotation: float | None = None) -> float:
     rotated_data = rotate(data, width_angle, reshape=False, mode="constant", cval=0)
 
     # Find the peak
-    peak_y, peak_x = np.unravel_index(np.argmax(rotated_data), rotated_data.shape)
+    peak_y, _peak_x = np.unravel_index(np.argmax(rotated_data), rotated_data.shape)
 
     # Extract a profile through the peak perpendicular to the streak
     profile = rotated_data[peak_y, :]

@@ -822,8 +822,8 @@ def _percentile(sorted_xs: list[float], q: float) -> float:
     if len(sorted_xs) == 1:
         return sorted_xs[0]
     idx = q * (len(sorted_xs) - 1)
-    lo = int(math.floor(idx))
-    hi = int(math.ceil(idx))
+    lo = math.floor(idx)
+    hi = math.ceil(idx)
     if lo == hi:
         return sorted_xs[lo]
     return sorted_xs[lo] + (idx - lo) * (sorted_xs[hi] - sorted_xs[lo])
@@ -2022,7 +2022,7 @@ def _psf_stack_stamp(
         neigh = tree.query_ball_point((x, y), _PSF_ISO_RADIUS)
         if any(j != i and mags[j] < mags[i] + 2.0 for j in neigh):
             continue
-        xi, yi = int(round(x)), int(round(y))
+        xi, yi = round(x), round(y)
         st = data[yi - half : yi + half + 1, xi - half : xi + half + 1].copy()
         if st.shape != (n, n):
             continue

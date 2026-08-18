@@ -94,7 +94,7 @@ class SenpaiCocoExporter:
         senpai_run: SenpaiRun | SenpaiRunResult,
         collect_id: str,
         apply_calibrations: bool = True,
-        source_path: str | Path = None,
+        source_path: str | Path | None = None,
     ) -> None:
         """Export a single SENPAI run to individual COCO format files.
 

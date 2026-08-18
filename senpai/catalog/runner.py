@@ -362,7 +362,7 @@ def query_catalog_sstr7(
 
     # Calculate bounds for validation
     astropy_wcs = wcs.to_astropy_wcs()
-    fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
+    _fov_width, _fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
     corners_pix = np.array(
         [
             [0, 0],
@@ -412,7 +412,7 @@ def query_catalog_sdss(
     """Query SDSS for the stars on a frame, within the given magnitude limits."""
     astropy_wcs = wcs.to_astropy_wcs()
 
-    fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
+    _fov_width, _fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
     header = _linear_header(astropy_wcs)
@@ -764,7 +764,7 @@ def _query_catalog_gaia_cached(
 
     proper_motion_date = datetime.fromtimestamp(proper_motion_date_timestamp) if proper_motion_date_timestamp else None
 
-    fov_width, fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
+    _fov_width, _fov_height, pixel_width, pixel_height = wcs.get_fov_and_dimensions()
 
     # Get center coordinates
     header = _linear_header(astropy_wcs)
@@ -977,7 +977,7 @@ def examine_catalog() -> bool:
     try:
         catalog_enum = CatalogType(catalog_type)
     except ValueError:
-        logger.error(f"Unknown catalog type: {catalog_type}")
+        logger.exception(f"Unknown catalog type: {catalog_type}")
         return False
 
     if catalog_enum == CatalogType.SSTRC7:
@@ -1010,7 +1010,7 @@ def _examine_gaia_local_catalog(catalog_path: str) -> bool:
         with open(index_path) as fh:
             tiles = json.load(fh).get("tiles") or {}
     except Exception as e:
-        logger.error("gaia_local index unreadable: %s", e)
+        logger.exception("gaia_local index unreadable: %s", e)
         return False
     if not tiles:
         logger.error("gaia_local index has no tiles")
@@ -1049,7 +1049,7 @@ def _examine_sdss_catalog() -> bool:
         logger.info("SDSS catalog connectivity confirmed")
         return True
     except Exception as e:
-        logger.error(f"SDSS catalog connectivity test failed: {e}")
+        logger.exception(f"SDSS catalog connectivity test failed: {e}")
         return False
 
 
@@ -1069,7 +1069,7 @@ def _examine_gaia_catalog() -> bool:
         logger.info("Gaia catalog connectivity confirmed")
         return True
     except Exception as e:
-        logger.error(f"Gaia catalog connectivity test failed: {e}")
+        logger.exception(f"Gaia catalog connectivity test failed: {e}")
         return False
 
 

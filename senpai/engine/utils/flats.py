@@ -653,7 +653,7 @@ def main() -> None:
                 print(f"✓ Master flat created: {group_output}")
         else:
             # Original single master flat creation
-            master_flat, header = create_master_flat(
+            master_flat, _header = create_master_flat(
                 flat_directory=args.input_dir,
                 output_path=args.output,
                 min_median=args.min_median_counts,

@@ -44,7 +44,7 @@ def extract_box_statistics(
         dict with 'max', 'sum', 'mean', 'valid' keys
 
     """
-    x_int, y_int = int(round(x)), int(round(y))
+    x_int, y_int = round(x), round(y)
     half_box = box_size // 2
 
     # Check bounds
@@ -319,8 +319,8 @@ def validate_shift_lightweight(
             int(getattr(source, "index", 0)) & 0xFFFF,
             int(getattr(target, "index", 0)) & 0xFFFF,
             int(trial) & 0xFF,
-            int(round(float(shift_x) * 100)) & 0xFFFFF,
-            int(round(float(shift_y) * 100)) & 0xFFFFF,
+            round(float(shift_x) * 100) & 0xFFFFF,
+            round(float(shift_y) * 100) & 0xFFFFF,
         )
     )
 

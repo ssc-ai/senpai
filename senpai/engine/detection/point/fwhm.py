@@ -152,7 +152,7 @@ def measure_fwhm_from_catalog_stars(
     data = fits_image.data
     star_peaks: dict[int, float] = {}
     for star in valid_catalog_stars:
-        x0, y0 = int(round(star.x)), int(round(star.y))
+        x0, y0 = round(star.x), round(star.y)
         core = data[max(0, y0 - 2) : y0 + 3, max(0, x0 - 2) : x0 + 3]
         if core.size:
             star_peaks[id(star)] = float(core.max())

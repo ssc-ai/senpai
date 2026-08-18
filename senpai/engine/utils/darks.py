@@ -611,7 +611,7 @@ def main() -> None:
                 print(f"✓ Master dark created: {group_output}")
         else:
             # Original single master dark creation
-            master_dark, header = create_master_dark(
+            master_dark, _header = create_master_dark(
                 dark_directory=args.input_dir,
                 output_path=args.output,
                 max_percentile_counts=args.max_percentile_counts,

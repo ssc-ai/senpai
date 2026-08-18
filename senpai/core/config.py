@@ -31,7 +31,7 @@ def load_yaml(path: Path) -> dict:
             data = yaml.safe_load(f)
             return data.get("app", {})
     except Exception as e:
-        logger.error(f"Failed to load config from {path}: {e}")
+        logger.exception(f"Failed to load config from {path}: {e}")
         return {}
 
 
@@ -877,7 +877,7 @@ def initialize_config(config_path: Path) -> AppConfig:
     try:
         config = AppConfig(**config_data)
     except Exception as e:
-        logger.error(f"Configuration validation failed: {e}")
+        logger.exception(f"Configuration validation failed: {e}")
         raise
 
     # Set the singleton instance

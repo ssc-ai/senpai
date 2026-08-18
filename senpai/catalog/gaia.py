@@ -13,8 +13,8 @@ def query_by_ra_dec_bounds(
     max_ra: float,
     min_dec: float,
     max_dec: float,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     primary_filter: str = "G",
 ) -> list[dict[str, Any]]:
     """Query Gaia catalog using explicit RA/DEC bounds.
@@ -204,7 +204,7 @@ def query_by_ra_dec_bounds(
         return stars
 
     except Exception as e:
-        logger.error(f"Gaia query failed: {e}")
+        logger.exception(f"Gaia query failed: {e}")
         import traceback
 
         traceback.print_exc()

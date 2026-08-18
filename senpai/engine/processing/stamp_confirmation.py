@@ -1077,7 +1077,7 @@ def _sample_de_at_position(
     false positives.
     """
     h, w = de_map.shape
-    ix, iy = int(round(cx)), int(round(cy))
+    ix, iy = round(cx), round(cy)
     if 0 <= iy < h and 0 <= ix < w:
         return float(de_map[iy, ix])
     return 0.0
@@ -1150,7 +1150,7 @@ def _find_de_peak_near(
     position is out of bounds.
     """
     h, w = de_map.shape
-    ix, iy = int(round(pred_x)), int(round(pred_y))
+    ix, iy = round(pred_x), round(pred_y)
     ir = int(np.ceil(search_radius))
 
     y_lo = max(0, iy - ir)

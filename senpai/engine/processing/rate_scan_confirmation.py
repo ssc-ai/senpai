@@ -140,7 +140,7 @@ def confirm_streaks_via_rate_scan(
                 oh, ow = other_de.shape
                 for s in f.starfield.catalog_stars:
                     if s.x is not None and s.y is not None:
-                        ix, iy = int(round(s.x)), int(round(s.y))
+                        ix, iy = round(s.x), round(s.y)
                         y_lo = max(0, iy - star_mask_r)
                         y_hi = min(oh, iy + star_mask_r + 1)
                         x_lo = max(0, ix - star_mask_r)
@@ -400,7 +400,7 @@ def _rate_scan_candidate(
     best_cos_a = np.cos(np.radians(best_angle))
     best_sin_a = np.sin(np.radians(best_angle))
     n_angle_consistent = 0
-    r_search = max(1, int(round(fwhm)))  # Search along streak direction
+    r_search = max(1, round(fwhm))  # Search along streak direction
     for v, ofd in zip(best_other_vals, other_frames):
         if v <= 3 * ofd["noise"]:
             continue
@@ -418,7 +418,7 @@ def _rate_scan_candidate(
             for offset in range(-r_search, r_search + 1):
                 sx = pred_x + offset * best_cos_a
                 sy = pred_y + offset * best_sin_a
-                six, siy = int(round(sx)), int(round(sy))
+                six, siy = round(sx), round(sy)
                 if 0 <= siy < oh and 0 <= six < ow:
                     if de_map[siy, six] > 3 * ofd["noise"]:
                         local_angle = float(ba_map[siy, six])
@@ -704,7 +704,7 @@ def _sample_de(de_map: np.ndarray, x: float, y: float) -> float:
     # Bilinear interpolation
     if x < 0 or x >= w - 1 or y < 0 or y >= h - 1:
         # Fall back to nearest-neighbor at boundaries
-        ix, iy = int(round(x)), int(round(y))
+        ix, iy = round(x), round(y)
         if 0 <= iy < h and 0 <= ix < w:
             return float(de_map[iy, ix])
         return 0.0

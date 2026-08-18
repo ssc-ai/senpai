@@ -103,7 +103,7 @@ def get_local_config() -> dict[str, Any]:
     }
 
 
-def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> None:
+def setup_logging(level: str = "INFO", disabled_loggers: list[str] | None = None) -> None:
     """Configure logging based on level and context.
 
     Args:

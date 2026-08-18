@@ -136,7 +136,7 @@ def estimate_fwhm(
             0,
         )
     except Exception as e:
-        logger.error(f"Error estimating FWHM: {e}")
+        logger.exception(f"Error estimating FWHM: {e}")
         return None
 
     try:
@@ -172,7 +172,7 @@ def estimate_fwhm(
         )
 
         # Extract fitted parameters
-        amp, x0_fit, y0_fit, sigma_x, sigma_y, theta, offset = popt
+        _amp, _x0_fit, _y0_fit, sigma_x, sigma_y, _theta, _offset = popt
 
         # FWHM is approximately 2.355 * sigma for a Gaussian
         fwhm_x = 2.355 * sigma_x
@@ -227,7 +227,7 @@ def detect_sources_classic(
     # Estimate background statistics with more robust parameters
     if bg_stats is None:
         bg_stats = robust_background_stats(image)
-    mean, median, std = bg_stats
+    _mean, median, std = bg_stats
 
     # Define the DAOStarFinder object with more permissive criteria
     daofind = DAOStarFinder(
@@ -267,7 +267,7 @@ def _estimate_saturation_level(image: np.ndarray, sources: Table) -> float:
     """
     peaks = []
     for s in sources:
-        x0, y0 = int(round(s["xcentroid"])), int(round(s["ycentroid"]))
+        x0, y0 = round(s["xcentroid"]), round(s["ycentroid"])
         core = image[max(0, y0 - 2) : y0 + 3, max(0, x0 - 2) : x0 + 3]
         if core.size:
             peaks.append(float(core.max()))
@@ -304,7 +304,7 @@ def _robust_source_fwhm(image: np.ndarray, x: float, y: float, sat_level: float,
     and isolates the source's own component via connected-component labelling so a
     neighbour blend can't inflate the width.
     """
-    x0, y0 = int(round(x)), int(round(y))
+    x0, y0 = round(x), round(y)
     h = box_size // 2
     y_min, y_max = max(0, y0 - h), min(image.shape[0], y0 + h + 1)
     x_min, x_max = max(0, x0 - h), min(image.shape[1], x0 + h + 1)
@@ -399,9 +399,9 @@ def _refine_centroid_full_res(
     window holds no positive signal.
     """
     sigma_w = max(1.5, fwhm / 2.355)
-    r = max(4, int(round(fwhm)))
+    r = max(4, round(fwhm))
     for _ in range(5):
-        x0, y0 = int(round(x)), int(round(y))
+        x0, y0 = round(x), round(y)
         ylo, yhi = max(0, y0 - r), min(data.shape[0], y0 + r + 1)
         xlo, xhi = max(0, x0 - r), min(data.shape[1], x0 + r + 1)
         cut = data[ylo:yhi, xlo:xhi] - bg_median
@@ -423,7 +423,7 @@ def _refine_centroid_full_res(
 
 
 def extract_point_sources(
-    image: ProcessedFitsImage, max_detections: int = 100, min_separation: float = None
+    image: ProcessedFitsImage, max_detections: int = 100, min_separation: float | None = None
 ) -> tuple[StarListImage, float]:
     """Detect the stars in a sidereal frame and measure the frame's PSF width.
 
@@ -633,12 +633,12 @@ def validate_point_detection(
     Returns True if the detection looks like a real point source.
     """
     h, w = image.shape
-    r_core = max(3, int(round(fwhm)))
-    r_in = int(round(2 * fwhm))
-    r_out = int(round(3 * fwhm))
-    margin = max(r_out, int(round(edge_margin_fwhm * fwhm)))
+    r_core = max(3, round(fwhm))
+    r_in = round(2 * fwhm)
+    r_out = round(3 * fwhm)
+    margin = max(r_out, round(edge_margin_fwhm * fwhm))
 
-    ix, iy = int(round(x)), int(round(y))
+    ix, iy = round(x), round(y)
     if not (margin <= ix < w - margin and margin <= iy < h - margin):
         return False
 

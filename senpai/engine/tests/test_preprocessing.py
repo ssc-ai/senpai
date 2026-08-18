@@ -492,7 +492,7 @@ class TestEstimateGainFromSky:
         adu = _poisson_sky(1200.0, gain)
         # Smooth gradient (adjacent-column differencing should cancel it) and
         # bright stars (MAD should reject them).
-        yy, xx = np.mgrid[0 : adu.shape[0], 0 : adu.shape[1]]
+        _yy, xx = np.mgrid[0 : adu.shape[0], 0 : adu.shape[1]]
         adu = adu + 0.003 * 1200.0 * (xx / adu.shape[1])
         adu[::150, ::150] += 40000.0
         est = estimate_gain_from_sky(adu, float(np.median(adu)))

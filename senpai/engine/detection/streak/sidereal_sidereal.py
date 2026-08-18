@@ -46,7 +46,7 @@ def solve_sidereal_from_sidereal(
     cross_correlated_image = cross_corr(sidereal_target_data, sidereal_source_data)
 
     # measure_gaussian_shift returns (shift_yx, fwhm) where shift_yx is (row, col)
-    shift_yx, fwhm = measure_gaussian_shift(cross_correlated_image)
+    shift_yx, _fwhm = measure_gaussian_shift(cross_correlated_image)
 
     pixel_shift_magnitude = np.linalg.norm(shift_yx)
 

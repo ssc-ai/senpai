@@ -28,7 +28,7 @@ def load_senpai_run(json_path: Path | str) -> SenpaiRunResult:
             data = json.load(f)
         return SenpaiRunResult.model_validate(data)
     except Exception as e:
-        logger.error(f"Failed to load {json_path}: {e}")
+        logger.exception(f"Failed to load {json_path}: {e}")
         raise
 
 

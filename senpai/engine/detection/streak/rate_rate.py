@@ -219,7 +219,7 @@ def cc_downsample_factor(
     """
     if not fwhm or fwhm <= target_fwhm:
         return 1
-    f = max(1, int(round(fwhm / target_fwhm)))
+    f = max(1, round(fwhm / target_fwhm))
     while f > 1 and min(shape[0] // f, shape[1] // f) < min_side:
         f -= 1
     return f
@@ -312,8 +312,8 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
     rate_b_data = prepare_rate_frame(rate_frame_b)
 
     # whopping bright streaks can mess with correlation
-    rate_a_data, n_rate_a_removed = remove_near_saturation_streaks(rate_a_data, rate_frame_a.frame.data_type)
-    rate_b_data, n_rate_b_removed = remove_near_saturation_streaks(rate_b_data, rate_frame_b.frame.data_type)
+    rate_a_data, _n_rate_a_removed = remove_near_saturation_streaks(rate_a_data, rate_frame_a.frame.data_type)
+    rate_b_data, _n_rate_b_removed = remove_near_saturation_streaks(rate_b_data, rate_frame_b.frame.data_type)
 
     # Border-crossing streak removal. Symmetric (pairwise) when we can estimate
     # the inter-frame drift: deleting a streak from one frame while its
@@ -600,7 +600,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
         if settings.plotting.debug:
             from senpai.engine.plotting.images import plot_single_frame
 
-            fig, ax = plot_single_frame(
+            _fig, ax = plot_single_frame(
                 cross_correlated_image,
                 scale=False,
             )
@@ -732,7 +732,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
         fwhm=streak_fwhm,
     )
 
-    streak_measurements.frame_extraction, fwhm = refine_robust_streak(
+    streak_measurements.frame_extraction, _fwhm = refine_robust_streak(
         psf, frame_extraction_measurement, frame_index=rate_frame_b.index
     )
 

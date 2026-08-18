@@ -154,7 +154,7 @@ class ProcessedFitsImage(BaseModel):
         elif method == "median_filter":
             # Median filter reduction - apply median filter then downsample
             # Round scale factor to nearest integer for median filter
-            scale_factor_int = int(round(scale_factor))
+            scale_factor_int = round(scale_factor)
             if scale_factor_int < 1:
                 scale_factor_int = 1  # Ensure minimum scale factor of 1
 

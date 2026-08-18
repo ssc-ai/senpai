@@ -18,8 +18,8 @@ def query_by_ra_dec_bounds(
     max_ra: float,
     min_dec: float,
     max_dec: float,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:
     """Query SDSS catalog using explicit RA/DEC bounds.
@@ -155,7 +155,7 @@ def query_by_ra_dec_bounds(
         return stars
 
     except Exception as e:
-        logger.error(f"SDSS query failed: {e}")
+        logger.exception(f"SDSS query failed: {e}")
         return []
 
 
@@ -165,8 +165,8 @@ def query_by_bounds(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     safety_margin: float = 0.1,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:
@@ -367,7 +367,7 @@ def query_by_bounds(
         return stars
 
     except Exception as e:
-        logger.error(f"SDSS query failed: {e}")
+        logger.exception(f"SDSS query failed: {e}")
         return []
 
 
@@ -377,10 +377,10 @@ def query_by_los_radec_with_rotation(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    rootPath: str = None,
-    filter_center: float = None,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    rootPath: str | None = None,
+    filter_center: float | None = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     safety_margin: float = 0.1,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:

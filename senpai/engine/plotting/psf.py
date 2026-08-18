@@ -203,7 +203,7 @@ def stack_stars(
         x, y = xy[i]
         if not (half + 2 < x < w - half - 2 and half + 2 < y < h - half - 2):
             continue
-        xi, yi = int(round(x)), int(round(y))
+        xi, yi = round(x), round(y)
         st = data[yi - half : yi + half + 1, xi - half : xi + half + 1].astype(float)
         if st.shape != (n, n):
             continue

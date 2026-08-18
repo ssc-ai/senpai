@@ -618,7 +618,7 @@ def _subtract_catalog_stars(
         if star.x is None or star.y is None:
             continue
 
-        ix, iy = int(round(star.x)), int(round(star.y))
+        ix, iy = round(star.x), round(star.y)
 
         # Skip stars too close to the edge
         if iy - half < 0 or iy + half >= h or ix - half < 0 or ix + half >= w:
@@ -1224,8 +1224,8 @@ def detect_streaks_in_sidereal(
         claim_radius = fwhm * 2
         ir = int(claim_radius)
         for t in np.arange(-half_len, half_len + 1, 2.0):
-            px = int(round(candidate.x + t * cos_a))
-            py = int(round(candidate.y + t * sin_a))
+            px = round(candidate.x + t * cos_a)
+            py = round(candidate.y + t * sin_a)
             if 0 <= py < image.shape[0] and 0 <= px < image.shape[1]:
                 y_lo = max(0, py - ir)
                 y_hi = min(image.shape[0], py + ir + 1)

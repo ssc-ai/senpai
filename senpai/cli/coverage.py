@@ -163,7 +163,7 @@ def query_stars_for_position(
     fov_size: float,
     catalog_path: str,
     faint_lim: float,
-    bright_lim: float = None,
+    bright_lim: float | None = None,
     x_fov: float | None = None,
     y_fov: float | None = None,
 ) -> list[dict]:
@@ -1385,7 +1385,7 @@ def run_coverage_analysis(
                     pbar.set_description(f"Position {position_num}/{total_positions} (RA={ra:.1f}°, Dec={dec:.1f}°)")
                     pbar.update(1)
                 except Exception as e:
-                    logger.error(f"Error processing position {position_num}: {e}")
+                    logger.exception(f"Error processing position {position_num}: {e}")
                     grid_pos = (round(ra, 2), round(dec, 2))
                     for fov in fov_values:
                         for mag in magnitude_thresholds:
@@ -1995,7 +1995,7 @@ def plot_star_distribution_debug(
         if not filtered_stars:
             continue
 
-        fig, ax = plt.subplots(figsize=(10, 8))
+        _fig, ax = plt.subplots(figsize=(10, 8))
 
         # Extract RA and Dec
         ra_values = np.array([s["ra"] for s in filtered_stars])
@@ -2118,7 +2118,7 @@ def plot_star_distribution_debug_corridor(
         if not filtered_stars:
             continue
 
-        fig, ax = plt.subplots(figsize=(12, 10))
+        _fig, ax = plt.subplots(figsize=(12, 10))
 
         # Extract RA and Dec
         ra_values = np.array([s["ra"] for s in filtered_stars])
@@ -2284,7 +2284,7 @@ def plot_coverage_results(
     fovs_sorted = sorted(fov_groups.keys(), reverse=True)
 
     # Main coverage plot: Min/Max lines (original plot)
-    fig, ax = plt.subplots(figsize=(10, 8))
+    _fig, ax = plt.subplots(figsize=(10, 8))
 
     colors = plt.cm.viridis(np.linspace(0, 1, len(fovs_sorted)))
 
@@ -2330,7 +2330,7 @@ def plot_coverage_results(
 
     # New plot: Median min_stars with +/- 1 sigma error bars
     if per_position_stats is not None:
-        fig, ax = plt.subplots(figsize=(10, 8))
+        _fig, ax = plt.subplots(figsize=(10, 8))
 
         colors = plt.cm.viridis(np.linspace(0, 1, len(fovs_sorted)))
 
@@ -2460,7 +2460,7 @@ def _plot_coverage_percentage_single(
         total_grid_positions: Total number of grid positions
 
     """
-    fig, ax = plt.subplots(figsize=(10, 8))
+    _fig, ax = plt.subplots(figsize=(10, 8))
 
     # Sort FOVs from smallest to largest (so smaller FOVs are plotted first, behind larger ones)
     fovs_sorted = sorted(fov_groups.keys(), reverse=False)
@@ -2722,7 +2722,7 @@ def main() -> int:
                 logger.info(f"Recreated master statistics file: {json_path}")
 
             except Exception as e:
-                logger.error(f"Failed to load per-position statistics: {e}")
+                logger.exception(f"Failed to load per-position statistics: {e}")
                 return 1
 
         # Fall back to legacy master file if per-position files don't exist
@@ -2960,7 +2960,7 @@ def main() -> int:
                         )
                         pbar.update(1)
                     except Exception as e:
-                        logger.error(f"Error processing corridor time step {time_step_num}: {e}")
+                        logger.exception(f"Error processing corridor time step {time_step_num}: {e}")
                         pbar.update(1)
 
                 pbar.close()
