@@ -25,7 +25,7 @@ def _smooth_peaky_image(seed=3, size=1200, n_peaks=120):
     return gaussian_filter(img, sigma=4.0)
 
 
-def test_find_local_maxima_fast_path_matches_full_computation():
+def test_find_local_maxima_fast_path_matches_full_computation() -> None:
     img = _smooth_peaky_image()
     k = 50
     fast = find_local_maxima(img, min_distance=30, max_detections=k)
@@ -35,7 +35,7 @@ def test_find_local_maxima_fast_path_matches_full_computation():
     assert np.array_equal(fast, full)
 
 
-def test_find_local_maxima_respects_threshold():
+def test_find_local_maxima_respects_threshold() -> None:
     img = _smooth_peaky_image(seed=4)
     thresh = float(np.percentile(img, 99.999))
     got = find_local_maxima(img, min_distance=30, threshold=thresh, max_detections=20)
@@ -60,7 +60,7 @@ def _match_reference(stars, detected_points, max_distance=20):
     return pairs, un_s, un_d
 
 
-def test_match_stars_to_detections_matches_reference():
+def test_match_stars_to_detections_matches_reference() -> None:
     rng = np.random.default_rng(9)
     stars = [StarInImage(x=float(x), y=float(y), counts=1.0) for x, y in rng.uniform(0, 2000, (300, 2))]
     stars[7] = None  # None stars get infinite-cost rows

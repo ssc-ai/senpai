@@ -50,7 +50,7 @@ DETECTION_FWHM = 4.75
 # --------------------------------------------------------------------------
 
 
-def _use_pipeline_mode(monkeypatch, mode: str):
+def _use_pipeline_mode(monkeypatch: pytest.MonkeyPatch, mode: str):
     """Point the process-wide config singleton at a copy with ``pipeline_mode=mode``.
 
     AppConfig is frozen, so this copies rather than mutates; monkeypatch restores
@@ -106,7 +106,7 @@ def _fake_wcs() -> WCSModel:
 
 
 @pytest.fixture
-def stubbed_stages(monkeypatch):
+def stubbed_stages(monkeypatch: pytest.MonkeyPatch):
     """Stub every stage of the sidereal pipeline and record which ones ran."""
     calls: dict[str, int] = {
         "extract": 0,
@@ -181,21 +181,21 @@ def _min_astrometry(**overrides) -> dict:
     return data
 
 
-def test_pipeline_mode_defaults_to_full():
+def test_pipeline_mode_defaults_to_full() -> None:
     assert AstrometryConfig(**_min_astrometry()).pipeline_mode == "full"
 
 
 @pytest.mark.parametrize("mode", ["full", "detect_solve", "detect"])
-def test_pipeline_mode_accepts_known_modes(mode):
+def test_pipeline_mode_accepts_known_modes(mode) -> None:
     assert AstrometryConfig(**_min_astrometry(pipeline_mode=mode)).pipeline_mode == mode
 
 
-def test_pipeline_mode_rejects_unknown_mode():
+def test_pipeline_mode_rejects_unknown_mode() -> None:
     with pytest.raises(ValidationError):
         AstrometryConfig(**_min_astrometry(pipeline_mode="detect_only"))
 
 
-def test_shipped_configs_default_to_full():
+def test_shipped_configs_default_to_full() -> None:
     """No shipped config silently opts into a reduced mode."""
     for path in sorted(CONFIG_DIR.glob("*.yaml")):
         cfg_data = cfg_mod.load_yaml(path)
@@ -209,7 +209,7 @@ def test_shipped_configs_default_to_full():
 # --------------------------------------------------------------------------
 
 
-def test_detect_mode_skips_solve_and_everything_after(monkeypatch, stubbed_stages):
+def test_detect_mode_skips_solve_and_everything_after(monkeypatch: pytest.MonkeyPatch, stubbed_stages) -> None:
     _use_pipeline_mode(monkeypatch, "detect")
 
     starfield = sidereal_mod.process_astrometry_fits_sidereal(_fake_image())
@@ -229,7 +229,7 @@ def test_detect_mode_skips_solve_and_everything_after(monkeypatch, stubbed_stage
     assert starfield.fwhm_stats.n_measurements == 1
 
 
-def test_detect_solve_mode_keeps_wcs_and_plate_scale(monkeypatch, stubbed_stages):
+def test_detect_solve_mode_keeps_wcs_and_plate_scale(monkeypatch: pytest.MonkeyPatch, stubbed_stages) -> None:
     _use_pipeline_mode(monkeypatch, "detect_solve")
 
     starfield = sidereal_mod.process_astrometry_fits_sidereal(_fake_image())
@@ -251,7 +251,7 @@ def test_detect_solve_mode_keeps_wcs_and_plate_scale(monkeypatch, stubbed_stages
     assert starfield.fwhm_stats.median_fwhm == DETECTION_FWHM
 
 
-def test_full_mode_still_runs_the_whole_pipeline(monkeypatch, stubbed_stages):
+def test_full_mode_still_runs_the_whole_pipeline(monkeypatch: pytest.MonkeyPatch, stubbed_stages) -> None:
     """Regression guard: the default mode is untouched by this change."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -275,7 +275,7 @@ def test_full_mode_still_runs_the_whole_pipeline(monkeypatch, stubbed_stages):
 
 
 @pytest.fixture
-def stubbed_collect(monkeypatch):
+def stubbed_collect(monkeypatch: pytest.MonkeyPatch):
     """Neutralize preprocessing and frame organization for collect-level tests."""
     monkeypatch.setattr(
         "senpai.engine.utils.preprocessing.preprocess_image",
@@ -293,7 +293,9 @@ def stubbed_collect(monkeypatch):
     monkeypatch.setattr(SenpaiRun, "organize_senpai_frames", classmethod(fake_organize))
 
 
-def test_collect_detect_mode_completes_without_a_wcs(monkeypatch, stubbed_stages, stubbed_collect):
+def test_collect_detect_mode_completes_without_a_wcs(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages, stubbed_collect
+) -> None:
     """fit=False must not land the run in the 'No valid WCS solution found' state."""
     _use_pipeline_mode(monkeypatch, "detect")
 
@@ -328,7 +330,9 @@ def test_collect_detect_mode_completes_without_a_wcs(monkeypatch, stubbed_stages
         assert frame.photometry_summary is None
 
 
-def test_collect_detect_solve_mode_completes_with_a_wcs(monkeypatch, stubbed_stages, stubbed_collect):
+def test_collect_detect_solve_mode_completes_with_a_wcs(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages, stubbed_collect
+) -> None:
     _use_pipeline_mode(monkeypatch, "detect_solve")
 
     senpai_run = collect_mod.process_senpai_collect([_fake_image()], id="focus-sweep")
@@ -344,7 +348,9 @@ def test_collect_detect_solve_mode_completes_with_a_wcs(monkeypatch, stubbed_sta
     assert starfield.fwhm_stats.median_fwhm == DETECTION_FWHM
 
 
-def test_collect_full_mode_unsolved_frame_still_errors(monkeypatch, stubbed_stages, stubbed_collect):
+def test_collect_full_mode_unsolved_frame_still_errors(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages, stubbed_collect
+) -> None:
     """Regression guard: a genuine solve failure in full mode is still an error."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -378,7 +384,7 @@ def test_collect_full_mode_unsolved_frame_still_errors(monkeypatch, stubbed_stag
 # --------------------------------------------------------------------------
 
 
-def test_sidereal_override_beats_configured_full(monkeypatch, stubbed_stages):
+def test_sidereal_override_beats_configured_full(monkeypatch: pytest.MonkeyPatch, stubbed_stages) -> None:
     """config=full, call=detect -> no solve for that call."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -389,7 +395,7 @@ def test_sidereal_override_beats_configured_full(monkeypatch, stubbed_stages):
     assert starfield.detection_metadata.pixel_fwhm == DETECTION_FWHM
 
 
-def test_sidereal_override_beats_configured_detect(monkeypatch, stubbed_stages):
+def test_sidereal_override_beats_configured_detect(monkeypatch: pytest.MonkeyPatch, stubbed_stages) -> None:
     """The override works in both directions: config=detect, call=full -> full pipeline."""
     _use_pipeline_mode(monkeypatch, "detect")
 
@@ -399,7 +405,7 @@ def test_sidereal_override_beats_configured_detect(monkeypatch, stubbed_stages):
     assert stubbed_stages["catalog"] == 1
 
 
-def test_omitting_the_override_uses_configured_mode(monkeypatch, stubbed_stages):
+def test_omitting_the_override_uses_configured_mode(monkeypatch: pytest.MonkeyPatch, stubbed_stages) -> None:
     """Byte-identical to the pre-override behaviour for every existing caller."""
     _use_pipeline_mode(monkeypatch, "detect")
 
@@ -408,7 +414,9 @@ def test_omitting_the_override_uses_configured_mode(monkeypatch, stubbed_stages)
     assert stubbed_stages["solve"] == 0
 
 
-def test_collect_override_runs_a_sweep_while_config_stays_full(monkeypatch, stubbed_stages, stubbed_collect):
+def test_collect_override_runs_a_sweep_while_config_stays_full(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages, stubbed_collect
+) -> None:
     """The autofocus case end-to-end: science config untouched, sweep batch reduced."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -430,7 +438,7 @@ def test_collect_override_runs_a_sweep_while_config_stays_full(monkeypatch, stub
         assert frame.starfield.fwhm_stats.median_fwhm == DETECTION_FWHM
 
 
-def test_override_does_not_leak_into_config(monkeypatch, stubbed_stages, stubbed_collect):
+def test_override_does_not_leak_into_config(monkeypatch: pytest.MonkeyPatch, stubbed_stages, stubbed_collect) -> None:
     """A reduced-mode batch must not degrade the science batch that follows it."""
     _use_pipeline_mode(monkeypatch, "full")
 

@@ -52,7 +52,7 @@ SIGMA = FWHM / 2.355
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _config():
+def _config() -> None:
     """Process-wide config singleton, plotting off (no files written)."""
     initialize_config(CONFIG_DIR / "burr.yaml")
     get_config().plotting.photometry = False
@@ -128,7 +128,7 @@ def _starfield(stars, fwhm=FWHM, size=400):
 
 
 @pytest.mark.parametrize("total_flux", [20000.0, 50000.0, 120000.0])
-def test_single_star_recovers_injected_flux(total_flux):
+def test_single_star_recovers_injected_flux(total_flux) -> None:
     """Aperture (r = 2*FWHM ~ 7 px) captures ~99.7% of a FWHM-3.5 Gaussian."""
     img, x0, y0 = _single_star_image(total_flux)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
@@ -138,7 +138,7 @@ def test_single_star_recovers_injected_flux(total_flux):
     assert res.flux == pytest.approx(total_flux, rel=0.02)
 
 
-def test_single_star_snr_in_ballpark():
+def test_single_star_snr_in_ballpark() -> None:
     """Background-limited SNR ~ flux / (sky_sigma * sqrt(N_pix)).
 
     The engine's reported SNR uses a shot+sky noise model, so it is >= the
@@ -154,7 +154,7 @@ def test_single_star_snr_in_ballpark():
     assert res.snr < 5.0 * sky_limited
 
 
-def test_brighter_star_has_higher_snr():
+def test_brighter_star_has_higher_snr() -> None:
     img_f, x0, y0 = _single_star_image(20000.0, seed=7)
     img_b, _, _ = _single_star_image(120000.0, seed=7)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
@@ -163,7 +163,7 @@ def test_brighter_star_has_higher_snr():
     assert bright.snr > faint.snr
 
 
-def test_single_star_background_recovered():
+def test_single_star_background_recovered() -> None:
     img, x0, y0 = _single_star_image(50000.0, bg=250.0, sky=4.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
     res = measure_simple_star_photometry(img, star, FWHM, _cfg())
@@ -171,7 +171,7 @@ def test_single_star_background_recovered():
     assert res.background_std == pytest.approx(4.0, abs=1.5)
 
 
-def test_instrumental_magnitude_matches_flux():
+def test_instrumental_magnitude_matches_flux() -> None:
     img, x0, y0 = _single_star_image(50000.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
     res = measure_simple_star_photometry(img, star, FWHM, _cfg())
@@ -179,26 +179,26 @@ def test_instrumental_magnitude_matches_flux():
     assert res.instrumental_magnitude == pytest.approx(expected, abs=0.01)
 
 
-def test_star_none_coordinates_returns_none():
+def test_star_none_coordinates_returns_none() -> None:
     img, _, _ = _single_star_image(50000.0)
     star = StarInSpace(ra=0, dec=0, x=None, y=None, magnitude=14.0)
     assert measure_simple_star_photometry(img, star, FWHM, _cfg()) is None
 
 
-def test_star_near_edge_returns_none():
+def test_star_near_edge_returns_none() -> None:
     img, _, _ = _single_star_image(50000.0, size=200)
     star = StarInSpace(ra=0, dec=0, x=2.0, y=2.0, magnitude=14.0)
     assert measure_simple_star_photometry(img, star, FWHM, _cfg()) is None
 
 
-def test_quality_flag_true_for_bright_isolated_star():
+def test_quality_flag_true_for_bright_isolated_star() -> None:
     img, x0, y0 = _single_star_image(80000.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
     res = measure_simple_star_photometry(img, star, FWHM, _cfg())
     assert res.quality_flag is True
 
 
-def test_quality_flag_false_when_min_snr_too_high():
+def test_quality_flag_false_when_min_snr_too_high() -> None:
     """Raise min_snr above the star's SNR -> quality flag flips off."""
     img, x0, y0 = _single_star_image(50000.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
@@ -228,7 +228,7 @@ def _field_image_and_starfield(seed=1, size=400, sky=5.0):
     return _image(data), _starfield(stars, size=size)
 
 
-def test_starfield_recovers_all_star_fluxes():
+def test_starfield_recovers_all_star_fluxes() -> None:
     img, sf = _field_image_and_starfield()
     results, _ = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     assert len(results) == 8
@@ -237,14 +237,14 @@ def test_starfield_recovers_all_star_fluxes():
         assert r.flux == pytest.approx(expected, rel=0.03)
 
 
-def test_starfield_zero_point_recovered():
+def test_starfield_zero_point_recovered() -> None:
     img, sf = _field_image_and_starfield()
     _, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     assert summary.zero_point is not None
     assert summary.zero_point == pytest.approx(TRUE_ZP, abs=0.05)
 
 
-def test_starfield_summary_counts_and_snr():
+def test_starfield_summary_counts_and_snr() -> None:
     img, sf = _field_image_and_starfield()
     results, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     assert summary.n_stars == len(results)
@@ -254,7 +254,7 @@ def test_starfield_summary_counts_and_snr():
     assert len(summary.stars_mag) == len(summary.stars_snr)
 
 
-def test_starfield_records_circular_aperture_geometry():
+def test_starfield_records_circular_aperture_geometry() -> None:
     """The summary carries the literal circular aperture/annulus pixel dims:
     radius/inner/outer = factor × FWHM, so a reader needn't re-derive them.
     """
@@ -268,7 +268,7 @@ def test_starfield_records_circular_aperture_geometry():
     assert geo["bg_outer_px"] == pytest.approx(5.0 * FWHM)  # bg_outer_factor
 
 
-def test_run_result_records_aperture_policy():
+def test_run_result_records_aperture_policy() -> None:
     """to_result() emits a run-level `photometry` block carrying the PSF-factor
     policy when the run measured photometry, so the output JSON documents how
     apertures were sized without the original config.yaml.
@@ -293,7 +293,7 @@ def test_run_result_records_aperture_policy():
     assert "definition" in block
 
 
-def test_run_result_omits_photometry_block_without_photometry():
+def test_run_result_omits_photometry_block_without_photometry() -> None:
     """A run that measured no photometry omits the run-level block entirely."""
     frame = SiderealFrame(frame=_image(np.zeros((50, 50))), index=0, photometry_summary=None)
     run = SenpaiRun(
@@ -305,7 +305,7 @@ def test_run_result_omits_photometry_block_without_photometry():
     assert run.to_result().photometry is None
 
 
-def test_starfield_no_fwhm_returns_empty():
+def test_starfield_no_fwhm_returns_empty() -> None:
     img, sf = _field_image_and_starfield()
     sf_no_fwhm = StarField.model_construct(
         catalog_stars=sf.catalog_stars,
@@ -317,7 +317,7 @@ def test_starfield_no_fwhm_returns_empty():
     assert summary.n_stars == 0
 
 
-def test_starfield_no_catalog_stars_returns_empty():
+def test_starfield_no_catalog_stars_returns_empty() -> None:
     img, sf = _field_image_and_starfield()
     sf_empty = StarField.model_construct(
         catalog_stars=[],
@@ -334,17 +334,17 @@ def test_starfield_no_catalog_stars_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_assess_quality_rejects_negative_flux():
+def test_assess_quality_rejects_negative_flux() -> None:
     assert _assess_simple_quality(-1.0, 50.0, 0.0, _cfg()) is False
 
 
-def test_assess_quality_rejects_low_snr():
+def test_assess_quality_rejects_low_snr() -> None:
     cfg = _cfg(min_snr=5.0)
     assert _assess_simple_quality(100.0, 2.0, 0.0, cfg) is False
     assert _assess_simple_quality(100.0, 10.0, 0.0, cfg) is True
 
 
-def test_assess_quality_rejects_high_crowding():
+def test_assess_quality_rejects_high_crowding() -> None:
     cfg = _cfg(max_crowding=0.3)
     assert _assess_simple_quality(100.0, 50.0, 0.5, cfg) is False
     assert _assess_simple_quality(100.0, 50.0, 0.1, cfg) is True
@@ -355,7 +355,7 @@ def test_assess_quality_rejects_high_crowding():
 # ---------------------------------------------------------------------------
 
 
-def test_crowding_zero_for_isolated_star():
+def test_crowding_zero_for_isolated_star() -> None:
     rng = np.random.default_rng(11)
     data = 100.0 + rng.normal(0.0, 3.0, (200, 200))
     _inject_star(data, 100, 100, 50000.0)
@@ -363,7 +363,7 @@ def test_crowding_zero_for_isolated_star():
     assert crowd < 0.05
 
 
-def test_crowding_higher_with_bright_neighbor():
+def test_crowding_higher_with_bright_neighbor() -> None:
     rng = np.random.default_rng(12)
     iso = 100.0 + rng.normal(0.0, 3.0, (200, 200))
     _inject_star(iso, 100, 100, 50000.0)
@@ -376,13 +376,13 @@ def test_crowding_higher_with_bright_neighbor():
     assert crowd_neighbour > crowd_iso
 
 
-def test_has_bright_neighbor_detects_blend():
+def test_has_bright_neighbor_detects_blend() -> None:
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     bright = StarInSpace(ra=0, dec=0, x=103.0, y=100.0, magnitude=12.0)
     assert _has_bright_neighbor(faint, 18.0, [faint, bright], iso_radius_pix=10.0, delta_mag=2.0) is True
 
 
-def test_has_bright_neighbor_ignores_distant_or_faint():
+def test_has_bright_neighbor_ignores_distant_or_faint() -> None:
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     far_bright = StarInSpace(ra=0, dec=0, x=300.0, y=300.0, magnitude=12.0)
     near_similar = StarInSpace(ra=0, dec=0, x=103.0, y=100.0, magnitude=17.5)
@@ -390,7 +390,7 @@ def test_has_bright_neighbor_ignores_distant_or_faint():
     assert _has_bright_neighbor(faint, 18.0, [faint, near_similar], iso_radius_pix=10.0, delta_mag=2.0) is False
 
 
-def test_has_bright_neighbor_kdtree_matches_bruteforce():
+def test_has_bright_neighbor_kdtree_matches_bruteforce() -> None:
     """KD-tree path and the O(n) fallback must agree."""
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     bright = StarInSpace(ra=0, dec=0, x=104.0, y=100.0, magnitude=12.0)
@@ -407,36 +407,36 @@ def test_has_bright_neighbor_kdtree_matches_bruteforce():
 # ---------------------------------------------------------------------------
 
 
-def test_get_best_magnitude_prefers_order():
+def test_get_best_magnitude_prefers_order() -> None:
     star = StarInSpace(ra=0, dec=0, magnitudes={"Sloan_r": 14.0, "Johnson_V": 13.5})
     assert _get_best_magnitude(star) == 13.5  # Johnson_V outranks Sloan_r
 
 
-def test_get_best_magnitude_falls_back_to_primary():
+def test_get_best_magnitude_falls_back_to_primary() -> None:
     star = StarInSpace(ra=0, dec=0, magnitude=12.0)
     assert _get_best_magnitude(star) == 12.0
 
 
-def test_get_best_magnitude_none_when_absent():
+def test_get_best_magnitude_none_when_absent() -> None:
     star = StarInSpace(ra=0, dec=0)
     assert _get_best_magnitude(star) is None
 
 
-def test_find_common_magnitude_system_picks_covered_filter():
+def test_find_common_magnitude_system_picks_covered_filter() -> None:
     stars = [StarInSpace(ra=0, dec=0, magnitudes={"Johnson_V": float(m)}) for m in range(10)]
     assert _find_common_magnitude_system(stars) == "Johnson_V"
 
 
-def test_find_common_magnitude_system_primary_fallback():
+def test_find_common_magnitude_system_primary_fallback() -> None:
     stars = [StarInSpace(ra=0, dec=0, magnitude=float(m)) for m in range(5)]
     assert _find_common_magnitude_system(stars) == "primary"
 
 
-def test_find_common_magnitude_system_empty():
+def test_find_common_magnitude_system_empty() -> None:
     assert _find_common_magnitude_system([]) is None
 
 
-def test_precompute_star_magnitudes_uses_common_system():
+def test_precompute_star_magnitudes_uses_common_system() -> None:
     stars = [StarInSpace(ra=0, dec=0, magnitudes={"Johnson_V": float(m), "Sloan_r": float(m) + 0.3}) for m in range(6)]
     cache = _precompute_star_magnitudes(stars)
     for s in stars:
@@ -448,7 +448,7 @@ def test_precompute_star_magnitudes_uses_common_system():
 # ---------------------------------------------------------------------------
 
 
-def test_isotonic_completeness_is_monotone_decreasing():
+def test_isotonic_completeness_is_monotone_decreasing() -> None:
     mag = [10, 11, 12, 13, 14, 15, 16]
     # deliberately spiky input
     pct = [100, 90, 95, 70, 80, 30, 10]
@@ -456,7 +456,7 @@ def test_isotonic_completeness_is_monotone_decreasing():
     assert all(ys[i] >= ys[i + 1] - 1e-9 for i in range(len(ys) - 1))
 
 
-def test_completeness_limits_crossings():
+def test_completeness_limits_crossings() -> None:
     mag = [10, 11, 12, 13, 14, 15, 16, 17]
     pct = [100, 100, 100, 90, 60, 30, 10, 0]
     target, m50, m90 = _completeness_limits(mag, pct, target=0.5)
@@ -466,18 +466,18 @@ def test_completeness_limits_crossings():
     assert target == pytest.approx(m50)
 
 
-def test_completeness_limits_none_for_short_curve():
+def test_completeness_limits_none_for_short_curve() -> None:
     assert _completeness_limits([10, 11], [100, 50]) == (None, None, None)
 
 
-def test_completeness_limits_none_when_never_crosses():
+def test_completeness_limits_none_when_never_crosses() -> None:
     mag = [10, 11, 12, 13, 14]
     pct = [100, 100, 100, 100, 100]  # never drops below 50%
     _, m50, m90 = _completeness_limits(mag, pct, target=0.5)
     assert m50 is None and m90 is None
 
 
-def test_compute_completeness_curve_rolls_over():
+def test_compute_completeness_curve_rolls_over() -> None:
     """Build results spanning bright->faint with SNR decreasing; the curve
     should be ~100% at the bright end and drop toward 0 at the faint end.
     """
@@ -509,7 +509,7 @@ def test_compute_completeness_curve_rolls_over():
     assert comp_pct[-1] <= 20.0
 
 
-def test_compute_completeness_curve_empty_when_too_few():
+def test_compute_completeness_curve_empty_when_too_few() -> None:
     star = StarInSpace(ra=0, dec=0, x=50, y=50, magnitude=14.0, magnitudes={"Johnson_V": 14.0})
     res = [
         SimplePhotometryResult(

@@ -36,7 +36,7 @@ from senpai.engine.utils.preprocessing import (
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _config():
+def _config() -> None:
     initialize_config(CONFIG_DIR / "burr.yaml")
     get_config().plotting.debug = False
 
@@ -69,14 +69,14 @@ def _make_image(data: np.ndarray, **header_kw) -> ProcessedFitsImage:
 
 
 class TestApplyDarkSubtraction:
-    def test_subtracts_matching_exposure(self):
+    def test_subtracts_matching_exposure(self) -> None:
         dark = np.full((20, 20), 100.0)
         image = _make_image(np.full((20, 20), 500.0), EXPTIME=10.0)
         out = apply_dark_subtraction(image, dark, dark_exposure_time=10.0)
         # No scaling -> straight subtraction.
         assert np.allclose(out.data, 400.0)
 
-    def test_scales_dark_for_longer_exposure(self):
+    def test_scales_dark_for_longer_exposure(self) -> None:
         dark = np.full((20, 20), 100.0)
         # image exposure is 2x the dark -> dark scaled by 2 -> subtract 200.
         image = _make_image(np.full((20, 20), 1000.0), EXPTIME=20.0)
@@ -85,14 +85,14 @@ class TestApplyDarkSubtraction:
         meta = next(m for m in out.processing_history if m.step_type == ProcessingStep.DARK_SUBTRACT)
         assert meta.parameters["exposure_time_scaling"] == pytest.approx(2.0)
 
-    def test_scales_dark_for_shorter_exposure(self):
+    def test_scales_dark_for_shorter_exposure(self) -> None:
         dark = np.full((20, 20), 100.0)
         image = _make_image(np.full((20, 20), 1000.0), EXPTIME=5.0)
         out = apply_dark_subtraction(image, dark, dark_exposure_time=10.0)
         # dark scaled by 0.5 -> subtract 50.
         assert np.allclose(out.data, 950.0)
 
-    def test_hot_pixels_cleaned_before_subtraction(self):
+    def test_hot_pixels_cleaned_before_subtraction(self) -> None:
         dark = np.full((30, 30), 100.0)
         dark[5, 5] = 50000.0  # single hot pixel far above median+5*std
         image = _make_image(np.full((30, 30), 500.0), EXPTIME=10.0)
@@ -103,20 +103,20 @@ class TestApplyDarkSubtraction:
         meta = next(m for m in out.processing_history if m.step_type == ProcessingStep.DARK_SUBTRACT)
         assert meta.parameters["hot_pixels_cleaned"] >= 1
 
-    def test_reads_dark_exposure_from_file_header(self, tmp_path):
+    def test_reads_dark_exposure_from_file_header(self, tmp_path: Path) -> None:
         dpath = _write_fits(tmp_path / "dark.fits", np.full((16, 16), 80.0), EXPTIME=4.0)
         image = _make_image(np.full((16, 16), 800.0), EXPTIME=8.0)
         out = apply_dark_subtraction(image, dpath)
         # dark scaled by 8/4 = 2 -> subtract 160.
         assert np.allclose(out.data, 640.0)
 
-    def test_shape_mismatch_raises(self):
+    def test_shape_mismatch_raises(self) -> None:
         dark = np.full((10, 10), 100.0)
         image = _make_image(np.full((20, 20), 500.0), EXPTIME=10.0)
         with pytest.raises(ValueError):
             apply_dark_subtraction(image, dark, dark_exposure_time=10.0)
 
-    def test_numpy_array_input_no_scaling(self):
+    def test_numpy_array_input_no_scaling(self) -> None:
         dark = np.full((8, 8), 30.0)
         image = np.full((8, 8), 200.0)
         out = apply_dark_subtraction(image, dark)
@@ -128,14 +128,14 @@ class TestApplyDarkSubtraction:
 
 
 class TestApplyFlatField:
-    def test_divides_by_flat(self):
+    def test_divides_by_flat(self) -> None:
         flat = np.full((20, 20), 2.0)
         image = _make_image(np.full((20, 20), 1000.0))
         out = apply_flat_field(image, flat)
         assert np.allclose(out.data, 500.0)
         assert any(m.step_type == ProcessingStep.FLAT_DIVIDE for m in out.processing_history)
 
-    def test_low_flat_values_guarded(self):
+    def test_low_flat_values_guarded(self) -> None:
         # Pixels below 0.1 in the flat are treated as 1.0 to avoid blow-up.
         flat = np.ones((10, 10))
         flat[0, 0] = 0.0
@@ -144,7 +144,7 @@ class TestApplyFlatField:
         assert out.data[0, 0] == pytest.approx(300.0)
         assert np.isfinite(out.data).all()
 
-    def test_normalized_flat_corrects_vignette(self):
+    def test_normalized_flat_corrects_vignette(self) -> None:
         # A normalized flat (<1 at edges) brightens vignetted regions.
         flat = np.ones((20, 20))
         flat[:, :5] = 0.5  # left columns receive half the light
@@ -153,13 +153,13 @@ class TestApplyFlatField:
         assert np.allclose(out.data[:, :5], 800.0)
         assert np.allclose(out.data[:, 5:], 400.0)
 
-    def test_loads_flat_from_file(self, tmp_path):
+    def test_loads_flat_from_file(self, tmp_path: Path) -> None:
         fpath = _write_fits(tmp_path / "flat.fits", np.full((12, 12), 4.0))
         image = _make_image(np.full((12, 12), 1000.0))
         out = apply_flat_field(image, str(fpath))
         assert np.allclose(out.data, 250.0)
 
-    def test_shape_mismatch_raises(self):
+    def test_shape_mismatch_raises(self) -> None:
         flat = np.ones((10, 10))
         image = _make_image(np.full((20, 20), 500.0))
         with pytest.raises(ValueError):
@@ -170,26 +170,26 @@ class TestApplyFlatField:
 
 
 class TestFindBestDarkForExposure:
-    def _populate(self, tmp_path):
+    def _populate(self, tmp_path: Path):
         data = np.full((8, 8), 100.0)
         _write_fits(tmp_path / "dark_5s.fits", data, EXPTIME=5.0, BINNING="1x1")
         _write_fits(tmp_path / "dark_10s.fits", data, EXPTIME=10.0, BINNING="1x1")
         _write_fits(tmp_path / "dark_30s.fits", data, EXPTIME=30.0, BINNING="1x1")
 
-    def test_picks_closest_exposure(self, tmp_path):
+    def test_picks_closest_exposure(self, tmp_path: Path) -> None:
         self._populate(tmp_path)
         result = find_best_dark_for_exposure(tmp_path, target_exptime=12.0, matching_headers=[])
         assert result is not None
         _, exptime = result
         assert exptime == 10.0
 
-    def test_rejects_when_ratio_too_high(self, tmp_path):
+    def test_rejects_when_ratio_too_high(self, tmp_path: Path) -> None:
         # Only a 5s dark; target 100s -> ratio 20 > max 3 -> no match.
         _write_fits(tmp_path / "dark_5s.fits", np.full((8, 8), 100.0), EXPTIME=5.0)
         result = find_best_dark_for_exposure(tmp_path, target_exptime=100.0, matching_headers=[], max_exptime_ratio=3.0)
         assert result is None
 
-    def test_missing_directory_returns_none(self, tmp_path):
+    def test_missing_directory_returns_none(self, tmp_path: Path) -> None:
         assert find_best_dark_for_exposure(tmp_path / "nope", target_exptime=10.0) is None
 
 
@@ -197,7 +197,7 @@ class TestFindBestDarkForExposure:
 
 
 class TestGroupFramesByHeaders:
-    def test_groups_by_binning_and_exptime(self, tmp_path):
+    def test_groups_by_binning_and_exptime(self, tmp_path: Path) -> None:
         d = np.zeros((4, 4))
         f1 = _write_fits(tmp_path / "a.fits", d, BINNING="1x1", EXPTIME=10.0)
         f2 = _write_fits(tmp_path / "b.fits", d, BINNING="1x1", EXPTIME=10.0)
@@ -207,7 +207,7 @@ class TestGroupFramesByHeaders:
         sizes = sorted(len(v) for v in groups.values())
         assert sizes == [1, 2]
 
-    def test_exptime_rounded_for_grouping(self, tmp_path):
+    def test_exptime_rounded_for_grouping(self, tmp_path: Path) -> None:
         d = np.zeros((4, 4))
         f1 = _write_fits(tmp_path / "a.fits", d, EXPTIME=10.001)
         f2 = _write_fits(tmp_path / "b.fits", d, EXPTIME=10.004)
@@ -215,7 +215,7 @@ class TestGroupFramesByHeaders:
         # Both round to 10.0 -> single group.
         assert len(groups) == 1
 
-    def test_empty_headers_single_group(self, tmp_path):
+    def test_empty_headers_single_group(self, tmp_path: Path) -> None:
         f1 = _write_fits(tmp_path / "a.fits", np.zeros((4, 4)))
         groups = _group_frames_by_headers([f1], [])
         assert len(groups) == 1
@@ -225,7 +225,7 @@ class TestGroupFramesByHeaders:
 
 
 class TestFindMasterCalibration:
-    def test_matches_on_binning_and_filter(self, tmp_path):
+    def test_matches_on_binning_and_filter(self, tmp_path: Path) -> None:
         d = np.ones((8, 8))
         _write_fits(tmp_path / "flat_V.fits", d, XBINNING=1, FILTER="V")
         _write_fits(tmp_path / "flat_R.fits", d, XBINNING=1, FILTER="R")
@@ -234,26 +234,26 @@ class TestFindMasterCalibration:
         assert match is not None
         assert match.name == "flat_V.fits"
 
-    def test_filter_case_insensitive(self, tmp_path):
+    def test_filter_case_insensitive(self, tmp_path: Path) -> None:
         d = np.ones((8, 8))
         _write_fits(tmp_path / "flat.fits", d, XBINNING=1, FILTER="v")
         image = _make_image(d, XBINNING=1, FILTER="V")
         match = _find_master_calibration(image, str(tmp_path), ["XBINNING", "FILTER"], "flat")
         assert match is not None
 
-    def test_no_match_returns_none(self, tmp_path):
+    def test_no_match_returns_none(self, tmp_path: Path) -> None:
         d = np.ones((8, 8))
         _write_fits(tmp_path / "flat.fits", d, XBINNING=2, FILTER="V")
         image = _make_image(d, XBINNING=1, FILTER="V")
         match = _find_master_calibration(image, str(tmp_path), ["XBINNING", "FILTER"], "flat")
         assert match is None
 
-    def test_missing_directory_returns_none(self, tmp_path):
+    def test_missing_directory_returns_none(self, tmp_path: Path) -> None:
         image = _make_image(np.ones((8, 8)), XBINNING=1, FILTER="V")
         match = _find_master_calibration(image, str(tmp_path / "absent"), ["XBINNING"], "flat")
         assert match is None
 
-    def test_missing_required_header_in_science_returns_none(self, tmp_path):
+    def test_missing_required_header_in_science_returns_none(self, tmp_path: Path) -> None:
         d = np.ones((8, 8))
         _write_fits(tmp_path / "flat.fits", d, XBINNING=1, FILTER="V")
         image = _make_image(d, XBINNING=1)  # no FILTER on science frame
@@ -265,7 +265,7 @@ class TestFindMasterCalibration:
 
 
 class TestFindBestDarkCalibration:
-    def test_selects_closest_exposure_among_matching(self, tmp_path):
+    def test_selects_closest_exposure_among_matching(self, tmp_path: Path) -> None:
         d = np.full((8, 8), 100.0)
         _write_fits(tmp_path / "dark_9s.fits", d, XBINNING=1, EXPTIME=9.0)
         _write_fits(tmp_path / "dark_20s.fits", d, XBINNING=1, EXPTIME=20.0)
@@ -274,14 +274,14 @@ class TestFindBestDarkCalibration:
         assert match is not None
         assert match.name == "dark_9s.fits"
 
-    def test_rejects_dark_with_wrong_binning(self, tmp_path):
+    def test_rejects_dark_with_wrong_binning(self, tmp_path: Path) -> None:
         d = np.full((8, 8), 100.0)
         _write_fits(tmp_path / "dark.fits", d, XBINNING=2, EXPTIME=10.0)
         image = _make_image(d, XBINNING=1, EXPTIME=10.0)
         match = _find_best_dark_calibration(image, str(tmp_path), ["XBINNING"], max_exposure_ratio=3.0)
         assert match is None
 
-    def test_exposure_ratio_within_limit_accepted(self, tmp_path):
+    def test_exposure_ratio_within_limit_accepted(self, tmp_path: Path) -> None:
         d = np.full((8, 8), 100.0)
         # ratio 30/10 = 3.0 == max -> accepted (<=).
         _write_fits(tmp_path / "dark.fits", d, XBINNING=1, EXPTIME=30.0)
@@ -289,7 +289,7 @@ class TestFindBestDarkCalibration:
         match = _find_best_dark_calibration(image, str(tmp_path), ["XBINNING"], max_exposure_ratio=3.0)
         assert match is not None
 
-    def test_exposure_ratio_beyond_limit_rejected(self, tmp_path):
+    def test_exposure_ratio_beyond_limit_rejected(self, tmp_path: Path) -> None:
         d = np.full((8, 8), 100.0)
         # ratio 40/10 = 4.0 > max 3.0 -> rejected.
         _write_fits(tmp_path / "dark.fits", d, XBINNING=1, EXPTIME=40.0)
@@ -297,7 +297,7 @@ class TestFindBestDarkCalibration:
         match = _find_best_dark_calibration(image, str(tmp_path), ["XBINNING"], max_exposure_ratio=3.0)
         assert match is None
 
-    def test_falls_back_to_exact_match_without_image_exptime(self, tmp_path):
+    def test_falls_back_to_exact_match_without_image_exptime(self, tmp_path: Path) -> None:
         d = np.full((8, 8), 100.0)
         _write_fits(tmp_path / "dark.fits", d, XBINNING=1, EXPTIME=10.0)
         image = _make_image(d, XBINNING=1)  # science frame has no EXPTIME
@@ -309,7 +309,7 @@ class TestFindBestDarkCalibration:
 # --- end-to-end: best dark selection then subtraction ------------------------
 
 
-def test_dark_selection_then_apply_scales_correctly(tmp_path):
+def test_dark_selection_then_apply_scales_correctly(tmp_path: Path) -> None:
     """The exposure-ratio-selected dark, when applied, is scaled by the
     image/dark exposure ratio.
     """

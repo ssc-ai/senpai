@@ -6,6 +6,7 @@ needing a full processed FITS or a solved StarField in the fixture.
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -27,7 +28,7 @@ from senpai.engine.plotting.replot import (
 
 
 @pytest.fixture(autouse=True)
-def _config():
+def _config() -> None:
     """Replot reads completeness/SNR defaults from the global config, which the
     CLI always initializes; mirror that here.
     """
@@ -49,7 +50,7 @@ def _photometry_summary():
     }
 
 
-def _write_batch(tmp_path, with_fits=False):
+def _write_batch(tmp_path: Path, with_fits=False):
     batch = tmp_path / "DAO-01_20260529_xxx_coverage_3_abc12345"
     batch.mkdir()
 
@@ -76,14 +77,14 @@ def _write_batch(tmp_path, with_fits=False):
     return batch
 
 
-def test_find_result_json_excludes_summary(tmp_path):
+def test_find_result_json_excludes_summary(tmp_path: Path) -> None:
     batch = _write_batch(tmp_path)
     found = _find_result_json(batch)
     assert found is not None
     assert found.name == "senpai_abc12345.json"
 
 
-def test_find_batch_dirs_discovers_nested(tmp_path):
+def test_find_batch_dirs_discovers_nested(tmp_path: Path) -> None:
     batch = _write_batch(tmp_path)
     # discovery from a parent several levels up
     dirs = find_batch_dirs(tmp_path)
@@ -92,7 +93,7 @@ def test_find_batch_dirs_discovers_nested(tmp_path):
     assert find_batch_dirs(batch) == [batch]
 
 
-def test_replot_photometry_curves_from_json(tmp_path):
+def test_replot_photometry_curves_from_json(tmp_path: Path) -> None:
     batch = _write_batch(tmp_path)
     counts = replot_batch_dir(batch, kinds=("photometry",), force=False, gifs=False)
     assert counts["photometry"] == 2
@@ -100,7 +101,7 @@ def test_replot_photometry_curves_from_json(tmp_path):
     assert (batch / "frame_0_limiting_mag.png").exists()
 
 
-def test_replot_photometry_skips_existing_without_force(tmp_path):
+def test_replot_photometry_skips_existing_without_force(tmp_path: Path) -> None:
     batch = _write_batch(tmp_path)
     replot_batch_dir(batch, kinds=("photometry",), gifs=False)
     # second pass should write nothing (files already present)
@@ -111,7 +112,7 @@ def test_replot_photometry_skips_existing_without_force(tmp_path):
     assert counts["photometry"] == 2
 
 
-def test_streak_candidate_objs_wraps_dicts():
+def test_streak_candidate_objs_wraps_dicts() -> None:
     """Serializable streak_candidates are dicts; plot_single_frame reads them by
     attribute. The wrapper must expose .x/.length_pixels etc. (regression: the
     full replot failed 6 batches with 'dict' object has no attribute 'x').
@@ -125,7 +126,7 @@ def test_streak_candidate_objs_wraps_dicts():
     assert objs[0].length_pixels == 40.0
 
 
-def test_replot_review_with_dict_candidates(tmp_path):
+def test_replot_review_with_dict_candidates(tmp_path: Path) -> None:
     """End-to-end review replot on a frame carrying dict streak_candidates."""
     batch = tmp_path / "DAO-01_x_coverage_3_def67890"
     batch.mkdir()
@@ -150,7 +151,7 @@ def test_replot_review_with_dict_candidates(tmp_path):
     assert (batch / "final_0.png").exists()
 
 
-def test_replot_missing_result_json_raises(tmp_path):
+def test_replot_missing_result_json_raises(tmp_path: Path) -> None:
     empty = tmp_path / "not_a_batch"
     empty.mkdir()
     with pytest.raises(FileNotFoundError):

@@ -88,70 +88,70 @@ def restore_headers():
 # --------------------------------------------------------------------------
 
 
-def test_sexagesimal_degrees_positive():
+def test_sexagesimal_degrees_positive() -> None:
     assert fits_io.sexagesimal_to_decimal("+20 44 48.24", "degrees") == pytest.approx(20.746733, abs=1e-5)
 
 
-def test_sexagesimal_degrees_negative():
+def test_sexagesimal_degrees_negative() -> None:
     assert fits_io.sexagesimal_to_decimal("-33 56 12", "degrees") == pytest.approx(-33.936667, abs=1e-5)
 
 
-def test_sexagesimal_hours_multiplies_by_15():
+def test_sexagesimal_hours_multiplies_by_15() -> None:
     # 14h15m39.7s -> degrees
     assert fits_io.sexagesimal_to_decimal("14 15 39.7", "hours") == pytest.approx(213.915417, abs=1e-4)
 
 
-def test_sexagesimal_colon_delimiters():
+def test_sexagesimal_colon_delimiters() -> None:
     assert fits_io.sexagesimal_to_decimal("10:30:00", "degrees") == pytest.approx(10.5, abs=1e-9)
 
 
-def test_sexagesimal_two_part_degrees_minutes():
+def test_sexagesimal_two_part_degrees_minutes() -> None:
     assert fits_io.sexagesimal_to_decimal("10 30", "degrees") == pytest.approx(10.5, abs=1e-9)
 
 
-def test_sexagesimal_single_value_passthrough():
+def test_sexagesimal_single_value_passthrough() -> None:
     assert fits_io.sexagesimal_to_decimal("42.5", "degrees") == pytest.approx(42.5, abs=1e-9)
 
 
-def test_float_nsew_south_is_negative():
+def test_float_nsew_south_is_negative() -> None:
     assert fits_io.float_nsew_to_decimal("33.9 S") == pytest.approx(-33.9)
 
 
-def test_float_nsew_west_is_negative():
+def test_float_nsew_west_is_negative() -> None:
     assert fits_io.float_nsew_to_decimal("117.0 W") == pytest.approx(-117.0)
 
 
-def test_float_nsew_north_positive():
+def test_float_nsew_north_positive() -> None:
     assert fits_io.float_nsew_to_decimal("45.2 N") == pytest.approx(45.2)
 
 
-def test_convert_to_decimal_degrees_float_hours():
+def test_convert_to_decimal_degrees_float_hours() -> None:
     assert fits_io.convert_to_decimal_degrees("1.0", fmt="float", units="hours") == pytest.approx(15.0)
 
 
-def test_convert_to_decimal_degrees_float_degrees():
+def test_convert_to_decimal_degrees_float_degrees() -> None:
     assert fits_io.convert_to_decimal_degrees("123.5", fmt="float", units="degrees") == pytest.approx(123.5)
 
 
-def test_convert_to_decimal_degrees_unsupported_format_raises():
+def test_convert_to_decimal_degrees_unsupported_format_raises() -> None:
     with pytest.raises(ValueError):
         fits_io.convert_to_decimal_degrees("1.0", fmt="bogus", units="degrees")
 
 
-def test_convert_to_decimal_kilometers_from_meters():
+def test_convert_to_decimal_kilometers_from_meters() -> None:
     assert fits_io.convert_to_decimal_kilometers("2000", units="meters") == pytest.approx(2.0)
 
 
-def test_convert_to_decimal_kilometers_passthrough_km():
+def test_convert_to_decimal_kilometers_passthrough_km() -> None:
     assert fits_io.convert_to_decimal_kilometers("1.5", units="kilometers") == pytest.approx(1.5)
 
 
-def test_convert_to_decimal_kilometers_unknown_unit_raises():
+def test_convert_to_decimal_kilometers_unknown_unit_raises() -> None:
     with pytest.raises(ValueError):
         fits_io.convert_to_decimal_kilometers("100", units="parsecs")
 
 
-def test_extract_header_value_present_and_absent():
+def test_extract_header_value_present_and_absent() -> None:
     h = Header()
     h["FOO"] = 7
     assert fits_io.extract_header_value(h, "FOO") == 7
@@ -163,17 +163,17 @@ def test_extract_header_value_present_and_absent():
 # --------------------------------------------------------------------------
 
 
-def test_exposure_time_basic():
+def test_exposure_time_basic() -> None:
     h = Header()
     h["EXPTIME"] = "12.5"
     assert fits_io.extract_exposure_time_from_header(h) == pytest.approx(12.5)
 
 
-def test_exposure_time_missing_returns_none():
+def test_exposure_time_missing_returns_none() -> None:
     assert fits_io.extract_exposure_time_from_header(Header()) is None
 
 
-def test_exposure_time_multiple_candidate_keys(restore_headers):
+def test_exposure_time_multiple_candidate_keys(restore_headers) -> None:
     cfg = restore_headers
     cfg.exposure_time.exposure_time_keys = ["EXPOSURE", "EXPTIME"]
     h = Header()
@@ -186,7 +186,7 @@ def test_exposure_time_multiple_candidate_keys(restore_headers):
 # --------------------------------------------------------------------------
 
 
-def test_observation_time_iso():
+def test_observation_time_iso() -> None:
     h = Header()
     h["DATE-OBS"] = "2023-05-01T03:22:11.5"
     t = fits_io.extract_observation_time_from_header(h)
@@ -194,7 +194,7 @@ def test_observation_time_iso():
     assert (t.year, t.month, t.day, t.hour, t.minute, t.second) == (2023, 5, 1, 3, 22, 11)
 
 
-def test_observation_time_custom_format(restore_headers):
+def test_observation_time_custom_format(restore_headers) -> None:
     cfg = restore_headers
     cfg.observation_time.format = "%Y/%m/%d %H:%M:%S"
     h = Header()
@@ -203,7 +203,7 @@ def test_observation_time_custom_format(restore_headers):
     assert (t.year, t.month, t.day, t.hour, t.minute) == (2021, 12, 25, 18, 30)
 
 
-def test_observation_time_falls_back_to_broad_parser():
+def test_observation_time_falls_back_to_broad_parser() -> None:
     # No configured DATE-OBS value, but a DATE_TIME header arrow can parse.
     h = Header()
     h["DATE-OBS"] = "2020-01-02T00:00:00"  # used by the broad fallback too
@@ -216,7 +216,7 @@ def test_observation_time_falls_back_to_broad_parser():
 # --------------------------------------------------------------------------
 
 
-def test_site_sexagesimal_lat_lon():
+def test_site_sexagesimal_lat_lon() -> None:
     h = Header()
     h["SITELAT"] = "-33 56 12"
     h["SITELONG"] = "+18 28 36"
@@ -228,7 +228,7 @@ def test_site_sexagesimal_lat_lon():
     assert site.altitude_km == pytest.approx(1.5)
 
 
-def test_site_altitude_meters_unit(restore_headers):
+def test_site_altitude_meters_unit(restore_headers) -> None:
     cfg = restore_headers
     cfg.site.altitude_unit = "meters"
     h = Header()
@@ -239,13 +239,13 @@ def test_site_altitude_meters_unit(restore_headers):
     assert site.altitude_km == pytest.approx(2.0)
 
 
-def test_site_missing_lat_lon_returns_none():
+def test_site_missing_lat_lon_returns_none() -> None:
     h = Header()
     h["SITEALT"] = "1.0"
     assert fits_io.extract_observing_site_from_header(h) is None
 
 
-def test_site_float_positional_format(restore_headers):
+def test_site_float_positional_format(restore_headers) -> None:
     cfg = restore_headers
     cfg.site.positional_format = "float"
     cfg.site.altitude_unit = "kilometers"
@@ -262,7 +262,7 @@ def test_site_float_positional_format(restore_headers):
 # --------------------------------------------------------------------------
 
 
-def test_boresight_ra_dec_sexagesimal_hours():
+def test_boresight_ra_dec_sexagesimal_hours() -> None:
     h = Header()
     h["OBJCTRA"] = "14 15 39.7"
     h["OBJCTDEC"] = "+20 44 48.2"
@@ -271,12 +271,12 @@ def test_boresight_ra_dec_sexagesimal_hours():
     assert dec == pytest.approx(20.746722, abs=1e-4)
 
 
-def test_boresight_missing_returns_none_none():
+def test_boresight_missing_returns_none_none() -> None:
     ra, dec = fits_io.extract_boresight_from_header(Header())
     assert ra is None and dec is None
 
 
-def test_boresight_altaz_fallback(restore_headers):
+def test_boresight_altaz_fallback(restore_headers) -> None:
     # local.yaml configures CENTAZ/CENTALT; supply az/alt + site + time and
     # verify Alt/Az -> RA/Dec produces a valid sky coordinate.
     h = Header()
@@ -297,7 +297,7 @@ def test_boresight_altaz_fallback(restore_headers):
 # --------------------------------------------------------------------------
 
 
-def test_track_rates_sidereal_from_mode_string():
+def test_track_rates_sidereal_from_mode_string() -> None:
     h = Header()
     h["TELTKRA"] = 0.0
     h["TELTKDEC"] = 0.0
@@ -308,7 +308,7 @@ def test_track_rates_sidereal_from_mode_string():
     assert mode is TrackMode.SIDEREAL
 
 
-def test_track_rates_rate_mode_from_string():
+def test_track_rates_rate_mode_from_string() -> None:
     h = Header()
     h["TELTKRA"] = 15.0
     h["TELTKDEC"] = -3.0
@@ -319,7 +319,7 @@ def test_track_rates_rate_mode_from_string():
     assert mode is TrackMode.RATE
 
 
-def test_track_mode_inferred_from_zero_rates_when_no_mode():
+def test_track_mode_inferred_from_zero_rates_when_no_mode() -> None:
     h = Header()
     h["TELTKRA"] = 0.0
     h["TELTKDEC"] = 0.0
@@ -327,7 +327,7 @@ def test_track_mode_inferred_from_zero_rates_when_no_mode():
     assert mode is TrackMode.SIDEREAL
 
 
-def test_track_mode_inferred_rate_from_nonzero_rates_when_no_mode():
+def test_track_mode_inferred_rate_from_nonzero_rates_when_no_mode() -> None:
     h = Header()
     h["TELTKRA"] = 5.0
     h["TELTKDEC"] = 0.0
@@ -335,12 +335,12 @@ def test_track_mode_inferred_rate_from_nonzero_rates_when_no_mode():
     assert mode is TrackMode.RATE
 
 
-def test_track_mode_unknown_when_nothing_present():
+def test_track_mode_unknown_when_nothing_present() -> None:
     _, _, mode = fits_io.extract_track_rates_from_header(Header())
     assert mode is TrackMode.UNKNOWN
 
 
-def test_track_rates_unit_conversion_degrees(restore_headers):
+def test_track_rates_unit_conversion_degrees(restore_headers) -> None:
     cfg = restore_headers
     cfg.tracking.track_ra_rate_unit = "degrees/second"
     cfg.tracking.track_dec_rate_unit = "degrees/second"
@@ -358,17 +358,17 @@ def test_track_rates_unit_conversion_degrees(restore_headers):
 
 
 @pytest.mark.parametrize("raw", ["open", "L", "lum", "clear", "none", ""])
-def test_filter_clear_aliases_normalized(raw):
+def test_filter_clear_aliases_normalized(raw) -> None:
     h = Header()
     h["FILTER"] = raw
     assert fits_io.extract_filter_from_header(h) == "Clear"
 
 
-def test_filter_named_passthrough():
+def test_filter_named_passthrough() -> None:
     h = Header()
     h["FILTER"] = "Sloan_r"
     assert fits_io.extract_filter_from_header(h) == "Sloan_r"
 
 
-def test_filter_missing_returns_none():
+def test_filter_missing_returns_none() -> None:
     assert fits_io.extract_filter_from_header(Header()) is None

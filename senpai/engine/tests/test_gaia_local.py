@@ -4,6 +4,8 @@ Builds a tiny synthetic mirror and checks the offline query returns exactly the
 stars an online box query would, in the same drop-in dict shape.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -12,7 +14,7 @@ from senpai.catalog.gaia_mirror import HPX_SHIFT, MIRROR_DTYPE, ingest
 
 
 @pytest.fixture
-def mirror(tmp_path):
+def mirror(tmp_path: Path):
     rng = np.random.default_rng(0)
     n = 20000
     ra = rng.uniform(250.0, 260.0, n)
@@ -34,7 +36,7 @@ def mirror(tmp_path):
     return str(mdir), arr
 
 
-def test_query_matches_brute_force(mirror):
+def test_query_matches_brute_force(mirror) -> None:
     mdir, arr = mirror
     qb = (252.0, 254.5, 42.0, 44.0)
     fl = 18.0
@@ -43,7 +45,7 @@ def test_query_matches_brute_force(mirror):
     assert len(stars) == int(m.sum()) > 0
 
 
-def test_dropin_dict_shape(mirror):
+def test_dropin_dict_shape(mirror) -> None:
     mdir, _ = mirror
     s = gaia_local.query_by_ra_dec_bounds(252.0, 254.0, 42.0, 44.0, faint_lim=18.0, bright_lim=-32, mirror_dir=mdir)[0]
     # same keys the online gaia.query_by_ra_dec_bounds returns
@@ -54,7 +56,7 @@ def test_dropin_dict_shape(mirror):
     assert {"Gaia_G", "Gaia_BP", "Gaia_RP", "Johnson_V", "Sloan_r"} <= set(s["magnitudes"])
 
 
-def test_mag_limit_applied(mirror):
+def test_mag_limit_applied(mirror) -> None:
     mdir, _ = mirror
     bright = gaia_local.query_by_ra_dec_bounds(
         250.0, 260.0, 40.0, 50.0, faint_lim=12.0, bright_lim=-32, mirror_dir=mdir
@@ -64,7 +66,7 @@ def test_mag_limit_applied(mirror):
     assert all(st["mv"] <= 12.0 for st in bright)
 
 
-def test_empty_box_returns_empty(mirror):
+def test_empty_box_returns_empty(mirror) -> None:
     mdir, _ = mirror
     assert (
         gaia_local.query_by_ra_dec_bounds(100.0, 101.0, -10.0, -9.0, faint_lim=20.0, bright_lim=-32, mirror_dir=mdir)

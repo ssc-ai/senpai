@@ -36,7 +36,7 @@ def stars():
 
 
 @pytest.mark.requires_catalog
-def test_query_returns_senpai_star_records(stars):
+def test_query_returns_senpai_star_records(stars) -> None:
     # The record shape is a contract shared with gaia.py and sdss.py.
     assert len(stars) > 0
     for star in stars[:50]:
@@ -47,7 +47,7 @@ def test_query_returns_senpai_star_records(stars):
 
 
 @pytest.mark.requires_catalog
-def test_positions_are_radians_around_the_requested_field(stars):
+def test_positions_are_radians_around_the_requested_field(stars) -> None:
     ra = np.degrees([s["ra"] for s in stars])
     dec = np.degrees([s["dec"] for s in stars])
     # A cone enclosing the field corners, so half the diagonal plus the margin.
@@ -58,7 +58,7 @@ def test_positions_are_radians_around_the_requested_field(stars):
 
 
 @pytest.mark.requires_catalog
-def test_proper_motion_scale_is_physical(stars):
+def test_proper_motion_scale_is_physical(stars) -> None:
     """Guards the 1/0.32**2 scale error the vendored reader carried."""
     pm = np.hypot([s["ra_pm"] for s in stars], [s["dec_pm"] for s in stars])
     assert (pm * RAD_PER_SEC_TO_ARCSEC_PER_YEAR).max() < MAX_PLAUSIBLE_ARCSEC_PER_YEAR
@@ -66,7 +66,7 @@ def test_proper_motion_scale_is_physical(stars):
 
 
 @pytest.mark.requires_catalog
-def test_magnitudes_are_catalog_valued(stars):
+def test_magnitudes_are_catalog_valued(stars) -> None:
     for star in stars[:200]:
         for band, value in star["magnitudes"].items():
             assert band in sstrc7_source.BAND_NAMES or band == "Invalid"
@@ -78,7 +78,7 @@ def test_magnitudes_are_catalog_valued(stars):
 
 
 @pytest.mark.requires_catalog
-def test_magnitude_limits_filter_the_result():
+def test_magnitude_limits_filter_the_result() -> None:
     path = _catalog_path()
     faint = sstrc7_source.query_by_los_radec_with_rotation(FOV, FOV, RA, DEC, rootPath=path, faint_lim=14.0)
     assert faint, "no stars brighter than 14th magnitude in this field"
@@ -90,7 +90,7 @@ def test_magnitude_limits_filter_the_result():
 
 
 @pytest.mark.requires_catalog
-def test_filter_center_interpolates_a_different_magnitude(stars):
+def test_filter_center_interpolates_a_different_magnitude(stars) -> None:
     at_2mass_j = sstrc7_source.query_by_los_radec_with_rotation(
         FOV, FOV, RA, DEC, rootPath=_catalog_path(), filter_center=1235.0
     )
@@ -105,7 +105,7 @@ def test_filter_center_interpolates_a_different_magnitude(stars):
 
 
 @pytest.mark.requires_catalog
-def test_examine_catalog_accepts_a_complete_catalog():
+def test_examine_catalog_accepts_a_complete_catalog() -> None:
     assert sstrc7_source.examine_catalog(_catalog_path()) is True
 
 
@@ -128,38 +128,38 @@ def _fake_field(**bands: float) -> _FakeField:
     return _FakeField(mag, np.array([bands.get("Johnson_V", np.nan)]))
 
 
-def _set_priority(monkeypatch, priority: str) -> None:
+def _set_priority(monkeypatch: pytest.MonkeyPatch, priority: str) -> None:
 
     fake = types.SimpleNamespace(star_catalog=types.SimpleNamespace(magnitude_band_priority=priority))
     monkeypatch.setattr(config_module, "_config_instance", fake)
 
 
-def test_priority_ladder_default_is_the_package_visual(monkeypatch) -> None:
+def test_priority_ladder_default_is_the_package_visual(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_priority(monkeypatch, "johnson_v_first")
     field = _fake_field(Gaia_G=9.0, Johnson_V=11.0)
     assert sstrc7_source._priority_ladder(field) == pytest.approx([11.0])
 
 
-def test_priority_ladder_open_first_leads_with_gaia_g(monkeypatch) -> None:
+def test_priority_ladder_open_first_leads_with_gaia_g(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_priority(monkeypatch, "open_first")
     field = _fake_field(Gaia_G=9.0, Johnson_R=10.0, Johnson_V=11.0)
     assert sstrc7_source._priority_ladder(field) == pytest.approx([9.0])
 
 
-def test_priority_ladder_open_first_walks_down_the_order(monkeypatch) -> None:
+def test_priority_ladder_open_first_walks_down_the_order(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_priority(monkeypatch, "open_first")
     # Gaia_G unmeasured (sentinel), so Johnson_R is next in the order.
     field = _fake_field(Johnson_R=10.0, Johnson_V=11.0, Sloan_r=10.5)
     assert sstrc7_source._priority_ladder(field) == pytest.approx([10.0])
 
 
-def test_priority_ladder_open_first_is_nan_with_no_usable_band(monkeypatch) -> None:
+def test_priority_ladder_open_first_is_nan_with_no_usable_band(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_priority(monkeypatch, "open_first")
     field = _fake_field(**{"2MASS_J": 8.0})
     assert np.isnan(sstrc7_source._priority_ladder(field)).all()
 
 
-def test_priority_ladder_requires_an_initialized_config(monkeypatch) -> None:
+def test_priority_ladder_requires_an_initialized_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reading the band priority before initialize_config raises rather than defaulting.
 
     A silent fallback would score a frame against a different band ladder than the one

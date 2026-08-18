@@ -11,6 +11,7 @@ touches the network or a GUI, and the run is deterministic.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -121,7 +122,7 @@ def _run(sidereal=None, rate=None, scale_factor=None):
 # ---------------------------------------------------------------------------
 
 
-def test_sidereal_point_annotations_bbox(tmp_path):
+def test_sidereal_point_annotations_bbox(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     # Two well-separated detections at known positions.
     dets = [
@@ -158,7 +159,7 @@ def test_sidereal_point_annotations_bbox(tmp_path):
     assert by_centroid[(10.0, 20.0)]["area"] == 36
 
 
-def test_sidereal_skipped_when_no_wcs(tmp_path):
+def test_sidereal_skipped_when_no_wcs(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     dets = [{"x": 5.0, "y": 5.0, "counts": 10_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets, fit=False)])
@@ -170,7 +171,7 @@ def test_sidereal_skipped_when_no_wcs(tmp_path):
     assert not list(out.glob("*.json"))
 
 
-def test_process_sidereal_flag_disables_sidereal(tmp_path):
+def test_process_sidereal_flag_disables_sidereal(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     dets = [{"x": 5.0, "y": 5.0, "counts": 10_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets)])
@@ -181,7 +182,7 @@ def test_process_sidereal_flag_disables_sidereal(tmp_path):
     assert not list(out.glob("*.json"))
 
 
-def test_snr_cut_filters_low_snr_detections(tmp_path):
+def test_snr_cut_filters_low_snr_detections(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     # counts -> snr via sqrt(counts/1000); 1e6 counts -> snr ~31.6 (kept),
     # 10 counts -> snr ~0.1 (cut at snr_cut=5).
@@ -205,7 +206,7 @@ def test_snr_cut_filters_low_snr_detections(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_rate_satellite_and_streak_annotations(tmp_path):
+def test_rate_satellite_and_streak_annotations(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     sats = [_satellite(25.0, 15.0, snr=20.0)]
     star_dets = [{"x": 30.0, "y": 24.0, "counts": 500_000.0}]
@@ -240,7 +241,7 @@ def test_rate_satellite_and_streak_annotations(tmp_path):
     assert line == [20.0, 24.0, 20.0, 0.0]
 
 
-def test_rate_streak_line_angle(tmp_path):
+def test_rate_streak_line_angle(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     star_dets = [{"x": 32.0, "y": 24.0, "counts": 500_000.0}]
     streak = _streak(length=10.0, angle_deg=90.0)  # vertical
@@ -258,7 +259,7 @@ def test_rate_streak_line_angle(tmp_path):
     assert line[3] == pytest.approx(10.0, abs=1e-3)
 
 
-def test_rate_skipped_when_streak_exceeds_max_length(tmp_path):
+def test_rate_skipped_when_streak_exceeds_max_length(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     star_dets = [{"x": 30.0, "y": 24.0, "counts": 500_000.0}]
     streak = _streak(length=200.0)
@@ -269,7 +270,7 @@ def test_rate_skipped_when_streak_exceeds_max_length(tmp_path):
     assert not list(out.glob("*.json"))
 
 
-def test_rate_skipped_when_no_wcs(tmp_path):
+def test_rate_skipped_when_no_wcs(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "rate.fits")
     sats = [_satellite(10.0, 10.0)]
     run = _run(rate=[_rate_frame(fits_path, w, h, satellites=sats, fit=False)])
@@ -279,7 +280,7 @@ def test_rate_skipped_when_no_wcs(tmp_path):
     assert not list(out.glob("*.json"))
 
 
-def test_scale_factor_scales_coordinates(tmp_path):
+def test_scale_factor_scales_coordinates(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "side.fits", width=64, height=64)
     dets = [{"x": 10.0, "y": 10.0, "counts": 1_000_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets)], scale_factor=2.0)
@@ -292,7 +293,7 @@ def test_scale_factor_scales_coordinates(tmp_path):
     assert data["annotations"][0]["centroid"] == [20.0, 20.0]
 
 
-def test_write_fits_creates_image_file(tmp_path):
+def test_write_fits_creates_image_file(tmp_path: Path) -> None:
     fits_path, w, h = _write_fits(tmp_path / "side.fits")
     dets = [{"x": 10.0, "y": 10.0, "counts": 1_000_000.0}]
     run = _run(sidereal=[_sidereal_frame(fits_path, w, h, detections=dets)])
@@ -306,7 +307,7 @@ def test_write_fits_creates_image_file(tmp_path):
     assert data["images"][0]["file_name"] == "C4_sidereal_0.fits"
 
 
-def test_export_batch_processes_multiple_runs(tmp_path):
+def test_export_batch_processes_multiple_runs(tmp_path: Path) -> None:
     fp1, w, h = _write_fits(tmp_path / "a.fits")
     fp2, _, _ = _write_fits(tmp_path / "b.fits")
     dets = [{"x": 10.0, "y": 10.0, "counts": 1_000_000.0}]
@@ -324,12 +325,12 @@ def test_export_batch_processes_multiple_runs(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_dataset_split_ratios_must_sum_to_one():
+def test_dataset_split_ratios_must_sum_to_one() -> None:
     with pytest.raises(ValueError):
         DatasetSplit(train=0.5, val=0.2, test=0.1)
 
 
-def test_dataset_split_defaults_valid():
+def test_dataset_split_defaults_valid() -> None:
     s = DatasetSplit()
     assert (s.train, s.val, s.test) == (0.7, 0.2, 0.1)
 
@@ -356,7 +357,7 @@ def _touch_image(input_dir, file_name):
     fits.PrimaryHDU(np.zeros((4, 4), dtype=np.float32)).writeto(input_dir / file_name, overwrite=True)
 
 
-def test_dataset_split_raises_without_annotations(tmp_path):
+def test_dataset_split_raises_without_annotations(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     splitter = DatasetSplitter(DatasetSplit(), random_seed=0)
@@ -364,7 +365,7 @@ def test_dataset_split_raises_without_annotations(tmp_path):
         splitter.split_coco_dataset(input_dir, tmp_path / "out")
 
 
-def test_dataset_split_deterministic_with_seed(tmp_path):
+def test_dataset_split_deterministic_with_seed(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     # 10 images with parseable timestamps in the filename so temporal sort is stable.
@@ -392,7 +393,7 @@ def test_dataset_split_deterministic_with_seed(tmp_path):
     assert len(set(all_ids)) == 10
 
 
-def test_dataset_split_sizes_match_ratios(tmp_path):
+def test_dataset_split_sizes_match_ratios(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     for i in range(10):
@@ -416,7 +417,7 @@ def test_dataset_split_sizes_match_ratios(tmp_path):
     assert len(result["test"]) == 1
 
 
-def test_dataset_split_writes_combined_annotation_files(tmp_path):
+def test_dataset_split_writes_combined_annotation_files(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     input_dir.mkdir()
     for i in range(4):
@@ -436,7 +437,7 @@ def test_dataset_split_writes_combined_annotation_files(tmp_path):
     assert points_train["categories"][0]["name"] == "satellite"
 
 
-def test_dataset_split_lines_excludes_sidereal(tmp_path):
+def test_dataset_split_lines_excludes_sidereal(tmp_path: Path) -> None:
     """Lines dataset only includes rate-type images/annotations."""
     input_dir = tmp_path / "in"
     input_dir.mkdir()

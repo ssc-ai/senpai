@@ -26,7 +26,7 @@ LEGACY_ASTROMETRY_BLOCK = {
 
 
 class TestSolverModeCompat:
-    def test_legacy_config_defaults_to_dotnet(self):
+    def test_legacy_config_defaults_to_dotnet(self) -> None:
         cfg = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK)
         assert cfg.solver_mode == "dotnet"
         assert cfg.fast_solve.mirror_dir is None
@@ -34,15 +34,15 @@ class TestSolverModeCompat:
         assert cfg.fast_solve.sensor_profile is None
 
     @pytest.mark.parametrize("mode", ["dotnet", "tetra3", "chain"])
-    def test_valid_modes_accepted(self, mode):
+    def test_valid_modes_accepted(self, mode) -> None:
         cfg = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK, solver_mode=mode)
         assert cfg.solver_mode == mode
 
-    def test_unknown_mode_rejected(self):
+    def test_unknown_mode_rejected(self) -> None:
         with pytest.raises(ValidationError):
             AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK, solver_mode="cascade")
 
-    def test_fast_solve_block_parses(self):
+    def test_fast_solve_block_parses(self) -> None:
         cfg = AstrometryConfig(
             **LEGACY_ASTROMETRY_BLOCK,
             solver_mode="chain",
@@ -53,7 +53,7 @@ class TestSolverModeCompat:
 
 
 @pytest.fixture
-def stub_config(monkeypatch):
+def stub_config(monkeypatch: pytest.MonkeyPatch):
     """Point the astrometry adapter at a config we control."""
     import senpai.astrometry as adapter
 
@@ -65,7 +65,7 @@ def stub_config(monkeypatch):
 
 
 class TestSolveFieldModeDispatch:
-    def test_dotnet_mode_reaches_original_path(self, stub_config, xyls_data):
+    def test_dotnet_mode_reaches_original_path(self, stub_config, xyls_data) -> None:
         """With the default mode, the dispatch is transparent: the original
         too-few-sources early return still triggers (no exception)."""
         from senpai.astrometry import solve_field
@@ -75,7 +75,7 @@ class TestSolveFieldModeDispatch:
         starfield = solve_field(xyls_data)
         assert starfield.wcs is None
 
-    def test_tetra3_mode_without_mirror_fails_gracefully(self, stub_config, xyls_data):
+    def test_tetra3_mode_without_mirror_fails_gracefully(self, stub_config, xyls_data) -> None:
         """tetra3 mode with no catalog configured: unfit StarField, no raise."""
         from senpai.astrometry import solve_field
 
@@ -92,7 +92,7 @@ class TestCascadeEndToEnd:
     RA0, DEC0, W, H, SCALE = 150.0, 30.0, 2048, 2048, 2.0  # arcsec/px
 
     @pytest.fixture
-    def synthetic(self, tmp_path):
+    def synthetic(self, tmp_path: Path):
         import json
         import math
 
@@ -144,7 +144,7 @@ class TestCascadeEndToEnd:
         )
         return sources, str(mirror)
 
-    def test_tetra3_mode_solves_via_t0(self, stub_config, synthetic):
+    def test_tetra3_mode_solves_via_t0(self, stub_config, synthetic) -> None:
         """Boresight + scale bounds, no tetra3 DB: the cascade's T0
         constrained tier solves it natively — no astrometry.net, no Docker."""
         from senpai.astrometry import solve_field

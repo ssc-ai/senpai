@@ -57,7 +57,7 @@ def _cfg():
     return SimplePhotometryConfig()
 
 
-def test_zp_recovers_clean_zero_point():
+def test_zp_recovers_clean_zero_point() -> None:
     results = [_clean(m) for m in [12, 13, 14, 15, 16] * 3]
     zp, err = _calculate_simple_zero_point(results, _starfield(), _cfg())
     assert zp is not None
@@ -65,7 +65,7 @@ def test_zp_recovers_clean_zero_point():
     assert err is not None and err < 0.05
 
 
-def test_zp_ignores_contaminated_faint_tail():
+def test_zp_ignores_contaminated_faint_tail() -> None:
     """30 clean stars at ZP 26 + 10 faint stars measuring a bright neighbour's
     flux (per-star ZP ~31). The robust median must stay at 26; the old mean
     would be dragged to ~27.2.
@@ -83,7 +83,7 @@ def test_zp_ignores_contaminated_faint_tail():
     assert naive > TRUE_ZP + 0.8
 
 
-def test_zp_excludes_low_snr_stars():
+def test_zp_excludes_low_snr_stars() -> None:
     """Low-SNR stars are below zp_min_snr and must not contribute. Give them a
     biased ZP; the result must still come from the clean high-SNR sample.
     """
@@ -93,6 +93,6 @@ def test_zp_excludes_low_snr_stars():
     assert abs(zp - TRUE_ZP) < 0.1
 
 
-def test_zp_none_when_too_few_stars():
+def test_zp_none_when_too_few_stars() -> None:
     zp, err = _calculate_simple_zero_point([_clean(12)], _starfield(), _cfg())
     assert zp is None and err is None

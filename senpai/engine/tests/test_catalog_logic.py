@@ -43,7 +43,7 @@ class _FakeTable(list):
 # --------------------------------------------------------------------------- #
 # Gaia ADQL construction
 # --------------------------------------------------------------------------- #
-def _install_fake_gaia(monkeypatch, capture: list[str], table: _FakeTable | None):
+def _install_fake_gaia(monkeypatch: pytest.MonkeyPatch, capture: list[str], table: _FakeTable | None):
     """Install a fake astroquery.gaia module that records launched ADQL."""
 
     class _Job:
@@ -64,7 +64,7 @@ def _install_fake_gaia(monkeypatch, capture: list[str], table: _FakeTable | None
     monkeypatch.setitem(sys.modules, "astroquery.gaia", fake_mod)
 
 
-def test_gaia_query_default_mag_limits_in_adql(monkeypatch) -> None:
+def test_gaia_query_default_mag_limits_in_adql(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
     _install_fake_gaia(monkeypatch, captured, _FakeTable())
     gaia.query_by_ra_dec_bounds(150.0, 151.0, 2.0, 3.0)
@@ -77,14 +77,14 @@ def test_gaia_query_default_mag_limits_in_adql(monkeypatch) -> None:
     assert "dec BETWEEN 2.0 AND 3.0" in adql
 
 
-def test_gaia_query_custom_mag_limits(monkeypatch) -> None:
+def test_gaia_query_custom_mag_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
     _install_fake_gaia(monkeypatch, captured, _FakeTable())
     gaia.query_by_ra_dec_bounds(10.0, 11.0, 5.0, 6.0, faint_lim=18.0, bright_lim=6.0)
     assert "BETWEEN 6.0 AND 18.0" in captured[0]
 
 
-def test_gaia_query_ra_wraparound_two_queries(monkeypatch) -> None:
+def test_gaia_query_ra_wraparound_two_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
     _install_fake_gaia(monkeypatch, captured, _FakeTable())
     # field straddling RA=0: min=359, max=1 -> crosses seam -> two ADQL queries
@@ -95,7 +95,7 @@ def test_gaia_query_ra_wraparound_two_queries(monkeypatch) -> None:
     assert "ra >= 0.0 AND ra <= 1.0" in joined
 
 
-def test_gaia_query_parses_rows_and_transforms(monkeypatch) -> None:
+def test_gaia_query_parses_rows_and_transforms(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
     table = _FakeTable(
         [
@@ -128,7 +128,7 @@ def test_gaia_query_parses_rows_and_transforms(monkeypatch) -> None:
     assert star["ra_pm"] != 10.0
 
 
-def test_gaia_query_failure_returns_empty(monkeypatch) -> None:
+def test_gaia_query_failure_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     class _BoomGaia:
         @staticmethod
         def launch_job(adql: str):
@@ -143,7 +143,7 @@ def test_gaia_query_failure_returns_empty(monkeypatch) -> None:
 # --------------------------------------------------------------------------- #
 # SDSS SQL construction
 # --------------------------------------------------------------------------- #
-def test_sdss_query_default_mag_limits(monkeypatch) -> None:
+def test_sdss_query_default_mag_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
 
     def fake_query_sql(sql: str):
@@ -160,7 +160,7 @@ def test_sdss_query_default_mag_limits(monkeypatch) -> None:
     assert "ra BETWEEN 150.0 AND 151.0" in sql
 
 
-def test_sdss_query_ra_wraparound_two_queries(monkeypatch) -> None:
+def test_sdss_query_ra_wraparound_two_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
 
     def fake_query_sql(sql: str):
@@ -175,7 +175,7 @@ def test_sdss_query_ra_wraparound_two_queries(monkeypatch) -> None:
     assert "ra >= 0.0 AND ra <= 1.0" in joined
 
 
-def test_sdss_query_parses_rows(monkeypatch) -> None:
+def test_sdss_query_parses_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     table = _FakeTable([_FakeRow(objid=7, ra=150.0, dec=2.0, u=18.0, g=16.0, r=15.5, i=15.0, z=14.8)])
 
     def fake_query_sql(sql: str):
@@ -191,7 +191,7 @@ def test_sdss_query_parses_rows(monkeypatch) -> None:
     assert star["ra_pm"] == 0.0  # SDSS has no proper motion
 
 
-def test_sdss_query_failure_returns_empty(monkeypatch) -> None:
+def test_sdss_query_failure_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(sql: str):
         raise RuntimeError("boom")
 
@@ -199,7 +199,7 @@ def test_sdss_query_failure_returns_empty(monkeypatch) -> None:
     assert sdss.query_by_ra_dec_bounds(1.0, 2.0, 1.0, 2.0) == []
 
 
-def test_sdss_query_by_bounds_applies_safety_margin(monkeypatch) -> None:
+def test_sdss_query_by_bounds_applies_safety_margin(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[str] = []
 
     def fake_query_sql(sql: str):
@@ -262,7 +262,7 @@ def test_sky_dedup_key_prefers_source_id() -> None:
 # --------------------------------------------------------------------------- #
 # faint_limit fallback in query_catalog_gaia (reads cfg.star_catalog.faint_limit)
 # --------------------------------------------------------------------------- #
-def test_query_catalog_gaia_faint_limit_from_config(monkeypatch) -> None:
+def test_query_catalog_gaia_faint_limit_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """When faint_lim is None, query_catalog_gaia pulls cfg.star_catalog.faint_limit
     (via getattr) and passes int(it) to the cached query.
     """
@@ -287,7 +287,7 @@ def test_query_catalog_gaia_faint_limit_from_config(monkeypatch) -> None:
     assert captured["faint_lim"] == 17  # int(17.0)
 
 
-def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch) -> None:
+def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = {}
 
     def fake_cached(wcs_tuple, faint_lim, bright_lim, pm_ts, max_stars):
@@ -334,7 +334,7 @@ def _wcs_model() -> runner.WCSModel:
 # _validate_catalog_coverage RA-wraparound field-area logic (no logging assert,
 # just that the function runs without error on a wrap field)
 # --------------------------------------------------------------------------- #
-def test_validate_coverage_collapses_large_positive_ra_span(caplog) -> None:
+def test_validate_coverage_collapses_large_positive_ra_span(caplog: pytest.LogCaptureFixture) -> None:
 
     caplog.set_level(logging.WARNING, logger="senpai.catalog.runner")
     # When min_ra/max_ra are given in ascending order, a >180deg span is folded to
@@ -354,7 +354,7 @@ def test_validate_coverage_collapses_large_positive_ra_span(caplog) -> None:
     assert "very sparse" in caplog.text
 
 
-def test_validate_coverage_descending_ra_wrap_folds(caplog) -> None:
+def test_validate_coverage_descending_ra_wrap_folds(caplog: pytest.LogCaptureFixture) -> None:
     # A descending wrap field (min_ra=359, max_ra=1) spans 2 degrees, so the
     # field area is ~4 deg^2 and 50 stars (12.5 stars/deg^2) is NOT sparse.
     # Before the (max_ra - min_ra) % 360 fix this computed ~715 deg^2 and
@@ -375,7 +375,7 @@ def test_validate_coverage_descending_ra_wrap_folds(caplog) -> None:
     assert "very sparse" not in caplog.text
 
 
-def test_validate_coverage_empty_logs_error(caplog) -> None:
+def test_validate_coverage_empty_logs_error(caplog: pytest.LogCaptureFixture) -> None:
 
     with caplog.at_level(logging.ERROR):
         runner._validate_catalog_coverage(
@@ -425,7 +425,9 @@ def _off_center_wcs() -> runner.WCSModel:
     )
 
 
-def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict, max_width_degrees=10.0):
+def _fake_sstr7_region_query(
+    monkeypatch: pytest.MonkeyPatch, stars: list[dict], captured: dict, max_width_degrees=10.0
+):
     """Stand in for the catalog region read, recording the region it was asked for."""
 
     def _query(fov_height, fov_width, center_ra, center_dec, **kwargs):
@@ -457,7 +459,7 @@ def _star_at(wcs, x: float, y: float, mv: float) -> dict:
     }
 
 
-def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch) -> None:
+def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch: pytest.MonkeyPatch) -> None:
     wcs = _off_center_wcs()
     captured: dict = {}
     _fake_sstr7_region_query(monkeypatch, [], captured)
@@ -471,7 +473,7 @@ def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch) -> None:
     assert abs(captured["center"][0] - wcs.CRVAL1) > 0.01
 
 
-def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch) -> None:
+def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch: pytest.MonkeyPatch) -> None:
     wcs = _off_center_wcs()
     # Ten bright stars in the padded region but outside the image, then five
     # fainter ones inside it. Capping the region query would return only the
@@ -491,7 +493,7 @@ def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch) -> None:
     assert [s.magnitude for s in result.stars] == pytest.approx([12.0, 12.1, 12.2])
 
 
-def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
+def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch: pytest.MonkeyPatch) -> None:
     wcs = _off_center_wcs()
     stars = [_star_at(wcs, -50.0, 150.0, 4.0)]
     stars += [_star_at(wcs, 10.0 + i * 10, 50.0, 12.0 + i * 0.1) for i in range(5)]
@@ -503,7 +505,7 @@ def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
     assert len(result.stars) == 5
 
 
-def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch) -> None:
+def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch: pytest.MonkeyPatch) -> None:
     """A corrupted WCS must fail typed, not read a huge slice of the catalog."""
     # 0.1 deg/px over 100 px is a 10-degree field; a 1-degree configured maximum
     # puts it past the 2x sanity margin.

@@ -23,7 +23,7 @@ def _field(shape=(2400, 2400), background=120.0, noise=8.0, seed=11):
     return image
 
 
-def test_strided_stats_match_full_computation():
+def test_strided_stats_match_full_computation() -> None:
     image = _field()
     full_mean, full_median, full_std = sigma_clipped_stats(image, sigma=3.0, maxiters=5)
     mean, median, std = robust_background_stats(image)
@@ -34,7 +34,7 @@ def test_strided_stats_match_full_computation():
     assert abs(mean - full_mean) < 0.05 * full_std
 
 
-def test_small_images_are_not_subsampled():
+def test_small_images_are_not_subsampled() -> None:
     # At or below target_npix the input must be used in full — identical
     # results to sigma_clipped_stats, so unit-scale callers see no change.
     image = _field(shape=(256, 256))
@@ -43,7 +43,7 @@ def test_small_images_are_not_subsampled():
     assert result == expected
 
 
-def test_gradient_background_is_sampled_fairly():
+def test_gradient_background_is_sampled_fairly() -> None:
     # A vignetting-like gradient: the stride covers the whole frame, so the
     # estimate must track the global median, not a corner's.
     rng = np.random.default_rng(3)

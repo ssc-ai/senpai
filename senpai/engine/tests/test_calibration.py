@@ -29,13 +29,13 @@ from senpai.engine.observability.calibration import (
 
 
 class TestAirmass:
-    def test_zenith(self):
+    def test_zenith(self) -> None:
         assert _airmass(90.0) == pytest.approx(1.0)
 
-    def test_45deg(self):
+    def test_45deg(self) -> None:
         assert _airmass(45.0) == pytest.approx(math.sqrt(2.0), rel=1e-6)
 
-    def test_clipped_at_low_altitude(self):
+    def test_clipped_at_low_altitude(self) -> None:
         # Plane-parallel sec(z) diverges near the horizon; we explicitly
         # return None below 3° to keep plots/fits stable.
         assert _airmass(2.0) is None
@@ -77,7 +77,7 @@ class TestExtractFramePhoto:
         base.update(overrides)
         return base
 
-    def test_happy_path_fills_all_fields(self):
+    def test_happy_path_fills_all_fields(self) -> None:
         site = {"latitude": 20.0, "longitude": -156.0, "altitude_km": 0.1}
         fp = _extract_frame_photo(self._frame(), "batch1", site, "sidereal")
         assert fp is not None
@@ -91,12 +91,12 @@ class TestExtractFramePhoto:
         if fp.altitude_deg > 3.0:
             assert fp.airmass is not None
 
-    def test_returns_none_without_photometry(self):
+    def test_returns_none_without_photometry(self) -> None:
         frame = self._frame()
         frame["photometry_summary"] = None
         assert _extract_frame_photo(frame, "b", None, "sidereal") is None
 
-    def test_handles_missing_wcs(self):
+    def test_handles_missing_wcs(self) -> None:
         frame = self._frame()
         frame["starfield"] = None
         fp = _extract_frame_photo(frame, "b", None, "sidereal")
@@ -106,7 +106,7 @@ class TestExtractFramePhoto:
         assert fp.altitude_deg is None
         assert fp.airmass is None
 
-    def test_handles_missing_site_gracefully(self):
+    def test_handles_missing_site_gracefully(self) -> None:
         frame = self._frame()
         fp = _extract_frame_photo(frame, "b", site=None, track_mode_default="sidereal")
         assert fp is not None
@@ -114,7 +114,7 @@ class TestExtractFramePhoto:
         assert fp.altitude_deg is None
         assert fp.azimuth_deg is None
 
-    def test_multiband_zps_extracted(self):
+    def test_multiband_zps_extracted(self) -> None:
         frame = self._frame()
         frame["photometry_summary"]["multiband_calibration"] = {
             "bands": {
@@ -125,7 +125,7 @@ class TestExtractFramePhoto:
         fp = _extract_frame_photo(frame, "b", None, "sidereal")
         assert fp.multiband_zps == {"g": 24.6, "r": 24.3}
 
-    def test_aperture_geometry_lifted_from_summary(self):
+    def test_aperture_geometry_lifted_from_summary(self) -> None:
         frame = self._frame()
         frame["photometry_summary"]["aperture_geometry"] = {
             "shape": "circle",
@@ -138,7 +138,7 @@ class TestExtractFramePhoto:
         assert fp.aperture_geometry["shape"] == "circle"
         assert fp.aperture_geometry["aperture_radius_px"] == 7.0
 
-    def test_aperture_geometry_none_on_legacy_summary(self):
+    def test_aperture_geometry_none_on_legacy_summary(self) -> None:
         # A summary predating aperture_geometry retention leaves the field None.
         fp = _extract_frame_photo(self._frame(), "b", None, "sidereal")
         assert fp.aperture_geometry is None
@@ -148,17 +148,17 @@ class TestExtractFramePhoto:
 
 
 class TestPercentile:
-    def test_endpoints(self):
+    def test_endpoints(self) -> None:
         assert _percentile([1.0, 2.0, 3.0], 0.0) == 1.0
         assert _percentile([1.0, 2.0, 3.0], 1.0) == 3.0
 
-    def test_interpolation(self):
+    def test_interpolation(self) -> None:
         # idx = 0.5 * 2 = 1.0 → exact index 1 → value 2.0
         assert _percentile([1.0, 2.0, 3.0], 0.5) == 2.0
         # idx = 0.25 * 2 = 0.5 → halfway between 1.0 and 2.0 → 1.5
         assert _percentile([1.0, 2.0, 3.0], 0.25) == 1.5
 
-    def test_empty_returns_nan(self):
+    def test_empty_returns_nan(self) -> None:
 
         assert math.isnan(_percentile([], 0.5))
 
@@ -190,7 +190,7 @@ def _fp(filter_name: str | None, zp: float | None, **kw) -> FramePhoto:
 
 
 class TestSummarizeZP:
-    def test_groups_by_filter(self):
+    def test_groups_by_filter(self) -> None:
         frames = [
             _fp("V", 24.1),
             _fp("V", 24.5),
@@ -203,12 +203,12 @@ class TestSummarizeZP:
         assert out["V"].n == 3 and out["B"].n == 2
         assert out["V"].median == pytest.approx(24.3)
 
-    def test_unknown_filter_bucket(self):
+    def test_unknown_filter_bucket(self) -> None:
         frames = [_fp(None, 24.0), _fp(None, 24.4)]
         out = _summarize_zp(frames)
         assert "unknown" in out and out["unknown"].n == 2
 
-    def test_excludes_rate_frames(self):
+    def test_excludes_rate_frames(self) -> None:
         # Rate-track photometry is unreliable for ZP and must be excluded.
         frames = [
             _fp("V", 24.3),
@@ -219,7 +219,7 @@ class TestSummarizeZP:
         assert out["V"].n == 2
         assert out["V"].median == pytest.approx(24.4)
 
-    def test_skips_when_no_zp(self):
+    def test_skips_when_no_zp(self) -> None:
         frames = [_fp("V", None), _fp("V", None)]
         out = _summarize_zp(frames)
         assert "V" not in out
@@ -229,7 +229,7 @@ class TestSummarizeZP:
 
 
 class TestFitExtinction:
-    def test_recovers_known_line(self):
+    def test_recovers_known_line(self) -> None:
         # zp = 24.5 - 0.20 * airmass  (no noise)
         airmasses = [1.0, 1.3, 1.6, 2.0, 2.5, 3.0]
         zps = [24.5 - 0.20 * a for a in airmasses]
@@ -242,14 +242,14 @@ class TestFitExtinction:
         assert fit.n == 6
         assert fit.airmass_range == (1.0, 3.0)
 
-    def test_skips_filters_with_too_few_points(self):
+    def test_skips_filters_with_too_few_points(self) -> None:
         frames = [
             _fp("V", 24.0, airmass=1.0),
             _fp("V", 23.8, airmass=1.5),  # only 2 points → skip
         ]
         assert _fit_extinction(frames) == {}
 
-    def test_ignores_frames_without_airmass(self):
+    def test_ignores_frames_without_airmass(self) -> None:
         # 2 with airmass + 1 without → still only 2 valid → skipped
         frames = [
             _fp("V", 24.5, airmass=1.0),
@@ -258,7 +258,7 @@ class TestFitExtinction:
         ]
         assert _fit_extinction(frames) == {}
 
-    def test_skips_degenerate_airmass_range(self):
+    def test_skips_degenerate_airmass_range(self) -> None:
         # All frames at ~one pointing → airmass span below the guard → no fit.
         frames = [
             _fp("V", 24.50, airmass=1.330),
@@ -267,7 +267,7 @@ class TestFitExtinction:
         ]
         assert _fit_extinction(frames) == {}
 
-    def test_excludes_rate_frames(self):
+    def test_excludes_rate_frames(self) -> None:
         # Even with a good airmass spread, rate frames must not drive extinction.
         frames = [
             _fp("V", 24.5, airmass=1.0, track_mode="rate"),
@@ -280,7 +280,7 @@ class TestFitExtinction:
 # --- limiting mag summary -----------------------------------------------------
 
 
-def test_summarize_limiting_mag_per_filter():
+def test_summarize_limiting_mag_per_filter() -> None:
     frames = [
         _fp("V", 24.0, lim50=19.0),
         _fp("V", 24.0, lim50=19.4),
@@ -292,7 +292,7 @@ def test_summarize_limiting_mag_per_filter():
     assert out["B"] == pytest.approx(18.8)
 
 
-def test_summarize_limiting_mag_excludes_rate_frames():
+def test_summarize_limiting_mag_excludes_rate_frames() -> None:
     """Rate-track completeness is unreliable, so the night's authoritative
     limiting mag must ignore rate frames (a deep, spurious rate value must not
     pull the median).
@@ -329,7 +329,7 @@ class TestExtractFrameTiming:
         base.update(overrides)
         return base
 
-    def test_keeps_frame_without_photometry(self):
+    def test_keeps_frame_without_photometry(self) -> None:
         # _extract_frame_photo would drop this frame; timing must still keep it.
         assert _extract_frame_photo(self._frame(), "b", None, "rate") is None
         ret = _extract_frame_timing(self._frame(), "rate")
@@ -341,17 +341,17 @@ class TestExtractFrameTiming:
         assert timing.altitude_deg is None  # filled later, vectorized
         assert timing.fov_sq_deg is None  # no WCS solve → no measured FoV
 
-    def test_none_without_boresight(self):
+    def test_none_without_boresight(self) -> None:
         frame = self._frame()
         frame["frame_metadata"] = {"exposure_time_seconds": 5.0}
         assert _extract_frame_timing(frame, "rate") is None
 
-    def test_none_without_exposure(self):
+    def test_none_without_exposure(self) -> None:
         frame = self._frame()
         frame["frame_metadata"]["exposure_time_seconds"] = None
         assert _extract_frame_timing(frame, "rate") is None
 
-    def test_fov_only_from_solved_frames(self):
+    def test_fov_only_from_solved_frames(self) -> None:
         # Only when a WCS solved does the record carry a (measured) FoV — used
         # for the contiguous-grid step, which must come from good frames only.
         frame = self._frame()
@@ -376,11 +376,11 @@ class TestEmpiricalOverhead:
     the night's observed cadence, not a flat guess.
     """
 
-    def test_no_pairs_returns_none(self):
+    def test_no_pairs_returns_none(self) -> None:
         # Fewer than two placeable frames → no pairs → caller uses its default.
         assert _empirical_overhead([]) == (None, "")
 
-    def test_prefers_observed_slew_cadence(self):
+    def test_prefers_observed_slew_cadence(self) -> None:
         # A run that parks on two fields, alternating with a big (~90°) slew at a
         # steady ~9 s overhead. Too few distinct distances for the line fit, but
         # the median slewed-pair overhead is exactly what we want as a fallback.
@@ -394,7 +394,7 @@ class TestEmpiricalOverhead:
         assert overhead == pytest.approx(9.0, abs=0.5)
         assert "slew" in label
 
-    def test_full_fit_unusable_falls_back_not_crashes(self):
+    def test_full_fit_unusable_falls_back_not_crashes(self) -> None:
         # Same single-distance data: the strict fit can't constrain the slope.
         t0 = datetime(2026, 5, 27, 7, tzinfo=UTC)
         timings, t = [], 0.0
@@ -408,7 +408,7 @@ class TestEmpiricalOverhead:
 
 
 class TestFitSlewModelOnTimings:
-    def test_fits_two_regime_model_from_timings(self):
+    def test_fits_two_regime_model_from_timings(self) -> None:
         # Synthetic night: repeat exposures (readout-only) interleaved with slews
         # of varied separation at a known rate, so the readout floor and a rising
         # slew line are both well sampled across several distance bins. The slew
@@ -450,7 +450,7 @@ class TestGainPlotData:
     def _calib(self, frames):
         return SimpleNamespace(frames=frames)
 
-    def test_collects_pairs_and_summarizes(self):
+    def test_collects_pairs_and_summarizes(self) -> None:
         frames = [self._frame(s, g) for s, g in [(400.0, 2.0), (800.0, 2.1), (1200.0, 1.9), (1600.0, 2.0)]]
         d = _data_gain(self._calib(frames))
         assert d["n"] == 4
@@ -458,7 +458,7 @@ class TestGainPlotData:
         assert d["median"] == pytest.approx(2.0, abs=0.05)
         assert d["std"] >= 0.0
 
-    def test_skips_frames_missing_gain_or_sky(self):
+    def test_skips_frames_missing_gain_or_sky(self) -> None:
         frames = [
             self._frame(500.0, 2.0),
             self._frame(600.0, None),  # no gain -> skipped
@@ -469,6 +469,6 @@ class TestGainPlotData:
         d = _data_gain(self._calib(frames))
         assert d["n"] == 3
 
-    def test_returns_none_with_too_few_points(self):
+    def test_returns_none_with_too_few_points(self) -> None:
         frames = [self._frame(500.0, 2.0), self._frame(600.0, 2.1)]
         assert _data_gain(self._calib(frames)) is None

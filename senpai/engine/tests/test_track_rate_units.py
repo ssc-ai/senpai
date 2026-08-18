@@ -26,16 +26,16 @@ from senpai.engine.utils.fits_io import _to_arcsec_per_second
         ("radians/second", 1e-5, pytest.approx(2.063, abs=1e-3)),
     ],
 )
-def test_known_units(unit, value, expected):
+def test_known_units(unit, value, expected) -> None:
     assert _to_arcsec_per_second(value, unit) == pytest.approx(expected, rel=1e-6)
 
 
-def test_case_insensitive():
+def test_case_insensitive() -> None:
     assert _to_arcsec_per_second(1.0, "Degrees/Second") == pytest.approx(3600.0)
     assert _to_arcsec_per_second(1.0, "  arcsec/s  ") == pytest.approx(1.0)
 
 
-def test_unknown_unit_passes_through_with_warning(caplog):
+def test_unknown_unit_passes_through_with_warning(caplog: pytest.LogCaptureFixture) -> None:
 
     with caplog.at_level(logging.WARNING):
         v = _to_arcsec_per_second(42.0, "furlongs/fortnight")
@@ -43,7 +43,7 @@ def test_unknown_unit_passes_through_with_warning(caplog):
     assert "Unknown track-rate unit" in caplog.text
 
 
-def test_negative_rates_preserve_sign():
+def test_negative_rates_preserve_sign() -> None:
     # f3 of a burr calsat collection has RA_RATE=-0.0042 deg/s; we want the
     # converted value to keep its sign so downstream code can distinguish
     # tracking direction.

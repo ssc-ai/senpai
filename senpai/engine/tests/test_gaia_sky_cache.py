@@ -14,7 +14,7 @@ from senpai.catalog import runner
 
 
 @pytest.fixture(autouse=True)
-def _calls(monkeypatch):
+def _calls(monkeypatch: pytest.MonkeyPatch):
     runner._GAIA_SKY_CACHE.clear()
     calls = []
 
@@ -28,7 +28,7 @@ def _calls(monkeypatch):
     return calls
 
 
-def test_first_query_pads_and_caches(_calls):
+def test_first_query_pads_and_caches(_calls) -> None:
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     assert len(_calls) == 1
     pad = runner._GAIA_SKY_PAD_DEG
@@ -37,7 +37,7 @@ def test_first_query_pads_and_caches(_calls):
     assert len(runner._GAIA_SKY_CACHE) == 1
 
 
-def test_intra_batch_jitter_is_free(_calls):
+def test_intra_batch_jitter_is_free(_calls) -> None:
     """Sub-pad shift (frame shift ~0.04°) + a refinement nudge land inside the
     padded coverage → zero extra online queries.
     """
@@ -47,7 +47,7 @@ def test_intra_batch_jitter_is_free(_calls):
     assert len(_calls) == 1  # only the initial fetch
 
 
-def test_partial_overlap_fetches_only_sliver(_calls):
+def test_partial_overlap_fetches_only_sliver(_calls) -> None:
     """A real shift beyond the pad pulls only the new strip, not a full box."""
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)  # call 0: padded full
     runner._query_gaia_sky(255.5, 257.5, 43.0, 45.0, 21, -32)  # RA shift 0.5° -> 1 sliver
@@ -62,7 +62,7 @@ def test_partial_overlap_fetches_only_sliver(_calls):
     assert cov[0] <= 255.0 and cov[1] >= 257.5
 
 
-def test_diagonal_shift_fetches_two_slivers(_calls):
+def test_diagonal_shift_fetches_two_slivers(_calls) -> None:
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)  # call 0
     runner._query_gaia_sky(255.5, 257.5, 43.5, 45.5, 21, -32)  # RA+Dec shift
     # box-difference of grown bbox vs prior coverage = an L = 2 strips
@@ -70,20 +70,20 @@ def test_diagonal_shift_fetches_two_slivers(_calls):
     assert len(runner._GAIA_SKY_CACHE) == 1
 
 
-def test_disjoint_pointing_starts_new_region(_calls):
+def test_disjoint_pointing_starts_new_region(_calls) -> None:
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     runner._query_gaia_sky(280.0, 282.0, 43.0, 45.0, 21, -32)  # far slew
     assert len(_calls) == 2
     assert len(runner._GAIA_SKY_CACHE) == 2  # not one giant box between them
 
 
-def test_different_mag_limits_are_separate(_calls):
+def test_different_mag_limits_are_separate(_calls) -> None:
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 21, -32)
     runner._query_gaia_sky(255.0, 257.0, 43.0, 45.0, 18, -32)
     assert len(_calls) == 2
     assert len(runner._GAIA_SKY_CACHE) == 2
 
 
-def test_ra_wrap_bypasses_cache(_calls):
+def test_ra_wrap_bypasses_cache(_calls) -> None:
     runner._query_gaia_sky(359.5, 360.5, 43.0, 45.0, 21, -32)  # crosses seam
     assert len(runner._GAIA_SKY_CACHE) == 0

@@ -125,7 +125,7 @@ def _match_count(detected: list[tuple[float, float]], truth: list[tuple[float, f
 # ---------------------------------------------------------------------------
 # detect_sources_classic
 # ---------------------------------------------------------------------------
-def test_detect_sources_classic_finds_known_stars():
+def test_detect_sources_classic_finds_known_stars() -> None:
     truth = [(50.0, 60.0), (120.0, 90.0), (200.0, 180.0), (80.0, 210.0)]
     data = _star_field(truth, [40000.0] * 4, sigma=2.0)
     sources = detect_sources_classic(data, max_sources=20, fwhm=4.0, threshold_sigma=5.0)
@@ -134,7 +134,7 @@ def test_detect_sources_classic_finds_known_stars():
     assert _match_count(detected, truth, tol=1.5) == len(truth)
 
 
-def test_detect_sources_classic_positions_within_one_pixel():
+def test_detect_sources_classic_positions_within_one_pixel() -> None:
     truth = [(64.0, 64.0), (160.0, 100.0)]
     data = _star_field(truth, [60000.0, 50000.0], sigma=2.0, noise=3.0)
     sources = detect_sources_classic(data, max_sources=10, fwhm=4.0, threshold_sigma=5.0)
@@ -145,14 +145,14 @@ def test_detect_sources_classic_positions_within_one_pixel():
         assert abs(nearest[1] - ty) <= 1.0
 
 
-def test_detect_sources_classic_respects_max_sources():
+def test_detect_sources_classic_respects_max_sources() -> None:
     truth = [(x, y) for x in (40, 90, 140, 190) for y in (40, 90, 140, 190)]
     data = _star_field(truth, [30000.0] * len(truth), sigma=2.0)
     sources = detect_sources_classic(data, max_sources=5, fwhm=4.0, threshold_sigma=5.0)
     assert len(sources) == 5
 
 
-def test_detect_sources_classic_empty_on_blank_field():
+def test_detect_sources_classic_empty_on_blank_field() -> None:
     rng = np.random.default_rng(7)
     data = 100.0 + rng.normal(0.0, 5.0, (128, 128))
     sources = detect_sources_classic(data, max_sources=10, fwhm=4.0, threshold_sigma=8.0)
@@ -163,7 +163,7 @@ def test_detect_sources_classic_empty_on_blank_field():
 # estimate_fwhm
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("sigma", [1.5, 2.0, 3.0])
-def test_estimate_fwhm_recovers_known_sigma(sigma):
+def test_estimate_fwhm_recovers_known_sigma(sigma) -> None:
     x, y = 64.0, 64.0
     data = _star_field([(x, y)], [80000.0], sigma=sigma, shape=(128, 128), noise=2.0)
     fwhm = estimate_fwhm(data, x, y, box_size=24)
@@ -171,7 +171,7 @@ def test_estimate_fwhm_recovers_known_sigma(sigma):
     assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=0.5)
 
 
-def test_estimate_fwhm_returns_none_for_tiny_box():
+def test_estimate_fwhm_returns_none_for_tiny_box() -> None:
     data = _star_field([(64.0, 64.0)], [80000.0], sigma=2.0, shape=(128, 128))
     # A box of 4 px straddling the edge is too small for a meaningful fit.
     assert estimate_fwhm(data, 0.0, 0.0, box_size=4) is None
@@ -180,7 +180,7 @@ def test_estimate_fwhm_returns_none_for_tiny_box():
 # ---------------------------------------------------------------------------
 # extract_point_sources (sidereal)
 # ---------------------------------------------------------------------------
-def test_extract_point_sources_counts_and_positions():
+def test_extract_point_sources_counts_and_positions() -> None:
     truth = [(40.0, 50.0), (110.0, 70.0), (180.0, 160.0), (70.0, 200.0), (220.0, 60.0)]
     data = _star_field(truth, [50000.0] * len(truth), sigma=2.0, noise=4.0)
     image = _processed_image(data)
@@ -193,7 +193,7 @@ def test_extract_point_sources_counts_and_positions():
     assert _match_count(detected, truth, tol=1.5) == len(truth)
 
 
-def test_extract_point_sources_reports_reasonable_fwhm():
+def test_extract_point_sources_reports_reasonable_fwhm() -> None:
     sigma = 2.5
     truth = [(50.0, 50.0), (150.0, 90.0), (90.0, 190.0), (200.0, 200.0)]
     data = _star_field(truth, [70000.0] * len(truth), sigma=sigma, noise=3.0)
@@ -202,7 +202,7 @@ def test_extract_point_sources_reports_reasonable_fwhm():
     assert fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
 
 
-def test_extract_point_sources_faint_below_threshold_not_detected():
+def test_extract_point_sources_faint_below_threshold_not_detected() -> None:
     bright = (64.0, 64.0)
     faint = (180.0, 180.0)
     # Bright star is ~50000 total over the PSF; faint star is buried in the
@@ -215,7 +215,7 @@ def test_extract_point_sources_faint_below_threshold_not_detected():
     assert _match_count(detected, [faint], tol=2.0) == 0
 
 
-def test_extract_point_sources_respects_max_detections():
+def test_extract_point_sources_respects_max_detections() -> None:
     truth = [(x, y) for x in (40, 80, 120, 160, 200) for y in (40, 80, 120, 160, 200)]
     data = _star_field(truth, [40000.0] * len(truth), sigma=2.0)
     image = _processed_image(data)
@@ -223,7 +223,7 @@ def test_extract_point_sources_respects_max_detections():
     assert len(starlist.detections) <= 10
 
 
-def test_extract_point_sources_min_separation_dedupes():
+def test_extract_point_sources_min_separation_dedupes() -> None:
     # Two stars closer than the enforced minimum separation: only one survives.
     truth = [(100.0, 100.0), (103.0, 100.0)]
     data = _star_field(truth, [60000.0, 55000.0], sigma=2.0)
@@ -233,7 +233,7 @@ def test_extract_point_sources_min_separation_dedupes():
     assert len(near) == 1
 
 
-def test_extract_point_sources_empty_field_returns_default_fwhm():
+def test_extract_point_sources_empty_field_returns_default_fwhm() -> None:
     rng = np.random.default_rng(99)
     data = 100.0 + rng.normal(0.0, 5.0, (128, 128))
     image = _processed_image(data)
@@ -245,7 +245,7 @@ def test_extract_point_sources_empty_field_returns_default_fwhm():
 # ---------------------------------------------------------------------------
 # measure_fwhm_from_catalog_stars
 # ---------------------------------------------------------------------------
-def test_measure_fwhm_from_catalog_stars_recovers_sigma():
+def test_measure_fwhm_from_catalog_stars_recovers_sigma() -> None:
     sigma = 2.0
     # Well-separated stars so the isolation filter keeps them all.
     truth = [(40.0, 40.0), (120.0, 60.0), (60.0, 160.0), (200.0, 120.0), (180.0, 210.0)]
@@ -257,7 +257,7 @@ def test_measure_fwhm_from_catalog_stars_recovers_sigma():
     assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
 
 
-def test_measure_fwhm_skips_stars_without_positions():
+def test_measure_fwhm_skips_stars_without_positions() -> None:
     sigma = 2.0
     truth = [(50.0, 50.0), (150.0, 150.0)]
     data = _star_field(truth, [70000.0] * 2, sigma=sigma, noise=3.0)
@@ -272,7 +272,7 @@ def test_measure_fwhm_skips_stars_without_positions():
     assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
 
 
-def test_measure_fwhm_empty_catalog_falls_back_to_initial():
+def test_measure_fwhm_empty_catalog_falls_back_to_initial() -> None:
     data = _star_field([(64.0, 64.0)], [50000.0], sigma=2.0, shape=(128, 128))
     image = _processed_image(data)
     stats = measure_fwhm_from_catalog_stars(image, [], initial_fwhm=3.7)
@@ -300,7 +300,7 @@ def _rate_frame(data: np.ndarray, pixel_fwhm: float = 4.0) -> RateTrackFrame:
     )
 
 
-def test_satellite_extract_detects_point_source():
+def test_satellite_extract_detects_point_source() -> None:
     cfg = get_config()
     cfg.detection.snr_threshold = 3.0
     sigma = 2.0  # FWHM ~4.7 px, matches pixel_fwhm guess
@@ -323,7 +323,7 @@ def test_satellite_extract_detects_point_source():
         assert det.snr is not None and det.snr > cfg.detection.snr_threshold
 
 
-def test_satellite_extract_high_snr_threshold_filters_all():
+def test_satellite_extract_high_snr_threshold_filters_all() -> None:
     sigma = 2.0
     rng = np.random.default_rng(6)
     positions = [(float(x), float(y)) for x in range(30, 480, 40) for y in range(30, 480, 40)]
@@ -341,7 +341,7 @@ def test_satellite_extract_high_snr_threshold_filters_all():
     assert len(result.detections) == 0
 
 
-def test_satellite_extract_assigns_no_radec_without_wcs():
+def test_satellite_extract_assigns_no_radec_without_wcs() -> None:
     sigma = 2.0
     rng = np.random.default_rng(8)
     positions = [(float(x), float(y)) for x in range(30, 480, 40) for y in range(30, 480, 40)]
@@ -406,7 +406,7 @@ def _centroid_rms(detected, truth, tol=1.5):
     return len(residuals), float(np.sqrt(np.mean(residuals)))
 
 
-def _track_refiner_calls(monkeypatch):
+def _track_refiner_calls(monkeypatch: pytest.MonkeyPatch):
     """Record invocations of the full-res centroid refiner (binned path only)."""
     calls = []
     original = sid._refine_centroid_full_res
@@ -419,7 +419,7 @@ def _track_refiner_calls(monkeypatch):
     return calls
 
 
-def test_binned_pass2_runs_and_keeps_subpixel_accuracy(monkeypatch):
+def test_binned_pass2_runs_and_keeps_subpixel_accuracy(monkeypatch: pytest.MonkeyPatch) -> None:
     sigma = 3.5  # FWHM ~8.2 px -> binned branch
     image, truth = _large_field(sigma)
     refiner_calls = _track_refiner_calls(monkeypatch)
@@ -436,7 +436,7 @@ def test_binned_pass2_runs_and_keeps_subpixel_accuracy(monkeypatch):
     assert rms < 0.15
 
 
-def test_small_fwhm_large_frame_stays_unbinned(monkeypatch):
+def test_small_fwhm_large_frame_stays_unbinned(monkeypatch: pytest.MonkeyPatch) -> None:
     sigma = 1.7  # FWHM ~4.0 px -> binning would undersample; must not bin
     image, truth = _large_field(sigma)
     refiner_calls = _track_refiner_calls(monkeypatch)
@@ -451,7 +451,7 @@ def test_small_fwhm_large_frame_stays_unbinned(monkeypatch):
     assert rms < 0.15
 
 
-def test_fwhm_pass_measures_full_frame_even_with_sparse_center():
+def test_fwhm_pass_measures_full_frame_even_with_sparse_center() -> None:
     # Stars only in the outer band of a large frame. Pass 1 must scan the
     # full frame (a central-crop variant was reverted after it skewed the
     # source-peak saturation percentile on a real calsat field and biased
@@ -477,7 +477,7 @@ def test_fwhm_pass_measures_full_frame_even_with_sparse_center():
     assert n_matched >= 0.9 * len(truth)
 
 
-def test_satellite_threshold_search_matches_daostarfinder():
+def test_satellite_threshold_search_matches_daostarfinder() -> None:
     """The satellite detector's shared-convolution threshold search must
     reproduce DAOStarFinder exactly at any threshold. This pins the
     private-API reimplementation (_StarFinderKernel/_DAOStarFinderCatalog):
@@ -535,7 +535,7 @@ def test_satellite_threshold_search_matches_daostarfinder():
 # measure_fwhm_from_catalog_stars: saturation + winged-PSF behavior
 # ---------------------------------------------------------------------------
 def test_catalog_fwhm_skips_clipped_stars_and_measures_truth():
-    # A field with a saturated pile (clipped cores) plus unsaturated stars:
+    # A field with a saturated pile (clipped cores) plus unsaturated stars -> None:
     # the measured FWHM must come from the unsaturated cohort and match the
     # true PSF width — the old Gaussian-fit path measured only the faintest
     # stars (broken catalog-sample sat level) and read ~1.5x wide.
@@ -558,7 +558,7 @@ def test_catalog_fwhm_skips_clipped_stars_and_measures_truth():
     assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
 
 
-def test_catalog_fwhm_uses_detection_sat_level_when_provided():
+def test_catalog_fwhm_uses_detection_sat_level_when_provided() -> None:
     sigma = 3.0
     rng = np.random.default_rng(22)
     data = np.full((900, 900), 0.0) + rng.normal(0.0, 4.0, (900, 900))
@@ -579,7 +579,7 @@ def test_catalog_fwhm_uses_detection_sat_level_when_provided():
     assert stats.median_fwhm == pytest.approx(SIGMA_TO_FWHM * sigma, abs=1.0)
 
 
-def test_catalog_fwhm_reads_profile_width_on_winged_psf():
+def test_catalog_fwhm_reads_profile_width_on_winged_psf() -> None:
     # Gaussian core + broad shallow wings (Moffat-like): the FWHM is the
     # composite profile's half-max width — slightly above the core's, far
     # below what a wing-absorbing single-Gaussian fit can drift to, and far

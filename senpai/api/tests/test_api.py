@@ -39,13 +39,13 @@ from .conftest import make_request
 # ---------------------------------------------------------------------------
 
 
-def test_create_app_uses_config_version(patched_app_env, _init_config):
+def test_create_app_uses_config_version(patched_app_env, _init_config) -> None:
     app = patched_app_env.create_app(_init_config)
     assert app.title == "SENPAI API"
     assert app.version == _init_config.version
 
 
-def test_create_app_registers_expected_routes(patched_app_env, _init_config):
+def test_create_app_registers_expected_routes(patched_app_env, _init_config) -> None:
     app = patched_app_env.create_app(_init_config)
     # Assert against the OpenAPI path set (the stable public contract) rather than
     # introspecting app.routes: FastAPI 0.137 keeps lazy _IncludedRouter wrappers
@@ -60,14 +60,14 @@ def test_create_app_registers_expected_routes(patched_app_env, _init_config):
     assert "/astrometry/solve/sources" in paths
 
 
-def test_create_app_openapi_schema(patched_app_env, _init_config):
+def test_create_app_openapi_schema(patched_app_env, _init_config) -> None:
     app = patched_app_env.create_app(_init_config)
     schema = app.openapi()
     assert schema["info"]["title"] == "SENPAI API"
     assert "/senpai/detect" in schema["paths"]
 
 
-def test_create_app_accepts_config_path(patched_app_env):
+def test_create_app_accepts_config_path(patched_app_env) -> None:
 
     app = patched_app_env.create_app(LOCAL_APP_CONFIG_OVERRIDE)
     assert app.version is not None
@@ -78,7 +78,7 @@ def test_create_app_accepts_config_path(patched_app_env):
 # ---------------------------------------------------------------------------
 
 
-def test_lifespan_runs_hermetically(patched_app_env, _init_config):
+def test_lifespan_runs_hermetically(patched_app_env, _init_config) -> None:
     """The lifespan must validate astrometry and set up/tear down the executor."""
     app = patched_app_env.create_app(_init_config)
 
@@ -94,14 +94,14 @@ def test_lifespan_runs_hermetically(patched_app_env, _init_config):
 # ---------------------------------------------------------------------------
 
 
-def test_senpai_index_returns_version(_init_config):
+def test_senpai_index_returns_version(_init_config) -> None:
 
     result = asyncio.run(index(make_request("/senpai/")))
     assert result["version"] == _init_config.version
     assert "api" in result
 
 
-def test_astrometry_index_returns_config(_init_config):
+def test_astrometry_index_returns_config(_init_config) -> None:
     from senpai.api.routes.astrometry import index
 
     response = asyncio.run(index(make_request("/astrometry/")))
@@ -115,17 +115,17 @@ def test_astrometry_index_returns_config(_init_config):
 # ---------------------------------------------------------------------------
 
 
-def test_file_payload_item_requires_file():
+def test_file_payload_item_requires_file() -> None:
     with pytest.raises(ValidationError):
         FilePayloadItem()
 
 
-def test_file_payload_item_rejects_wrong_type():
+def test_file_payload_item_rejects_wrong_type() -> None:
     with pytest.raises(ValidationError):
         FilePayloadItem(file=123)
 
 
-def test_file_payload_item_optional_sequence_fields():
+def test_file_payload_item_optional_sequence_fields() -> None:
     item = FilePayloadItem(file="ZmFrZQ==")
     assert item.sequence_id is None
     assert item.sequence_count is None
@@ -147,7 +147,7 @@ def _canned_run() -> SenpaiRun:
 
 
 @pytest.fixture
-def mocked_pipeline(monkeypatch):
+def mocked_pipeline(monkeypatch: pytest.MonkeyPatch):
     """Patch the collect route's I/O and processing to canned outputs."""
     calls = {"loaded": [], "processed": 0}
 
@@ -172,7 +172,7 @@ def mocked_pipeline(monkeypatch):
         ("process_rate", "/senpai/rate"),
     ],
 )
-def test_collect_endpoints_happy_path(mocked_pipeline, handler_name, path):
+def test_collect_endpoints_happy_path(mocked_pipeline, handler_name, path) -> None:
 
     handler = getattr(route_mod, handler_name)
     payload = [FilePayloadItem(file="ZmFrZQ==", sequence_id=0, sequence_count=1)]
@@ -185,7 +185,7 @@ def test_collect_endpoints_happy_path(mocked_pipeline, handler_name, path):
     assert mocked_pipeline["loaded"] == [["ZmFrZQ=="]]
 
 
-def test_detect_upload_alias(mocked_pipeline):
+def test_detect_upload_alias(mocked_pipeline) -> None:
 
     payload = [FilePayloadItem(file="ZmFrZQ==")]
     result = asyncio.run(detect_upload(make_request("/senpai/detect/upload"), payload))
@@ -193,7 +193,7 @@ def test_detect_upload_alias(mocked_pipeline):
     assert mocked_pipeline["processed"] == 1
 
 
-def test_detect_passes_all_files_to_loader(mocked_pipeline):
+def test_detect_passes_all_files_to_loader(mocked_pipeline) -> None:
 
     payload = [FilePayloadItem(file=f) for f in ("QQ==", "Qg==", "Qw==")]
     asyncio.run(detect(make_request("/senpai/detect"), payload))
@@ -223,7 +223,7 @@ def _starlist_image():
     )
 
 
-def test_solve_sources_solved_returns_200(monkeypatch):
+def test_solve_sources_solved_returns_200(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(astro_mod, "solve_field", lambda sources: _starfield(True))
     response = asyncio.run(astro_mod.solve_sources(make_request("/astrometry/solve/sources"), _starlist_image()))
@@ -231,14 +231,14 @@ def test_solve_sources_solved_returns_200(monkeypatch):
     assert json.loads(response.body)["fit"] is True
 
 
-def test_solve_sources_unsolved_returns_422(monkeypatch):
+def test_solve_sources_unsolved_returns_422(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(astro_mod, "solve_field", lambda sources: _starfield(False))
     response = asyncio.run(astro_mod.solve_sources(make_request("/astrometry/solve/sources"), _starlist_image()))
     assert response.status_code == 422
 
 
-def test_solve_sources_passes_sources_through(monkeypatch):
+def test_solve_sources_passes_sources_through(monkeypatch: pytest.MonkeyPatch) -> None:
 
     seen = {}
 
@@ -256,7 +256,7 @@ def test_solve_sources_passes_sources_through(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_frame_result_defaults_are_json_serializable():
+def test_frame_result_defaults_are_json_serializable() -> None:
     fr = FrameResult(index=0)
     dumped = fr.model_dump(mode="json")
     assert dumped["index"] == 0
@@ -264,7 +264,7 @@ def test_frame_result_defaults_are_json_serializable():
     assert dumped["astrometry"]["solved"] is False
 
 
-def test_detect_response_roundtrip():
+def test_detect_response_roundtrip() -> None:
     resp = DetectResponse(frames=[FrameResult(index=2, tracking_mode="rate")])
     reparsed = DetectResponse(**resp.model_dump(mode="json"))
     assert reparsed.frames[0].index == 2
@@ -276,7 +276,7 @@ def test_detect_response_roundtrip():
 # ---------------------------------------------------------------------------
 
 
-def test_star_list_image_example_constructs():
+def test_star_list_image_example_constructs() -> None:
     # examples.py used to pass ``stars=`` (a nonexistent field); the OpenAPI
     # example payload for /solve/sources must build a valid StarListImage.
 

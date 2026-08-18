@@ -22,7 +22,7 @@ from senpai.engine.models.streak_measurement import StreakMeasurement
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _config():
+def _config() -> None:
     initialize_config(CONFIG_DIR / "burr.yaml")
     get_config().plotting.debug = False  # skip the debug plot in the refiner
 
@@ -53,30 +53,30 @@ _SEED = StreakMeasurement(rotation=0.0, length=25.0, fwhm=6.0)
 
 
 @pytest.mark.parametrize("length", [40, 60, 80])
-def test_measures_clean_streak_length(length):
+def test_measures_clean_streak_length(length) -> None:
     m, _ = refine_robust_streak(_streak(length), _SEED)
     assert m.length == pytest.approx(length, abs=3)
     assert m.fwhm == pytest.approx(8.0, abs=2)
 
 
-def test_fragmented_streak_not_truncated():
+def test_fragmented_streak_not_truncated() -> None:
     # A 0.5-level gap mid-trail must not shorten the measured length.
     m, _ = refine_robust_streak(_streak(40, dip=True), _SEED)
     assert m.length == pytest.approx(40, abs=3)
 
 
-def test_hot_pixels_do_not_inflate_or_break():
+def test_hot_pixels_do_not_inflate_or_break() -> None:
     m, _ = refine_robust_streak(_streak(40, hot=True), _SEED)
     assert m.length == pytest.approx(40, abs=3)
     assert m.fwhm == pytest.approx(8.0, abs=2)
 
 
-def test_fragmented_plus_hot():
+def test_fragmented_plus_hot() -> None:
     m, _ = refine_robust_streak(_streak(60, dip=True, hot=True), _SEED)
     assert m.length == pytest.approx(60, abs=4)
 
 
-def test_rotated_streak():
+def test_rotated_streak() -> None:
     seed = StreakMeasurement(rotation=30.0, length=25.0, fwhm=6.0)
     m, _ = refine_robust_streak(_streak(50, rot=30.0), seed)
     assert m.length == pytest.approx(50, abs=4)
@@ -96,7 +96,7 @@ def _streak_field(length: int, rot: float, n: int = 30, size: int = 900) -> np.n
 
 
 class TestSeedEstimate:
-    def test_recovers_ballpark_seed_not_frame_fraction(self):
+    def test_recovers_ballpark_seed_not_frame_fraction(self) -> None:
 
         # Old default would be size*0.05 = 45 here regardless of the streak;
         # the estimator must track the actual streak instead.
@@ -140,7 +140,7 @@ class TestStreakCenterExtraction:
         )
         return img, centers, streak
 
-    def test_one_centroid_per_streak_at_known_centers(self):
+    def test_one_centroid_per_streak_at_known_centers(self) -> None:
 
         img, centers, streak = self._streak_grid()
         sources = extract_streak_centers_as_sources(img, streak=streak, max_sources=100)
@@ -156,7 +156,7 @@ class TestStreakCenterExtraction:
 
     def test_noise_field_respects_caps_and_separation(self):
         # Pure noise legitimately yields 3-sigma matched-filter maxima (by
-        # design — astrometry rejects them); what must hold is the contract:
+        # design — astrometry rejects them); what must hold is the contract -> None:
         # bounded count and pairwise minimum separation.
 
         rng = np.random.default_rng(9)

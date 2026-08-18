@@ -19,7 +19,7 @@ from senpai.engine.detection.streak.masking import (
 )
 
 
-def test_remove_near_saturation_removes_only_saturated_blobs():
+def test_remove_near_saturation_removes_only_saturated_blobs() -> None:
     img = np.full((60, 60), 100.0)
     img[10:13, 10:13] = 65535.0  # saturated source
     img[40:43, 40:43] = 5000.0  # bright but not near-saturation
@@ -34,7 +34,7 @@ def test_remove_near_saturation_removes_only_saturated_blobs():
     assert out[41, 41] == 5000.0
 
 
-def test_remove_near_saturation_noop_when_unsaturated():
+def test_remove_near_saturation_noop_when_unsaturated() -> None:
     img = np.full((40, 40), 100.0)
     img[20:22, 20:22] = 5000.0
     out, n = remove_near_saturation_streaks(img.copy(), "uint16")
@@ -42,7 +42,7 @@ def test_remove_near_saturation_noop_when_unsaturated():
     assert np.array_equal(out, img)
 
 
-def test_remove_border_crossing_removes_only_border_seeded_blobs():
+def test_remove_border_crossing_removes_only_border_seeded_blobs() -> None:
     img = np.full((60, 60), 100.0)
     img[0:3, 28:31] = 5000.0  # blob crossing the top border
     img[30:33, 30:33] = 5000.0  # interior blob, must survive
@@ -54,7 +54,7 @@ def test_remove_border_crossing_removes_only_border_seeded_blobs():
 
 
 def test_flood_fill_is_bounded_on_fully_connected_frame():
-    # Every pixel is above threshold (mimics a frame bridged by a dead line):
+    # Every pixel is above threshold (mimics a frame bridged by a dead line) -> None:
     # an unbounded flood fill would traverse all 360k pixels; the bounded
     # default must cap it well below that.
     img = np.full((600, 600), 1000.0)

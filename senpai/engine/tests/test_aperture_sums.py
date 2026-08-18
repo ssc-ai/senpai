@@ -50,7 +50,7 @@ def _assert_matches_photutils(data, pos, build):
     assert np.median(np.abs(got1 - ref1)) < 0.05 * np.median(np.abs(ref1) + 1.0)
 
 
-def test_rectangular_apertures_match_photutils():
+def test_rectangular_apertures_match_photutils() -> None:
     data, pos = _streak_field()
     w, h, theta = 36.0, 56.0, np.deg2rad(125.4)
     _assert_matches_photutils(
@@ -63,7 +63,7 @@ def test_rectangular_apertures_match_photutils():
     )
 
 
-def test_circular_apertures_match_photutils():
+def test_circular_apertures_match_photutils() -> None:
     data, pos = _streak_field()
     _assert_matches_photutils(
         data,
@@ -75,7 +75,7 @@ def test_circular_apertures_match_photutils():
     )
 
 
-def test_partially_off_frame_aperture_is_clipped_not_crashed():
+def test_partially_off_frame_aperture_is_clipped_not_crashed() -> None:
     data, _ = _streak_field(n=10, size=600)
     # Centers close enough to the border that the annulus bbox leaves the
     # frame; callers margin-filter, but the helper must clip like photutils.
