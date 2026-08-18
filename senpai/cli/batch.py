@@ -1,4 +1,12 @@
-# CLI for batch processing of SENPAI algorithm across multiple date directories
+"""Run SENPAI over many collects, one process per collect.
+
+Each collect is handed to a fresh process rather than a pool worker, so a collect that hangs or
+dies takes nothing else with it and its memory is returned to the OS when it exits. Results come
+back over a queue, and a collect that raises still reports a result -- an error entry -- so the
+batch summary accounts for every dataset it was given rather than silently listing fewer than it
+started with.
+"""
+
 import argparse
 import concurrent.futures
 import functools
@@ -117,8 +125,15 @@ def process_single_dataset(
         }
 
 
-# Move this function outside of discover_datasets
-def extract_id_from_file(file_path, header_id_key):
+def extract_id_from_file(file_path: Path | str, header_id_key: str) -> str | None:
+    """Read a collect id from one file's header, or None if it cannot be read.
+
+    Defined at module scope rather than nested inside ``discover_datasets`` because it is
+    submitted to a process pool, and only a top-level function can be pickled.
+
+    A file whose header cannot be read is warned about and skipped rather than failing
+    discovery: one unreadable frame should not cost the whole directory.
+    """
     try:
         header_id = extract_id_from_header(file_path, header_id_key)
         if header_id is not False:
@@ -241,7 +256,15 @@ def batch_process(
                 dataset_dir = dataset["date_dir"]
 
                 # Define a worker function that puts results in the queue
-                def worker(dataset_dir, dataset_id, header_id_key, output_dir, detect, skip_existing, queue):
+                def worker(
+                    dataset_dir: Path,
+                    dataset_id: str,
+                    header_id_key: str,
+                    output_dir: Path,
+                    detect: bool,
+                    skip_existing: bool,
+                    queue: multiprocessing.Queue,
+                ) -> None:
                     try:
                         result = process_single_dataset(
                             dataset_dir, dataset_id, header_id_key, output_dir, detect, skip_existing

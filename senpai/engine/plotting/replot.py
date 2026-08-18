@@ -33,7 +33,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from senpai.core.config import settings
-from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+from senpai.engine.models.images import ProcessedFitsImage
+from senpai.engine.models.senpai import (
+    RateTrackFrame,
+    RateTrackFrameSerializable,
+    SiderealFrame,
+    SiderealFrameSerializable,
+)
 from senpai.engine.photometry.utils import (
     _completeness_limits,
     _save_completeness_plot,
@@ -72,9 +78,11 @@ def _find_result_json(batch_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
-def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
-    """Load a frame's processed FITS, preferring the stored path but falling back
-    to a same-named file in ``batch_dir`` (so a moved/copied dir still plots).
+def _resolve_frame_image(batch_dir: Path, processed_path: str | None) -> ProcessedFitsImage | None:
+    """Load a frame's processed FITS, by stored path or by name beside the batch.
+
+    Prefers the path the run recorded, then a same-named file in ``batch_dir``, so a batch
+    directory that was moved or copied still plots.
     """
     candidates: list[Path] = []
     if processed_path:
@@ -86,10 +94,12 @@ def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
     return None
 
 
-def _streak_candidate_objs(candidates):
-    """The serializable model stores streak_candidates as raw dicts, but
-    ``plot_single_frame`` reads them by attribute (``.x``, ``.length_pixels``,
-    ...). Wrap each dict so attribute access (and getattr-with-default) works.
+def _streak_candidate_objs(candidates: list[dict] | None) -> list[SimpleNamespace] | None:
+    """Wrap raw candidate dicts so they can be read by attribute.
+
+    The serializable model stores streak_candidates as dicts, but ``plot_single_frame``
+    reads them by attribute (``.x``, ``.length_pixels``, and so on), including with
+    getattr-and-default.
     """
     if not candidates:
         return None
@@ -99,7 +109,9 @@ def _streak_candidate_objs(candidates):
     return out or None
 
 
-def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
+def _plot_review(
+    img: ProcessedFitsImage, frame: SiderealFrameSerializable | RateTrackFrameSerializable, out_dir: Path, force: bool
+) -> list[Path]:
     """final_<idx>.png (overlays) + raw_<idx>.png for one frame."""
     written: list[Path] = []
     final_path = out_dir / f"final_{frame.index}.png"
@@ -121,7 +133,9 @@ def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
     return written
 
 
-def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
+def _plot_photometry_curves(
+    frame: SiderealFrameSerializable | RateTrackFrameSerializable, out_dir: Path, force: bool
+) -> list[Path]:
     """Completeness + limiting-mag diagnostics from the stored summary arrays."""
     ps = frame.photometry_summary or {}
     written: list[Path] = []
@@ -152,7 +166,13 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
 _MAX_STARS_FOR_APERTURE = 500
 
 
-def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Path]:
+def _plot_aperture(
+    img: ProcessedFitsImage,
+    frame: SiderealFrameSerializable | RateTrackFrameSerializable,
+    kind: str,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
     """Regenerate the per-star aperture overlay.
 
     Reconstructs a real ``SiderealFrame``/``RateTrackFrame`` from the rehydrated
@@ -210,7 +230,13 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     return [ap_path] if ap_path.exists() else []
 
 
-def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
+def _plot_psf(
+    img: ProcessedFitsImage,
+    frame: SiderealFrameSerializable | RateTrackFrameSerializable,
+    mode: str,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
     """Per-frame empirical PSF panel.
 
     Prefers the saved .npy stamp (cheap, no FITS reload); falls back to reloading the processed
