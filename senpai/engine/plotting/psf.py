@@ -21,6 +21,7 @@ night-level observability plots can import them from here too.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 from pathlib import Path
@@ -94,7 +95,7 @@ def radial_profile(stamp: np.ndarray, half: int, rstep: float = 0.5) -> tuple[np
     rr = np.hypot(xx - half, yy - half)
     edges = np.arange(0.0, half + rstep, rstep)
     r, prof = [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         m = (rr >= lo) & (rr < hi)
         if m.any():
             r.append((lo + hi) / 2)

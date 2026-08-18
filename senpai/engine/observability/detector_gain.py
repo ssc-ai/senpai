@@ -31,6 +31,7 @@ masking sources and measuring the sky directly is the equivalent route.)
 
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,7 +73,7 @@ def find_burst_pairs(paths: list[Path]) -> list[tuple[Path, Path]]:
     keys = [k for k in (parse_frame_key(p) for p in paths) if k is not None]
     keys.sort(key=lambda k: (k.timestamp, k.f_index))
     pairs: list[tuple[Path, Path]] = []
-    for a, b in zip(keys, keys[1:]):
+    for a, b in itertools.pairwise(keys):
         if a.field == b.field and b.f_index == a.f_index + 1:
             pairs.append((a.path, b.path))
     return pairs
@@ -216,8 +217,8 @@ def plot_ptc(fit: GainFit, output_path: str | Path, title: str = "detector gain 
     import matplotlib.pyplot as plt
 
     levels = np.array(fit.levels)
-    kept = set(zip(fit.env_levels, fit.env_variances))
-    is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances)])
+    kept = set(zip(fit.env_levels, fit.env_variances, strict=False))
+    is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances, strict=False)])
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(
         levels[is_kept],

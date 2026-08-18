@@ -335,7 +335,7 @@ def _rate_scan_candidate(
 
     # 2. Other frames must contribute real signal (not just reference)
     #    Require at least 1 other frame with DE > 3σ
-    n_other_with_signal = sum(1 for v, ofd in zip(best_other_vals, other_frames) if v > 3 * ofd["noise"])
+    n_other_with_signal = sum(1 for v, ofd in zip(best_other_vals, other_frames, strict=False) if v > 3 * ofd["noise"])
 
     # 3. The best rate must beat a "no motion" baseline
     #    (catches static artifacts that have signal at the same position in all frames)
@@ -401,7 +401,7 @@ def _rate_scan_candidate(
     best_sin_a = np.sin(np.radians(best_angle))
     n_angle_consistent = 0
     r_search = max(1, round(fwhm))  # Search along streak direction
-    for v, ofd in zip(best_other_vals, other_frames):
+    for v, ofd in zip(best_other_vals, other_frames, strict=False):
         if v <= 3 * ofd["noise"]:
             continue
         dx, dy = ofd["shift"]
@@ -543,7 +543,7 @@ def _rate_scan_candidate(
     rate_ra, rate_dec, rate_arcsec = None, None, None
 
     wcs_obj = None
-    for fi, px, py in zip(frame_indices, positions_x, positions_y):
+    for fi, px, py in zip(frame_indices, positions_x, positions_y, strict=False):
         f = next((f for f in all_frames if f.index == fi), None)
         if f and f.starfield and f.starfield.wcs:
             try:
@@ -806,8 +806,10 @@ def _deduplicate(streaks: list[CorrelatedStreak], fwhm: float) -> list[Correlate
     for cs in streaks:
         is_dup = False
         for existing in kept:
-            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y):
-                for efi, epx, epy in zip(existing.frame_indices, existing.positions_x, existing.positions_y):
+            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=False):
+                for efi, epx, epy in zip(
+                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=False
+                ):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2
                         if dist_sq < match_radius_sq:

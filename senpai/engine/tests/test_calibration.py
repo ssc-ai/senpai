@@ -6,6 +6,7 @@ Bouguer extinction fit.
 
 from __future__ import annotations
 
+import itertools
 import math
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -498,7 +499,7 @@ class TestFitSlewModelOnTimings:
             for sep in seps:
                 alts += [base, base, base + sep]
         timings, t = [_timing(t0, 0.0, exposure, alts[0], az, fov=4.0)], 0.0
-        for prev, alt in zip(alts, alts[1:]):
+        for prev, alt in itertools.pairwise(alts):
             t += exposure + readout + abs(alt - prev) / rate
             timings.append(_timing(t0, t, exposure, alt, az, fov=4.0))
         d = _fit_slew_model(timings)

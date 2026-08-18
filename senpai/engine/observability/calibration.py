@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import glob as _glob
+import itertools
 import json
 import logging
 import math
@@ -257,7 +258,7 @@ def _add_moon_geometry(calib: NightCalibration) -> None:
     fields = SkyCoord([f.ra_center_deg for f in fr] * u.deg, [f.dec_center_deg for f in fr] * u.deg)
     seps = np.atleast_1d(fields.separation(moon).deg)
     malt = np.atleast_1d(moon.transform_to(AltAz(obstime=times, location=loc)).alt.deg)
-    for f, s, a in zip(fr, seps, malt):
+    for f, s, a in zip(fr, seps, malt, strict=False):
         f.moon_sep_deg = float(s)
         f.moon_alt_deg = float(a)
     # Illumination from the Sun–Moon elongation at mid-night.
@@ -498,7 +499,7 @@ def _fill_timing_altaz(
     aa = sky.transform_to(AltAz(obstime=times, location=loc))
     alt = np.atleast_1d(aa.alt.deg)
     az = np.atleast_1d(aa.az.deg)
-    for t, al, a in zip(timings, alt, az):
+    for t, al, a in zip(timings, alt, az, strict=False):
         t.altitude_deg = float(al)
         t.azimuth_deg = float(a)
 
@@ -854,7 +855,7 @@ def _extinction_envelope_fit(pairs: list[tuple[float, float]]) -> dict | None:
         return None
     edges = np.arange(X.min(), X.max() + _EXT_BIN_W, _EXT_BIN_W)
     cx, cmed, cenv = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         zz = Z[(lo <= X) & (hi > X)]
         if len(zz) >= 5:
             cx.append(float((lo + hi) / 2))
@@ -1321,7 +1322,7 @@ def _render_extinction_curve(d: dict, meta: dict, output_dir: str | Path, plt: M
     multi = len(series) > 1
     cmap = plt.cm.viridis(np.linspace(0, 0.85, max(len(series), 1)))
     title_bits = []
-    for color, s in zip(cmap, series):
+    for color, s in zip(cmap, series, strict=False):
         pre = f"{s['filter']} " if multi else ""
         X = np.array(s["airmass"])
         line_x = np.linspace(X.min(), X.max(), 50)
@@ -1435,7 +1436,7 @@ def _data_zp_drift(calib: NightCalibration) -> dict | None:
         secs = np.array([(x - t0).total_seconds() for x in xs])
         edges = np.arange(0.0, secs.max() + BIN_SECONDS, BIN_SECONDS)
         cx, cy, e_lo, e_hi = [], [], [], []
-        for lo, hi in zip(edges[:-1], edges[1:]):
+        for lo, hi in itertools.pairwise(edges):
             in_bin = ys[(secs >= lo) & (secs < hi)]
             if len(in_bin) < 3:
                 continue
@@ -1583,7 +1584,7 @@ def _slew_pairs(timings: list[FrameTiming]) -> tuple[list, list[float], list[flo
         key=lambda f: f.timestamp,
     )
     dist, over = [], []
-    for a, b in zip(fr, fr[1:]):
+    for a, b in itertools.pairwise(fr):
         dt = (b.timestamp - a.timestamp).total_seconds()
         ov = dt - a.exposure_time  # DATE-OBS = exposure start
         if ov <= 0 or dt >= _SLEW_MAX_GAP_S:  # clock glitch / long pause
@@ -1651,7 +1652,7 @@ def _fit_slew_model(timings: list[FrameTiming]) -> dict | None:
     # overhead = bias + separation / slew_rate  (bias = readout + settle).
     edges = np.array(_SLEW_DIST_BINS)
     ex, ey, en = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         m = (dist >= lo) & (dist < hi)
         if int(m.sum()) >= _SLEW_ENV_MIN_PTS:
             ex.append(float(np.median(dist[m])))
@@ -1736,7 +1737,7 @@ def _data_search_rate(calib: NightCalibration) -> dict | None:
         if f.limiting_magnitude_50 is not None:
             lim50s.append(f.limiting_magnitude_50)
         lim = f.limiting_magnitude_50 if f.limiting_magnitude_50 is not None else np.nan
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if not iso:
                 continue
             m_l.append(m)
@@ -1779,7 +1780,7 @@ def _data_search_rate(calib: NightCalibration) -> dict | None:
     bin_width = 0.5
     bin_edges = np.arange(math.floor(mags.min() / bin_width) * bin_width, mags.max() + bin_width, bin_width)
     centers, medians, err_lo, err_hi = [], [], [], []
-    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+    for lo, hi in itertools.pairwise(bin_edges):
         in_bin = rates[(mags >= lo) & (mags < hi)]
         if len(in_bin) < 5:
             continue
@@ -2061,7 +2062,7 @@ def _radial_profile(
     rr = np.hypot(xx - half, yy - half)
     edges = np.arange(0.0, half + rstep, rstep)
     r, prof = [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         m = (rr >= lo) & (rr < hi)
         if m.any():
             r.append((lo + hi) / 2)
@@ -2300,7 +2301,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
     fig = plt.figure(figsize=(max(13.0, 4.4 * nb), 10.5))
     gs = fig.add_gridspec(2, 2 * nb, height_ratios=[1.05, 1.0])
 
-    for i, (b, c) in enumerate(zip(bands, colors)):
+    for i, (b, c) in enumerate(zip(bands, colors, strict=False)):
         ax = fig.add_subplot(gs[0, 2 * i : 2 * i + 2])
         stamp = np.asarray(b["stamp2d"])
         ext = [-half, half, -half, half]
@@ -2330,7 +2331,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
 
     axr = fig.add_subplot(gs[1, :nb])
     axc = fig.add_subplot(gs[1, nb:])
-    for b, c in zip(bands, colors):
+    for b, c in zip(bands, colors, strict=False):
         spike = max(b.get("spike_ra") or 0, b.get("spike_dec") or 0)
         # Flag when half-max FWHM is unreliable (narrow core on a broad halo).
         flag = (
@@ -2616,7 +2617,7 @@ def _data_snr_vs_exposure(calib: NightCalibration) -> dict | None:
         corr = 10 ** (0.4 * k * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         by_task.setdefault(_frame_task(f), []).extend(
             (f.exposure_time, m, s * corr)
-            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False)
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     order = [t for t in ("coverage", "photometric", "calsats", "other") if by_task.get(t)]
@@ -2671,7 +2672,7 @@ def _render_snr_vs_exposure(d: dict, meta: dict, output_dir: str | Path, plt: Mo
 
     fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5), sharey=True, squeeze=False)
     axes = axes[0]
-    for ax, tk in zip(axes, order):
+    for ax, tk in zip(axes, order, strict=False):
         for ser in d["faceted"].get(tk, []):
             ax.errorbar(
                 ser["x"],
@@ -2761,7 +2762,7 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration) -> dict | None:
         corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         mag_pts.extend(
             (f.exposure_time, m, s * corr)
-            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f))
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False)
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     if not mag_pts:
@@ -2923,7 +2924,7 @@ def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict | None:
     def _norm_stars(f: FramePhoto) -> float | None:
         kk = ext_k.get(f.filter_name or "unknown", k_default)
         corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f):
                 yield round(f.exposure_time), m, s * corr
 
@@ -2969,7 +2970,7 @@ def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict | None:
         fit_color: str,
     ) -> dict | None:
         cx, cy, e_lo, e_hi = [], [], [], []
-        for lo, hi in zip(edges[:-1], edges[1:]):
+        for lo, hi in itertools.pairwise(edges):
             v = dmag_arr[mask & (sep_arr >= lo) & (sep_arr < hi)]
             if len(v) >= 20:
                 md = float(np.median(v))
@@ -3073,7 +3074,7 @@ def _usable_cal_frames(calib: NightCalibration, zp_mode: str, zp_sig: float) -> 
 def _best_sampled_mag(usable: list[FramePhoto], min_meas_snr: float) -> float | None:
     mag_tot: dict[int, int] = {}
     for f in usable:
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s and s >= min_meas_snr:
                 mag_tot[int(m)] = mag_tot.get(int(m), 0) + 1
     return max(mag_tot, key=mag_tot.get) if mag_tot else None
@@ -3107,7 +3108,7 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration) -> dict | None:
             else 1.0
         )
         ex = round(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s > _PLOT_SNR_FLOOR and _snr_consistent(s, m, f) and best_mag <= m < best_mag + 1:
                 prog[tk].setdefault(ex, []).append(s * corr)
     if not any(len(dd) >= 2 for dd in prog.values()):
@@ -3194,7 +3195,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict | None:
             else 1.0
         )
         rt = math.sqrt(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s and s >= min_meas_snr and target - 2 <= m < target + 2:
                 sm.append(m)
                 sl.append(math.log10(s * corr / rt))
@@ -3207,7 +3208,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict | None:
             else 1.0
         )
         rt = math.sqrt(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
             if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f) and target - 1 <= m < target + 1:
                 pts.append((f.moon_sep_deg, (s * corr / rt) * 10 ** (slope * (target - m))))
     if len(pts) < 100:
@@ -3216,7 +3217,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict | None:
     snrt = np.array([p[1] for p in pts])
     edges = np.arange(0, math.ceil(msep.max() / 10) * 10 + 10, 10)
     cx, cy, cerr = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         v = snrt[(msep >= lo) & (msep < hi)]
         if len(v) >= 20:
             cx.append((lo + hi) / 2)
@@ -3340,7 +3341,7 @@ def _data_sky_background(calib: NightCalibration) -> dict | None:
     yvals = mu if has_mu else adu
     edges = np.arange(0, math.ceil(sep.max() / 10) * 10 + 10, 10)
     cx, cy, e_lo, e_hi = [], [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         v = yvals[(sep >= lo) & (sep < hi)]
         v = v[np.isfinite(v)]
         if len(v) >= 5:
@@ -3457,7 +3458,7 @@ def _data_sky_background_altaz(calib: NightCalibration) -> dict | None:
     # Median trend in elevation bins (the zenith-darkening curve).
     edges = np.arange(0, 91, 10)
     ex, ey, e_lo, e_hi = [], [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    for lo, hi in itertools.pairwise(edges):
         v = y[(alt >= lo) & (alt < hi)]
         if len(v) >= 5:
             md = float(np.median(v))

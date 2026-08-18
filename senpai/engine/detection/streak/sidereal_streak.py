@@ -434,7 +434,7 @@ def _refine_streak_from_image(
             starts = np.concatenate(([0], gaps + 1))
             ends = np.concatenate((gaps, [len(above_half) - 1]))
             refined_length = candidate.length_pixels
-            for s, e in zip(starts, ends):
+            for s, e in zip(starts, ends, strict=False):
                 if above_half[s] <= peak_t <= above_half[e]:
                     refined_length = float(above_half[e] - above_half[s])
                     break

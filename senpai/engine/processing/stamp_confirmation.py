@@ -1230,8 +1230,10 @@ def _deduplicate_confirmed(
         is_dup = False
         for existing in kept:
             # Check if they share a frame with nearby positions
-            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y):
-                for efi, epx, epy in zip(existing.frame_indices, existing.positions_x, existing.positions_y):
+            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=False):
+                for efi, epx, epy in zip(
+                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=False
+                ):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2
                         if dist_sq < match_radius_sq:

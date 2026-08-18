@@ -1155,7 +1155,7 @@ def measure_detection_photometry(
 
     # Process each detection individually (different FWHM -> different aperture sizes)
     n_measured = 0
-    for idx, pos, fwhm in zip(valid_indices, positions, fwhms):
+    for idx, pos, fwhm in zip(valid_indices, positions, fwhms, strict=False):
         det = detections.detections[idx]
         try:
             aperture_radius = config.aperture_radius_factor * fwhm
@@ -1733,7 +1733,7 @@ def compute_completeness_curve(
 
     mags_list: list[float] = []
     snrs_list: list[float] = []
-    for r, keep in zip(results, isolated):
+    for r, keep in zip(results, isolated, strict=False):
         if not keep:
             continue
         mag = mag_cache.get(id(r.star))
@@ -1868,7 +1868,7 @@ def _calculate_simple_photometry_summary(
     stars_isolated: list[bool] = []
     stars_catalog_id: list[str | None] = []
     iso_mask = _isolated_result_mask(results, starfield)
-    for r, iso in zip(results, iso_mask):
+    for r, iso in zip(results, iso_mask, strict=False):
         mag = getattr(r.star, "magnitude", None)
         if mag is None or r.snr is None or r.snr <= 0:
             continue
