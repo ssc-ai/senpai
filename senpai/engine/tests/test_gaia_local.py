@@ -14,7 +14,8 @@ from senpai.catalog.gaia_mirror import HPX_SHIFT, MIRROR_DTYPE, ingest
 
 
 @pytest.fixture
-def mirror(tmp_path: Path):
+def mirror(tmp_path: Path) -> Path:
+    """Build a small local Gaia mirror on disk for the query tests."""
     rng = np.random.default_rng(0)
     n = 20000
     ra = rng.uniform(250.0, 260.0, n)
@@ -36,7 +37,8 @@ def mirror(tmp_path: Path):
     return str(mdir), arr
 
 
-def test_query_matches_brute_force(mirror) -> None:
+def test_query_matches_brute_force(mirror: Path) -> None:
+    """The indexed query returns exactly what a brute-force scan would."""
     mdir, arr = mirror
     qb = (252.0, 254.5, 42.0, 44.0)
     fl = 18.0
@@ -45,7 +47,8 @@ def test_query_matches_brute_force(mirror) -> None:
     assert len(stars) == int(m.sum()) > 0
 
 
-def test_dropin_dict_shape(mirror) -> None:
+def test_dropin_dict_shape(mirror: Path) -> None:
+    """Records match the shape the online Gaia query returns, so callers cannot tell them apart."""
     mdir, _ = mirror
     s = gaia_local.query_by_ra_dec_bounds(252.0, 254.0, 42.0, 44.0, faint_lim=18.0, bright_lim=-32, mirror_dir=mdir)[0]
     # same keys the online gaia.query_by_ra_dec_bounds returns
@@ -56,7 +59,8 @@ def test_dropin_dict_shape(mirror) -> None:
     assert {"Gaia_G", "Gaia_BP", "Gaia_RP", "Johnson_V", "Sloan_r"} <= set(s["magnitudes"])
 
 
-def test_mag_limit_applied(mirror) -> None:
+def test_mag_limit_applied(mirror: Path) -> None:
+    """The magnitude limit filters the returned stars."""
     mdir, _ = mirror
     bright = gaia_local.query_by_ra_dec_bounds(
         250.0, 260.0, 40.0, 50.0, faint_lim=12.0, bright_lim=-32, mirror_dir=mdir
@@ -66,7 +70,8 @@ def test_mag_limit_applied(mirror) -> None:
     assert all(st["mv"] <= 12.0 for st in bright)
 
 
-def test_empty_box_returns_empty(mirror) -> None:
+def test_empty_box_returns_empty(mirror: Path) -> None:
+    """A box containing no stars yields an empty result rather than raising."""
     mdir, _ = mirror
     assert (
         gaia_local.query_by_ra_dec_bounds(100.0, 101.0, -10.0, -9.0, faint_lim=20.0, bright_lim=-32, mirror_dir=mdir)

@@ -26,17 +26,23 @@ from senpai.engine.utils.fits_io import _to_arcsec_per_second
         ("radians/second", 1e-5, pytest.approx(2.063, abs=1e-3)),
     ],
 )
-def test_known_units(unit, value, expected) -> None:
+def test_known_units(unit: str, value: float, expected: float) -> None:
+    """Each documented track-rate unit converts correctly."""
     assert _to_arcsec_per_second(value, unit) == pytest.approx(expected, rel=1e-6)
 
 
 def test_case_insensitive() -> None:
+    """Unit names are matched case-insensitively, since sensors are inconsistent."""
     assert _to_arcsec_per_second(1.0, "Degrees/Second") == pytest.approx(3600.0)
     assert _to_arcsec_per_second(1.0, "  arcsec/s  ") == pytest.approx(1.0)
 
 
 def test_unknown_unit_passes_through_with_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """An unknown unit passes the value through and warns.
 
+    Guessing a conversion would silently scale the rate; passing it through leaves the number as
+    the header stated it, with a record that it was not understood.
+    """
     with caplog.at_level(logging.WARNING):
         v = _to_arcsec_per_second(42.0, "furlongs/fortnight")
     assert v == 42.0
@@ -47,4 +53,5 @@ def test_negative_rates_preserve_sign() -> None:
     # f3 of a burr calsat collection has RA_RATE=-0.0042 deg/s; we want the
     # converted value to keep its sign so downstream code can distinguish
     # tracking direction.
+    """Conversion preserves the sign, so a westward rate stays westward."""
     assert _to_arcsec_per_second(-0.0042, "degrees/second") == pytest.approx(-15.12)

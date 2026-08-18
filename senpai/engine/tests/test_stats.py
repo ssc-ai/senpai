@@ -13,7 +13,10 @@ from astropy.stats import sigma_clipped_stats
 from senpai.engine.utils.stats import robust_background_stats
 
 
-def _field(shape=(2400, 2400), background=120.0, noise=8.0, seed: int = 11):
+def _field(
+    shape: tuple[int, int] = (2400, 2400), background: float = 120.0, noise: float = 8.0, seed: int = 11
+) -> np.ndarray:
+    """Build a flat noisy field of a given size, for the subsampling comparison."""
     rng = np.random.default_rng(seed)
     image = np.full(shape, background) + rng.normal(0.0, noise, shape)
     # Bright contaminants the sigma clip must reject (stars / hot pixels).
@@ -24,6 +27,11 @@ def _field(shape=(2400, 2400), background=120.0, noise=8.0, seed: int = 11):
 
 
 def test_strided_stats_match_full_computation() -> None:
+    """Strided statistics agree with the full-frame computation.
+
+    The stride exists to make per-frame background estimation affordable; agreeing with the exact
+    answer is what makes it safe.
+    """
     image = _field()
     full_mean, full_median, full_std = sigma_clipped_stats(image, sigma=3.0, maxiters=5)
     mean, median, std = robust_background_stats(image)
@@ -37,6 +45,7 @@ def test_strided_stats_match_full_computation() -> None:
 def test_small_images_are_not_subsampled() -> None:
     # At or below target_npix the input must be used in full — identical
     # results to sigma_clipped_stats, so unit-scale callers see no change.
+    """A small frame is measured exactly rather than subsampled."""
     image = _field(shape=(256, 256))
     expected = sigma_clipped_stats(image, sigma=3.0, maxiters=5)
     result = robust_background_stats(image)
@@ -46,6 +55,7 @@ def test_small_images_are_not_subsampled() -> None:
 def test_gradient_background_is_sampled_fairly() -> None:
     # A vignetting-like gradient: the stride covers the whole frame, so the
     # estimate must track the global median, not a corner's.
+    """A gradient is sampled evenly, so the stride does not bias the estimate toward one side."""
     rng = np.random.default_rng(3)
     yy, _xx = np.mgrid[0:2200, 0:2200]
     image = 100.0 + 30.0 * (yy / 2200.0) + rng.normal(0.0, 5.0, (2200, 2200))

@@ -29,13 +29,15 @@ from senpai.engine.plotting.replot import (
 
 @pytest.fixture(autouse=True)
 def _config() -> None:
-    """Replot reads completeness/SNR defaults from the global config, which the
-    CLI always initializes; mirror that here.
+    """Initialise the config replot reads its completeness and SNR defaults from.
+
+    The CLI always initialises it, so the tests mirror that.
     """
     initialize_config(CONFIG_DIR / "dao.yaml")
 
 
-def _photometry_summary():
+def _photometry_summary() -> dict:
+    """Build a photometry summary carrying the arrays replot reads."""
     mags = list(np.linspace(10, 20, 24))
     # completeness rolls over from 1.0 -> ~0.3 across the range
     pct = list(np.clip(105 - (np.array(mags) - 10) * 9, 30, 100))
@@ -50,7 +52,8 @@ def _photometry_summary():
     }
 
 
-def _write_batch(tmp_path: Path, with_fits=False):
+def _write_batch(tmp_path: Path, with_fits: bool = False) -> Path:
+    """Write a batch directory, optionally with the processed FITS beside its JSON."""
     batch = tmp_path / "DAO-01_20260529_xxx_coverage_3_abc12345"
     batch.mkdir()
 
@@ -78,6 +81,7 @@ def _write_batch(tmp_path: Path, with_fits=False):
 
 
 def test_find_result_json_excludes_summary(tmp_path: Path) -> None:
+    """Locating a run's result JSON skips the summary file beside it."""
     batch = _write_batch(tmp_path)
     found = _find_result_json(batch)
     assert found is not None
@@ -85,6 +89,7 @@ def test_find_result_json_excludes_summary(tmp_path: Path) -> None:
 
 
 def test_find_batch_dirs_discovers_nested(tmp_path: Path) -> None:
+    """Batch discovery recurses into nested directories."""
     batch = _write_batch(tmp_path)
     # discovery from a parent several levels up
     dirs = find_batch_dirs(tmp_path)
@@ -94,6 +99,7 @@ def test_find_batch_dirs_discovers_nested(tmp_path: Path) -> None:
 
 
 def test_replot_photometry_curves_from_json(tmp_path: Path) -> None:
+    """The photometry curves regenerate from the stored JSON, without the original frames."""
     batch = _write_batch(tmp_path)
     counts = replot_batch_dir(batch, kinds=("photometry",), force=False, gifs=False)
     assert counts["photometry"] == 2
@@ -102,6 +108,7 @@ def test_replot_photometry_curves_from_json(tmp_path: Path) -> None:
 
 
 def test_replot_photometry_skips_existing_without_force(tmp_path: Path) -> None:
+    """An existing plot is left alone unless regeneration is forced."""
     batch = _write_batch(tmp_path)
     replot_batch_dir(batch, kinds=("photometry",), gifs=False)
     # second pass should write nothing (files already present)
@@ -153,6 +160,7 @@ def test_replot_review_with_dict_candidates(tmp_path: Path) -> None:
 
 
 def test_replot_missing_result_json_raises(tmp_path: Path) -> None:
+    """A batch with no result JSON raises rather than silently producing nothing."""
     empty = tmp_path / "not_a_batch"
     empty.mkdir()
     with pytest.raises(FileNotFoundError):
