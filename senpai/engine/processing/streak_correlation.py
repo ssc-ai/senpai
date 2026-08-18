@@ -23,6 +23,7 @@ from senpai.engine.detection.streak.sidereal_streak import (
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
 
 if TYPE_CHECKING:
+    from senpai.engine.models.senpai import SiderealFrame
     from senpai.engine.photometry.color_terms import MultiBandCalibration
 
 logger = logging.getLogger(__name__)
@@ -473,7 +474,7 @@ def correlate_streaks_across_frames(senpai_run: SenpaiRun) -> list[CorrelatedStr
     return correlated
 
 
-def _single_frame_streaks(frames_with_streaks) -> list[CorrelatedStreak]:
+def _single_frame_streaks(frames_with_streaks: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Wrap single-frame streaks as unconfirmed CorrelatedStreak entries."""
     result = []
     for frame in frames_with_streaks:

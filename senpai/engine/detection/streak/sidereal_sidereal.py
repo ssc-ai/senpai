@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 def solve_sidereal_from_sidereal(
     frame_source: SiderealFrame, frame_target: SiderealFrame, frame_shift: FrameShift
 ) -> None:
+    """Register one sidereal frame against another, recording the shift.
+
+    The cheapest hop in the chain: both frames have point-like stars, so the correlation is
+    well-conditioned and none of the streak handling is needed. Mutates ``frame_shift``.
+    """
     sidereal_source_data, source_is_synthetic = prepare_sidereal_frame(frame_source)
     sidereal_target_data, target_is_synthetic = prepare_sidereal_frame(frame_target)
 

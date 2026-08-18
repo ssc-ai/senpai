@@ -18,11 +18,16 @@ during per-frame detection.
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
 from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
+
+if TYPE_CHECKING:
+    from senpai.engine.detection.streak.sidereal_streak import StreakCandidate
+    from senpai.engine.models.senpai import SiderealFrame
 
 logger = logging.getLogger(__name__)
 
@@ -198,10 +203,10 @@ def confirm_streaks_via_rate_scan(
 
 
 def _rate_scan_candidate(
-    candidate,
+    candidate: "StreakCandidate",
     ref_de: np.ndarray,
     ref_noise: float,
-    ref_frame,
+    ref_frame: "SiderealFrame",
     other_frames: list[dict],
     trial_rates: np.ndarray,
     fwhm: float,
@@ -717,7 +722,7 @@ def _sample_de(de_map: np.ndarray, x: float, y: float) -> float:
     return float(val)
 
 
-def _confirm_single_frame(frames_with_candidates) -> list[CorrelatedStreak]:
+def _confirm_single_frame(frames_with_candidates: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Confirm high-SNR candidates from single-frame scenarios.
 
     When only 1 frame is available, multi-frame confirmation is impossible.
@@ -761,7 +766,7 @@ def _confirm_single_frame(frames_with_candidates) -> list[CorrelatedStreak]:
     return result
 
 
-def _wrap_unconfirmed(frames_with_candidates) -> list[CorrelatedStreak]:
+def _wrap_unconfirmed(frames_with_candidates: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Wrap single-frame candidates as unconfirmed."""
     result = []
     for frame in frames_with_candidates:

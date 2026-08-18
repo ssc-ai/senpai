@@ -41,7 +41,12 @@ logger = logging.getLogger(__name__)
 def solve_rate_from_sidereal(
     sidereal_frame: SiderealFrame, rate_frame: RateTrackFrame, frame_shift: FrameShift
 ) -> None:
+    """Register a rate frame against a solved sidereal frame, recording the shift.
 
+    The sidereal frame has a plate solve and the rate frame does not, because its stars are
+    streaked and a star matcher will not solve it. Correlating the two gives the pixel shift
+    that carries the WCS across. Mutates ``frame_shift`` in place.
+    """
     # A fully-cloudy anchor gets no WCS, so its starfield (and detection
     # metadata / fwhm) is None — reading it crashed the whole calsat batch.
     # Mark the shift processed-but-invalid and skip, like solve_rate_from_rate,

@@ -1,10 +1,15 @@
 """FWHM measurement from catalog stars."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.engine.models.metadata import FWHMMetadata
+
+if TYPE_CHECKING:
+    from senpai.core.config import AppConfig
+    from senpai.engine.models.images import ProcessedFitsImage
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +88,10 @@ def _catalog_sat_level(peaks: list[float]) -> float:
 
 
 def measure_fwhm_from_catalog_stars(
-    fits_image,
+    fits_image: "ProcessedFitsImage",
     catalog_stars: list,
     initial_fwhm: float,
-    config=None,
+    config: "AppConfig | None" = None,
     sat_level: float | None = None,
 ) -> FWHMMetadata:
     """Measure FWHM from well-isolated catalog stars.

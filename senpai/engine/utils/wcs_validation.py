@@ -9,11 +9,18 @@ WCS predicts for the brightest catalog stars?
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.core.config import settings
 from senpai.engine.models.astrometry import WCSQualityMetrics
+
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+
+    #: Validation reads only the starfield and pixels, which both flavours carry.
+    FrameLike = SiderealFrame | RateTrackFrame
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +105,7 @@ def flux_significance_test(
     }
 
 
-def _validation_box_radius(frame) -> int:
+def _validation_box_radius(frame: "FrameLike") -> int:
     """Box radius matched to how a star appears in this frame.
 
     For rate-track frames the box is matched to the streak *width*, not its
@@ -119,7 +126,7 @@ def _validation_box_radius(frame) -> int:
     return int(np.clip(3 * fwhm, 6, 15))
 
 
-def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetrics | None:
+def validate_frame_wcs(frame: "FrameLike", refit_stats: dict | None = None) -> WCSQualityMetrics | None:
     """Run absolute WCS validation on a frame and return the quality metrics.
 
     ``refit_stats`` (from :func:`fit_and_validate_wcs`) is folded into the

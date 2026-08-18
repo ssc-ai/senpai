@@ -8,6 +8,7 @@ while delegating all actual astrometry work to astroeasy.
 import contextlib
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import astroeasy
 from astroeasy import AstrometryIndexSeries, cascade
@@ -16,6 +17,9 @@ from astropy.io import fits as astropy_fits
 from senpai.core.config import get_or_initialize_config
 from senpai.engine.models.astrometry import ReturnAstrometryConfig, WCSModel, WCSStatus
 from senpai.engine.models.starfield import StarField, StarInSpace, StarListImage
+
+if TYPE_CHECKING:
+    from senpai.core.config import AstrometryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +169,7 @@ def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarFiel
     return _solve_result_to_starfield(result, sources)
 
 
-def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -> StarField:
+def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config: "AstrometryConfig") -> StarField:
     """Run the astroeasy escalation cascade (solver_mode 'tetra3'/'chain').
 
     'tetra3' = native tiers only (T0 refine + T1 pattern match, no

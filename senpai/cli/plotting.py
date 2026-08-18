@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-
+    """Run the replot CLI."""
     parser = argparse.ArgumentParser(
         description="Regenerate per-frame diagnostic plots from processed batch "
         "dirs (FITS + senpai_*.json); no reprocessing.",

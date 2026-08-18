@@ -4,6 +4,7 @@ import json
 import logging
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -31,11 +32,14 @@ from senpai.engine.utils.fits_io import extract_boresight_from_header
 from senpai.engine.utils.frame_organization import extract_uct_time_from_header
 from senpai.engine.utils.serialization import fits_header_to_jsonable
 
+if TYPE_CHECKING:
+    from senpai.engine.models.images import ProcessedFitsImage
+
 logger = logging.getLogger(__name__)
 
 
 def process_rate_fits_rate(
-    fits_image,
+    fits_image: "ProcessedFitsImage",
     *,
     run_id: str = "rate",
     attempt_wcs: bool = True,

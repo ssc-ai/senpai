@@ -1,6 +1,7 @@
 """Rate-track streak extraction and source detection utilities."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.signal import convolve
@@ -16,11 +17,14 @@ from senpai.engine.models.starfield import StarInImage
 from senpai.engine.models.streak_measurement import StreakMeasurement
 from senpai.engine.utils.stats import fft_workers, robust_background_stats
 
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame
+
 logger = logging.getLogger(__name__)
 
 
 def extract_rate_streak_measurement(
-    rate_frame,
+    rate_frame: "RateTrackFrame",
     *,
     n_streaks: int = 10,
     initial_fwhm: float | None = None,
@@ -52,6 +56,11 @@ def extract_rate_streak_measurement(
 
 
 def build_streak_metadata(measurement: StreakMeasurement) -> StreakMetadata:
+    """Convert a streak measurement into the metadata model the frame carries.
+
+    Orientation is stored as its sine and cosine rather than the angle, so downstream code
+    never has to decide what 179 degrees versus -1 degree means.
+    """
     theta = float(measurement.rotation)
     return StreakMetadata(
         pixel_length=float(measurement.length),

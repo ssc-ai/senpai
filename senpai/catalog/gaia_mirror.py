@@ -241,6 +241,7 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Gaia-mirror CLI: download chunks, or ingest downloaded ones."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser(description="Build/ingest a local Gaia DR3 mirror.")
     sub = p.add_subparsers(dest="cmd", required=True)

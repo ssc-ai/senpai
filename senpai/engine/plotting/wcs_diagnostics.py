@@ -1,6 +1,7 @@
 """Diagnostic plots for variable-kernel WCS refinement."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -8,12 +9,15 @@ from senpai.core.config import settings
 from senpai.engine.detection.jacobian import get_local_streak_kernel
 from senpai.engine.models.senpai import RateTrackFrame
 
+if TYPE_CHECKING:
+    from astropy.wcs import WCS
+
 logger = logging.getLogger(__name__)
 
 
 def plot_variable_kernel_grid(
     frame: RateTrackFrame,
-    wcs,
+    wcs: "WCS",
     nx: int = 4,
     ny: int = 4,
 ) -> None:

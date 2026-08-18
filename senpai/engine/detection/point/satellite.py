@@ -74,7 +74,7 @@ def _local_maxima_above(
 def _dao_sources_at_threshold(
     data_sub: np.ndarray,
     convolved: np.ndarray,
-    kernel,
+    kernel: _StarFinderKernel,
     candidate_xy: np.ndarray,
     candidate_vals: np.ndarray,
     threshold: float,

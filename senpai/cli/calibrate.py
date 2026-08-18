@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-
+    """Run the night-calibration CLI."""
     parser = argparse.ArgumentParser(
         description="Build a per-night calibration (JSON + plots) from processed batches.",
     )

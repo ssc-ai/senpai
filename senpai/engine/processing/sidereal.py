@@ -17,6 +17,7 @@ from senpai.core.config import get_config
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
 from senpai.engine.detection.point.sidereal import extract_point_sources
 from senpai.engine.models.astrometry import WCSModel
+from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import (
     DetectionMetadata,
     FrameMetadata,
@@ -44,7 +45,7 @@ def process_astrometry_json_sidereal(sources: StarListImage, wcs: WCSModel | Non
 
 
 def process_astrometry_fits_sidereal(
-    fits_image,
+    fits_image: ProcessedFitsImage,
     pipeline_mode: Literal["full", "detect_solve", "detect"] | None = None,
 ) -> StarField:
     """Process a sidereal frame: detect sources, solve astrometry, query catalog, measure FWHM.

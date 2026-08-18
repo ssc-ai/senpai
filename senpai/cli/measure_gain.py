@@ -66,7 +66,8 @@ def _read_center(path: str, crop: int) -> np.ndarray | None:
         return None
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the detector-gain CLI."""
     ap = argparse.ArgumentParser(description="Measure detector gain (e-/ADU) from raw frame pairs.")
     ap.add_argument("inputs", nargs="+", help="directories and/or FITS globs of raw frames")
     ap.add_argument("--out", default="gain_ptc.png", help="output plot path")
