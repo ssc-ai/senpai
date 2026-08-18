@@ -122,8 +122,9 @@ class FrameRecord:
 
 @dataclass(slots=True)
 class FrameBatch:
-    """A group of frames that belong to one collection event. Hand the
-    ``paths`` to senpai's collect pipeline as a single SenpaiRun.
+    """A group of frames that belong to one collection event.
+
+    Hand the ``paths`` to senpai's collect pipeline as a single SenpaiRun.
     """
 
     batch_id: str
@@ -141,11 +142,12 @@ class FrameBatch:
 
     @property
     def seq_id(self) -> str | None:
-        """The logical-set id (the ``seq_key`` FITS header value, e.g. TASKID /
-        BURRSEQ) these frames were grouped on, when seq-key batching was used —
-        the raw value the frames were combined on. None for command/orphan
-        batches. The ``batch_id`` only carries this value's first 8 chars, so
-        this property is the only place the full grouping key survives.
+        """The logical-set id (the ``seq_key`` FITS header value, e.g.
+
+        TASKID / BURRSEQ) these frames were grouped on, when seq-key batching was used — the raw
+        value the frames were combined on. None for command/orphan batches. The ``batch_id``
+        only carries this value's first 8 chars, so this property is the only place the full
+        grouping key survives.
         """
         for f in self.frames:
             if f.seq_id:
@@ -458,10 +460,11 @@ class BurrNight(BaseModel):
         yield from self._emit_command_and_orphan_batches(records)
 
     def _emit_seq_batches(self, records: list[FrameRecord]) -> Iterator[FrameBatch]:
-        """One batch per distinct ``seq_id`` (e.g. BURRSEQ), ordered by the
-        set's earliest frame. Each set is exactly the controller's logical
-        collection unit — for coverage/photometric that is a single exposure's
-        sidereal anchor plus its rate sub-frames; for calsats the full sequence.
+        """One batch per distinct ``seq_id`` (e.g.
+
+        BURRSEQ), ordered by the set's earliest frame. Each set is exactly the controller's
+        logical collection unit — for coverage/photometric that is a single exposure's sidereal
+        anchor plus its rate sub-frames; for calsats the full sequence.
         """
         by_seq: dict[str, list[FrameRecord]] = {}
         for r in records:
@@ -625,11 +628,11 @@ def _infer_intended_modes(frames: list[FrameRecord]) -> None:
 
 
 def _pointing_key(record: FrameRecord) -> str | None:
-    """Pointing identity of a frame, for command-less ``(task, target)``
-    batching. A target that is a tracking-mode token (AltAzTarget/RateTarget/
-    ICRSTarget) names the *mode* of a sub-exposure, not the pointing, so it
-    carries no pointing identity (None). A target like a NORAD id, coverage
-    pixel id, or standard-field id *is* the pointing.
+    """Pointing identity of a frame, for command-less ``(task, target)`` batching.
+
+    A target that is a tracking-mode token (AltAzTarget/RateTarget/ ICRSTarget) names the *mode*
+    of a sub-exposure, not the pointing, so it carries no pointing identity (None). A target
+    like a NORAD id, coverage pixel id, or standard-field id *is* the pointing.
     """
     target = record.parsed.target
     if target is None or _tracking_mode_from_target(target) is not None:

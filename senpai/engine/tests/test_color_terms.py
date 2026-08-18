@@ -1,11 +1,9 @@
-"""Tests for multi-band calibration with color terms
-(senpai.engine.photometry.color_terms).
+"""Tests for multi-band calibration with color terms (senpai.engine.photometry.color_terms).
 
-The relation fit is  m_catalog - m_inst = ZP + C * color_index. We build
-synthetic stars that obey that relation exactly for a chosen (ZP, C), then
-assert the fitter recovers both. We also exercise the sigma clipping (a few
-gross outliers must be rejected), the min-star guards, and the higher-level
-calculate_multiband_calibration() path (color-term vs simple-ZP fallback).
+The relation fit is m_catalog - m_inst = ZP + C * color_index. We build synthetic stars that
+obey that relation exactly for a chosen (ZP, C), then assert the fitter recovers both. We also
+exercise the sigma clipping (a few gross outliers must be rejected), the min-star guards, and
+the higher-level calculate_multiband_calibration() path (color-term vs simple-ZP fallback).
 """
 
 from __future__ import annotations

@@ -132,8 +132,9 @@ def discover_datasets(
     base_dir: Path, header_id_key: str, max_datasets: int | None = None, n_proc: int = 1
 ) -> list[dict[str, Any]]:
     """Discover all datasets across date directories or in a flat directory structure.
-    Returns a list of dataset information dictionaries.
-    Uses parallel processing to speed up header extraction.
+
+    Returns a list of dataset information dictionaries. Uses parallel processing to speed up
+    header extraction.
     """
     datasets = []
 

@@ -69,8 +69,9 @@ def _batch_output_dir(night_root: Path, batch: FrameBatch) -> Path:
 
 
 def _batch_already_done(batch_dir: Path, batch_id: str) -> bool:
-    """We consider a batch complete if both the full result and the summary
-    JSON exist. Anything less means we re-run — partial state is unsafe.
+    """We consider a batch complete if both the full result and the summary JSON exist.
+
+    Anything less means we re-run — partial state is unsafe.
     """
     return (batch_dir / f"senpai_{batch_id}.json").is_file() and (
         batch_dir / f"senpai_{batch_id}_summary.json"
@@ -285,9 +286,10 @@ def _iter_filtered_batches(
 
 
 def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
-    """One or more BurrNights to process. ``--auto-nights`` splits a flat,
-    multi-night data dir (burr's "didn't split per night" bug) into one night
-    per observing session; otherwise it's the single run_state-delimited night.
+    """One or more BurrNights to process.
+
+    ``--auto-nights`` splits a flat, multi-night data dir (burr's "didn't split per night" bug)
+    into one night per observing session; otherwise it's the single run_state-delimited night.
     """
     if not args.auto_nights:
         return [BurrNight.from_night_dir(args.night_dir, burr_root=args.burr_root, data_dir=args.data_dir)]
@@ -310,10 +312,11 @@ def _worker_init(
     save_processed_fits: bool = True,
     detect_streaks: bool = True,
 ) -> None:
-    """Per-worker setup for parallel batch processing. Spawned workers start with
-    no initialized config singleton, so each must load it; BLAS is already pinned
-    to 1 thread via the env set before the pool was created (inherited at import).
-    CLI overrides applied to the parent config must be re-applied here — workers
+    """Per-worker setup for parallel batch processing.
+
+    Spawned workers start with no initialized config singleton, so each must load it; BLAS is
+    already pinned to 1 thread via the env set before the pool was created (inherited at
+    import). CLI overrides applied to the parent config must be re-applied here — workers
     re-read the YAML and would otherwise silently drop them.
     """
     config = initialize_config(Path(config_path))
@@ -335,8 +338,9 @@ def _failed_entry(batch: FrameBatch, exc: Exception) -> dict:
 
 
 def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path) -> int:
-    """Run every selected batch of one night; write its manifest. Returns 0 on
-    full success, 2 if any batch failed. With --jobs N>1, independent batches run
+    """Run every selected batch of one night; write its manifest.
+
+    Returns 0 on full success, 2 if any batch failed. With --jobs N>1, independent batches run
     in parallel across N worker processes.
     """
     batches = list(_iter_filtered_batches(night, args.task, args.limit, args.max_frames, seq_key=args.seq_key))
@@ -664,9 +668,10 @@ def _export_worker_init(config_path: str) -> None:
 
 
 def _export_one_batch(task: tuple) -> tuple:
-    """Export one batch's SenpaiRunResult into the shared pool dir. Each call
-    writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json``
-    + FITS), so concurrent workers never collide. Returns (batch_id, ok, error).
+    """Export one batch's SenpaiRunResult into the shared pool dir.
+
+    Each call writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json`` +
+    FITS), so concurrent workers never collide. Returns (batch_id, ok, error).
     """
     (result_path, batch_id, pool_dir, snr_cut, max_streak_length, process_sidereal, link_source) = task
     exporter = SenpaiCocoExporter(
@@ -690,20 +695,16 @@ def _export_one_batch(task: tuple) -> tuple:
 
 
 def cmd_build_dataset(args: argparse.Namespace) -> int:
-    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool, then
-    (optionally) split it.
+    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool, then (optionally) split it.
 
-    1. Collect every non-skipped batch's ``SenpaiRunResult`` across the nights.
-    2. Export each via :class:`SenpaiCocoExporter` into ONE pool dir (per-frame
-       ``*_point_sat.json`` + ``*_line_star.json`` + FITS). With ``-j N`` this
-       runs across N worker processes — the export is the expensive, embarrassingly
-       parallel step.
-    3. Unless ``--export-only``, hand the pool to :class:`DatasetSplitter`, which
-       writes ``{train,val,test}/`` + ``annotations/{points,lines}_{split}.json``.
-
-    ``--export-only`` keeps the pool as the "ready data" and skips the split, so
-    it can be split repeatedly later (``split-dataset``) — e.g. data-scaling
-    ablations against a fixed val/test — without re-exporting.
+    1. Collect every non-skipped batch's ``SenpaiRunResult`` across the nights. 2. Export each
+    via :class:`SenpaiCocoExporter` into ONE pool dir (per-frame ``*_point_sat.json`` +
+    ``*_line_star.json`` + FITS). With ``-j N`` this runs across N worker processes — the export
+    is the expensive, embarrassingly parallel step. 3. Unless ``--export-only``, hand the pool
+    to :class:`DatasetSplitter`, which writes ``{train,val,test}/`` +
+    ``annotations/{points,lines}_{split}.json``. ``--export-only`` keeps the pool as the "ready
+    data" and skips the split, so it can be split repeatedly later (``split-dataset``) — e.g.
+    data-scaling ablations against a fixed val/test — without re-exporting.
     """
     output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_dataset")
     # With --export-only the output dir IS the ready-data pool (a flat dir of FITS
@@ -822,14 +823,13 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
 
 
 def cmd_split_dataset(args: argparse.Namespace) -> int:
-    """Split a ready-data pool (``build-dataset --export-only``) into
-    train/val/test + annotations. Cheap and re-runnable: ``--link`` symlinks the
-    images back into the pool, so the same pool can be re-split many times (e.g.
-    data-scaling ablations via ``--train-cap``) in seconds and ~0 extra disk.
+    """Split a ready-data pool (``build-dataset --export-only``) into train/val/test + annotations.
 
-    val/test are pinned to the end of the global temporal order (the held-out
-    "future"); ``--train-cap N`` varies only the train size, leaving the val/test
-    boundary fixed.
+    Cheap and re-runnable: ``--link`` symlinks the images back into the pool, so the same pool
+    can be re-split many times (e.g. data-scaling ablations via ``--train-cap``) in seconds and
+    ~0 extra disk. val/test are pinned to the end of the global temporal order (the held-out
+    "future"); ``--train-cap N`` varies only the train size, leaving the val/test boundary
+    fixed.
     """
     pool_dir = Path(args.pool_dir)
     if not pool_dir.is_dir():

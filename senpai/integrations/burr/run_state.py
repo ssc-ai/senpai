@@ -73,8 +73,9 @@ class ExecutedCommand(BaseModel):
 
     @property
     def target_label(self) -> str | None:
-        """Human-readable target identifier (NORAD id for calsats, pixel id for
-        coverage, etc.). Returns the most specific id available, or None.
+        """Human-readable target identifier (NORAD id for calsats, pixel id for coverage, etc.).
+
+        Returns the most specific id available, or None.
         """
         md = self.metadata
         if "norad_id" in md:
@@ -93,8 +94,9 @@ class SiteConfig(BaseModel):
 
 
 class RunConfig(BaseModel):
-    """The `config` block — site + schedule + hardware. We only model what
-    downstream code reads; everything else is preserved as `extra='allow'`.
+    """The `config` block — site + schedule + hardware.
+
+    We only model what downstream code reads; everything else is preserved as `extra='allow'`.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -113,8 +115,10 @@ class LightingSchedule(BaseModel):
 
 
 class RunState(BaseModel):
-    """Top-level run_state.json. Models the fields we read; allows extras for
-    forward compatibility with the burr controller's evolving schema.
+    """Top-level run_state.json.
+
+    Models the fields we read; allows extras for forward compatibility with the burr
+    controller's evolving schema.
     """
 
     model_config = ConfigDict(extra="allow")

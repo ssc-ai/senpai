@@ -212,9 +212,11 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
 
 
 def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
-    """Per-frame empirical PSF panel. Prefers the saved .npy stamp (cheap, no FITS
-    reload); falls back to reloading the processed FITS and re-stacking (which
-    also re-writes the .npy), so panels regenerate even if psfs was off at run.
+    """Per-frame empirical PSF panel.
+
+    Prefers the saved .npy stamp (cheap, no FITS reload); falls back to reloading the processed
+    FITS and re-stacking (which also re-writes the .npy), so panels regenerate even if psfs was
+    off at run.
     """
     suffix = "psf" if mode == "sidereal" else "streak"
     png = out_dir / f"frame_{frame.index}_{suffix}.png"

@@ -310,9 +310,10 @@ def test_summarize_limiting_mag_excludes_rate_frames() -> None:
 
 
 class TestExtractFrameTiming:
-    """Timing+pointing is kept for EVERY frame (incl. non-photometric ones) via
-    the commanded boresight, since slew/settle is mount mechanics independent of
-    photometry — see _extract_frame_timing.
+    """Timing+pointing is kept for EVERY frame (incl.
+
+    non-photometric ones) via the commanded boresight, since slew/settle is mount mechanics
+    independent of photometry — see _extract_frame_timing.
     """
 
     def _frame(self, **overrides):

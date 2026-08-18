@@ -1,11 +1,9 @@
-"""Tests for COCO export (senpai.export.coco) and dataset splitting
-(senpai.export.dataset_split).
+"""Tests for COCO export (senpai.export.coco) and dataset splitting (senpai.export.dataset_split).
 
-Synthetic ``SenpaiRunResult`` objects are built with serializable sidereal and
-rate frames that point at small FITS files written into ``tmp_path``. Stars and
-satellites are placed at known pixel positions so the generated COCO bboxes and
-streak lines can be checked exactly. All output goes to ``tmp_path``; nothing
-touches the network or a GUI, and the run is deterministic.
+Synthetic ``SenpaiRunResult`` objects are built with serializable sidereal and rate frames that
+point at small FITS files written into ``tmp_path``. Stars and satellites are placed at known
+pixel positions so the generated COCO bboxes and streak lines can be checked exactly. All output
+goes to ``tmp_path``; nothing touches the network or a GUI, and the run is deterministic.
 """
 
 from __future__ import annotations

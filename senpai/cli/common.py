@@ -69,8 +69,10 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
 
 
 def profile_run(func, *args, run_id: str = "profile", **kwargs):
-    """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
-    saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result.
+    """Generic profiling wrapper.
+
+    Runs func(*args, **kwargs) under cProfile, saves top-30 stats to
+    output_dir/profile_{run_id}.txt, returns func's result.
     """
     pr = cProfile.Profile()
     pr.enable()

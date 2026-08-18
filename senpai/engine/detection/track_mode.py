@@ -74,8 +74,9 @@ class TrackModeDecision:
 
 
 def _blob_elongation(stamp: np.ndarray) -> tuple[float, float] | None:
-    """Axis ratio (major/minor) and position angle (rad) from a blob's intensity
-    second moments. Returns None for a degenerate blob.
+    """Axis ratio (major/minor) and position angle (rad) from a blob's intensity second moments.
+
+    Returns None for a degenerate blob.
     """
     tot = float(stamp.sum())
     if tot <= 0:
@@ -188,9 +189,9 @@ def _header_trkmode(header, mode_keys) -> TrackMode | None:
 
 
 def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
-    """Classify a frame sidereal vs rate, cheapest evidence first (see module
-    docstring). ``data`` (the 2-D image) enables the pixel arbiter; omit it to
-    stay metadata-only.
+    """Classify a frame sidereal vs rate, cheapest evidence first (see module docstring).
+
+    ``data`` (the 2-D image) enables the pixel arbiter; omit it to stay metadata-only.
     """
     if config is None:
         from senpai.core.config import get_config

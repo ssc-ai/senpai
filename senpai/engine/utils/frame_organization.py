@@ -36,6 +36,7 @@ def _parse_date_string(date_str: str) -> arrow.Arrow:
 
 def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
     """Parse a time string and return (hour, minute, second, microsecond) tuple.
+
     Returns None if parsing fails.
     """
     # Try parsing with datetime first

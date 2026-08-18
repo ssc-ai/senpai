@@ -32,6 +32,7 @@ from types import ModuleType
 from typing import Any
 
 import numpy as np
+import numpy as np_  # alias for annotations, since `np` is also a parameter name
 from astropy.io import fits
 from scipy import ndimage
 from scipy.ndimage import map_coordinates
@@ -166,8 +167,9 @@ def _safe_iso(ts: str | None) -> datetime | None:
 
 
 def _airmass(altitude_deg: float | None) -> float | None:
-    """Plane-parallel airmass = sec(zenith). Good to ~3.5; we clip above
-    altitude < 3° to avoid divergence in plots.
+    """Plane-parallel airmass = sec(zenith).
+
+    Good to ~3.5; we clip above altitude < 3° to avoid divergence in plots.
     """
     if altitude_deg is None or altitude_deg <= 3.0:
         return None
@@ -176,11 +178,11 @@ def _airmass(altitude_deg: float | None) -> float | None:
 
 
 def _sky_mu(f: FramePhoto) -> float | None:
-    """Sky surface brightness in mag/arcsec², from the captured flat-fielded sky
-    level. With m = ZP − 2.5·log10(flux/t_exp), one pixel's sky flux is at
-    m_pix = ZP − 2.5·log10(sky_adu/t_exp); converting per-pixel → per-arcsec²
-    adds 2.5·log10(pixel_area) = 5·log10(pixscale). Returns None if any input
-    (ZP / sky / exposure / plate scale) is missing.
+    """Sky surface brightness in mag/arcsec², from the captured flat-fielded sky level.
+
+    With m = ZP − 2.5·log10(flux/t_exp), one pixel's sky flux is at m_pix = ZP −
+    2.5·log10(sky_adu/t_exp); converting per-pixel → per-arcsec² adds 2.5·log10(pixel_area) =
+    5·log10(pixscale). Returns None if any input (ZP / sky / exposure / plate scale) is missing.
     """
     if f.zero_point is None or f.sky_adu is None or f.sky_adu <= 0 or not f.exposure_time or not f.pixel_scale_arcsec:
         return None
@@ -190,9 +192,10 @@ def _sky_mu(f: FramePhoto) -> float | None:
 def _compute_alt_az(
     ra_deg: float, dec_deg: float, when: datetime, site: dict[str, Any] | None
 ) -> tuple[float, float] | None:
-    """RA/Dec + UTC + site → (altitude_deg, azimuth_deg). Returns None if astropy
-    is unavailable or site is incomplete. Imports are lazy so a calibration
-    can be loaded without astropy when only ZP aggregates are needed.
+    """RA/Dec + UTC + site → (altitude_deg, azimuth_deg).
+
+    Returns None if astropy is unavailable or site is incomplete. Imports are lazy so a
+    calibration can be loaded without astropy when only ZP aggregates are needed.
     """
     if not site or site.get("latitude") is None or site.get("longitude") is None:
         return None
@@ -216,10 +219,11 @@ def _compute_alt_az(
 
 
 def _add_moon_geometry(calib: NightCalibration) -> None:
-    """Fill per-frame Moon separation/altitude and the night's Moon illumination,
-    in place. Vectorized (one astropy ephemeris call for all frames). No-op if
-    astropy or the site is unavailable. Moonglow degrades depth (sky background)
-    but not the zero point, so the depth/SNR plots use this to mask or model it.
+    """Fill per-frame Moon separation/altitude and the night's Moon illumination, in place.
+
+    Vectorized (one astropy ephemeris call for all frames). No-op if astropy or the site is
+    unavailable. Moonglow degrades depth (sky background) but not the zero point, so the
+    depth/SNR plots use this to mask or model it.
     """
     site = calib.site
     if not site or site.get("latitude") is None or site.get("longitude") is None:
@@ -511,9 +515,10 @@ class ZeroPointStat:
 
 @dataclass(slots=True)
 class ExtinctionFit:
-    """Bouguer linear fit ``zero_point = m0 - k * airmass`` over a filter's
-    frames. ``k`` is the extinction coefficient (mag/airmass, conventionally
-    positive on clear nights); ``m0`` is the extra-atmospheric zero point.
+    """Bouguer linear fit ``zero_point = m0 - k * airmass`` over a filter's frames.
+
+    ``k`` is the extinction coefficient (mag/airmass, conventionally positive on clear nights);
+    ``m0`` is the extra-atmospheric zero point.
     """
 
     filter_name: str
@@ -561,7 +566,7 @@ class NightCalibration:
         Moon) for cross-night tracking. Medians over the night's frames.
         """
 
-        def _med(xs):
+        def _med(xs: list[float]) -> float | None:
             xs = [x for x in xs if x is not None]
             return float(st.median(xs)) if xs else None
 
@@ -628,7 +633,7 @@ class NightCalibration:
         }
 
 
-def _asdict_safe(obj: Any) -> Any:
+def _asdict_safe(obj: object) -> object:
     """Pure-stdlib dataclass→dict that handles our datetime fields."""
     if is_dataclass(obj):
         d = asdict(obj)
@@ -677,11 +682,12 @@ def _flag_ccd_warm(frames: list[FramePhoto]) -> dict[str, Any] | None:
 
 
 def _zp_frames(frames: list[FramePhoto]) -> list[FramePhoto]:
-    """Frames whose photometry is trustworthy for the night's zero point: the
-    sidereal-tracked frames. Rate-tracked frames image stars as streaks, so
-    their aperture photometry — and any ZP derived from it — is unreliable and
-    must not define the night's photometric calibration. CCD-warm frames (sensor
-    above setpoint, elevated dark current / hot pixels) are excluded too.
+    """Frames whose photometry is trustworthy for the night's zero point: the sidereal-tracked frames.
+
+    Rate-tracked frames image stars as streaks, so their aperture photometry — and any ZP
+    derived from it — is unreliable and must not define the night's photometric calibration.
+    CCD-warm frames (sensor above setpoint, elevated dark current / hot pixels) are excluded
+    too.
     """
     return [f for f in frames if f.track_mode == "sidereal" and not f.ccd_warm]
 
@@ -1046,7 +1052,7 @@ def save_calibration(calib: NightCalibration, output_dir: str | Path) -> Path:
     return path
 
 
-def _jsonify(obj: Any) -> Any:
+def _jsonify(obj: object) -> object:
     """Recursively convert numpy / datetime values to JSON-native types so the
     plotted arrays round-trip through plot_data.json.
     """
@@ -1177,7 +1183,9 @@ def summarize_nights(root: str | Path, csv_path: str | Path | None = None) -> st
     return table
 
 
-def plot_calibration(source, output_dir: str | Path, *, save_data: bool = True) -> list[Path]:
+def plot_calibration(
+    source: NightCalibration | dict | str | Path, output_dir: str | Path, *, save_data: bool = True
+) -> list[Path]:
     """Render the calibration plot set. Quietly skips plots that have no data.
 
     ``source`` is either a NightCalibration (live: the analysis is run via
@@ -1214,7 +1222,7 @@ def plot_calibration(source, output_dir: str | Path, *, save_data: bool = True) 
     return paths
 
 
-def _save(fig, path: Path) -> Path:
+def _save(fig: object, path: Path) -> Path:
     import matplotlib.pyplot as plt
 
     fig.tight_layout()
@@ -1529,7 +1537,7 @@ _SLEW_ENV_MIN_PTS = 6  # min pairs per distance bin to anchor the envelope
 _SLEW_DIST_BINS = [0.25, 0.5, 1, 2, 4, 8, 15, 25, 40, 60, 90, 180]
 
 
-def _angsep_deg(alt1, az1, alt2, az2) -> float:
+def _angsep_deg(alt1: float, az1: float, alt2: float, az2: float) -> float:
     """Great-circle separation (deg) in the mount's alt/az frame — the same
     slew metric burr's coverage optimizer uses.
     """
@@ -1538,7 +1546,7 @@ def _angsep_deg(alt1, az1, alt2, az2) -> float:
     return math.degrees(2 * math.asin(min(1.0, math.sqrt(d))))
 
 
-def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
+def _slew_pairs(timings: list[FrameTiming]) -> tuple[list, list[float], list[float]]:
     """Time-consecutive (separation_deg, overhead_s) pairs shared by the slew fit
     and its empirical fallback, so both see the same gap/clock filtering.
 
@@ -1568,7 +1576,7 @@ def _slew_pairs(timings) -> tuple[list, list[float], list[float]]:
     return fr, dist, over
 
 
-def _empirical_overhead(timings) -> tuple[float | None, str]:
+def _empirical_overhead(timings: list[FrameTiming]) -> tuple[float | None, str]:
     """Best-effort inter-frame overhead when the full two-regime fit can't be
     constrained (too few distinct slew distances — e.g. a night that parked on a
     handful of fields). Uses the night's *observed* cadence rather than a flat
@@ -1588,7 +1596,7 @@ def _empirical_overhead(timings) -> tuple[float | None, str]:
     return float(np.median(over)), "median observed inter-frame gap"
 
 
-def _fit_slew_model(timings) -> dict | None:
+def _fit_slew_model(timings: list[FrameTiming]) -> dict | None:
     """Fit the inter-frame overhead model (readout + settle + slew) from the
     night's time-ordered frames.
 
@@ -1959,7 +1967,13 @@ def _sidereal_frame_dict(batch_path: Path, index: int) -> dict | None:
     return None
 
 
-def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int, max_stars: int = _PSF_MAX_STARS):
+def _psf_stack_stamp(
+    fits_path: str,
+    catalog_stars: list,
+    fwhm: float,
+    half: int,
+    max_stars: int = _PSF_MAX_STARS,
+) -> tuple[np_.ndarray | None, int]:
     """Median-stacked, peak-normalized PSF stamp from a frame's bright, isolated,
     unsaturated catalog stars. Returns (stamp2d, n_stars) or (None, 0).
     """
@@ -2015,7 +2029,9 @@ def _psf_stack_stamp(fits_path: str, catalog_stars: list, fwhm: float, half: int
     return np.median(np.stack(stamps), axis=0), len(stamps)
 
 
-def _radial_profile(stamp, half, np, rstep=0.5):
+def _radial_profile(
+    stamp: np_.ndarray, half: int, np: ModuleType, rstep: float = 0.5
+) -> tuple[np_.ndarray, np_.ndarray]:
     """Azimuthally-averaged (ring-median) radial profile, peak-normalized."""
     n = stamp.shape[0]
     yy, xx = np.mgrid[0:n, 0:n]
@@ -2033,7 +2049,7 @@ def _radial_profile(stamp, half, np, rstep=0.5):
     return np.array(r), prof
 
 
-def _cut_width(profile, np, level: float = 0.5) -> float:
+def _cut_width(profile: np_.ndarray, np: ModuleType, level: float = 0.5) -> float:
     """Full width at ``level`` × peak, from the outermost interpolated crossings
     of a 1D cut through the peak.
     """
@@ -2056,7 +2072,7 @@ def _cut_width(profile, np, level: float = 0.5) -> float:
     return float(right - left)
 
 
-def _cut_fwhm(profile, np) -> float:
+def _cut_fwhm(profile: np_.ndarray, np: ModuleType) -> float:
     """FWHM (full width at half max) of a 1D cut through the peak."""
     return _cut_width(profile, np, 0.5)
 
@@ -2065,7 +2081,7 @@ def _cut_fwhm(profile, np) -> float:
 _GAUSS_W25_OVER_W50 = math.sqrt(math.log(4) / math.log(2))  # = √2
 
 
-def _profile_shape(profile, np) -> dict:
+def _profile_shape(profile: np_.ndarray, np: ModuleType) -> dict:
     """Multi-level widths + a Gaussianity ``spike_index`` for a 1D PSF cut.
 
     spike_index = (FW¼M/FWHM) / √2:  ≈1 Gaussian (focused), ≫1 a narrow core on
@@ -2083,7 +2099,7 @@ def _profile_shape(profile, np) -> dict:
     return {"fwhm": w50, "fwqm": w25, "fw3qm": w75, "spike_index": index, "robust_fwhm": robust}
 
 
-def _wcs_sky_axes(wcs_dict: dict):
+def _wcs_sky_axes(wcs_dict: dict) -> tuple[np_.ndarray, np_.ndarray] | None:
     """Unit vectors in pixel (x, y) space pointing East (+RA) and North (+Dec)
     at the frame center, from the solved WCS header dict. Returns
     (east_unit, north_unit) or None. Lets us cut the PSF along sky axes so an
@@ -2118,7 +2134,7 @@ def _wcs_sky_axes(wcs_dict: dict):
         return None
 
 
-def _sample_line(stamp, half, unit, np):
+def _sample_line(stamp: np_.ndarray, half: int, unit: np_.ndarray, np: ModuleType) -> np_.ndarray:
     """Sample the stamp along a line through its center in pixel direction
     ``unit`` (x, y), one sample per pixel from -half to +half.
     """
@@ -2584,7 +2600,7 @@ def _data_snr_vs_exposure(calib: NightCalibration) -> dict | None:
     std_exps = list(range(max(1, math.floor(a_exp.min())), math.ceil(a_exp.max()) + 1))
     bins = list(range(math.floor(a_mag.min()), math.ceil(a_mag.max())))
 
-    def _series(pts):
+    def _series(pts: list[tuple[float, float]]) -> dict:
         e = np.array([p[0] for p in pts])
         m = np.array([p[1] for p in pts])
         s = np.array([p[2] for p in pts])
@@ -2617,7 +2633,7 @@ def _data_snr_vs_exposure(calib: NightCalibration) -> dict | None:
     }
 
 
-def _render_snr_vs_exposure(d, meta, output_dir, plt, np) -> list:
+def _render_snr_vs_exposure(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType) -> list:
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     std_exps, bins, order = d["std_exps"], d["bins"], d["order"]
@@ -2876,7 +2892,7 @@ def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict | None:
     min_meas_snr = 3.0
     FAR = 60.0
 
-    def _norm_stars(f):
+    def _norm_stars(f: FramePhoto) -> float | None:
         kk = ext_k.get(f.filter_name or "unknown", k_default)
         corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
@@ -2916,7 +2932,14 @@ def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict | None:
     mag_arr = np.array(mag_arr)
     edges = np.arange(0, math.ceil(sep_arr.max() / 10) * 10 + 10, 10)
 
-    def _series(mask, name, dot_color, dot_alpha, bin_color, fit_color):
+    def _series(
+        mask: list[bool],
+        name: str,
+        dot_color: str,
+        dot_alpha: float,
+        bin_color: str,
+        fit_color: str,
+    ) -> dict | None:
         cx, cy, e_lo, e_hi = [], [], [], []
         for lo, hi in zip(edges[:-1], edges[1:]):
             v = dmag_arr[mask & (sep_arr >= lo) & (sep_arr < hi)]
@@ -3002,7 +3025,7 @@ def _render_snr_vs_moon_distance(d: dict, meta: dict, output_dir: str | Path, pl
     return _save(fig, output_dir / "snr_vs_moon_distance.png")
 
 
-def _usable_cal_frames(calib, zp_mode, zp_sig):
+def _usable_cal_frames(calib: NightCalibration, zp_mode: str, zp_sig: float) -> list[FramePhoto]:
     """Weather-masked calibration-taskset frames with Moon geometry (shared by
     the two fixed-magnitude Moon plots).
     """
@@ -3018,7 +3041,7 @@ def _usable_cal_frames(calib, zp_mode, zp_sig):
     ]
 
 
-def _best_sampled_mag(usable, min_meas_snr):
+def _best_sampled_mag(usable: list[FramePhoto], min_meas_snr: float) -> float | None:
     mag_tot: dict[int, int] = {}
     for f in usable:
         for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f)):
@@ -3027,7 +3050,7 @@ def _best_sampled_mag(usable, min_meas_snr):
     return max(mag_tot, key=mag_tot.get) if mag_tot else None
 
 
-def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
+def _data_snr_vs_exposure_6s_explained(calib: NightCalibration) -> dict | None:
 
     band = _clear_sky_zp_band(calib.frames)
     if band is None or not any(f.moon_sep_deg is not None for f in calib.frames):
@@ -3079,7 +3102,9 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration):
     return {"best_mag": best_mag, "prog": out_prog, "annotation": annotation, "xticks": xticks}
 
 
-def _render_snr_vs_exposure_6s_explained(d, meta, output_dir, plt, np) -> Path:
+def _render_snr_vs_exposure_6s_explained(
+    d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, np: ModuleType
+) -> Path:
     pcolor = {"coverage": "tab:blue", "photometric": "tab:orange"}
     fig, ax = plt.subplots(figsize=(10, 7))
     for tk, dd in d["prog"].items():

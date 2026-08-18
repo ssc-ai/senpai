@@ -66,9 +66,9 @@ def test_zp_recovers_clean_zero_point() -> None:
 
 
 def test_zp_ignores_contaminated_faint_tail() -> None:
-    """30 clean stars at ZP 26 + 10 faint stars measuring a bright neighbour's
-    flux (per-star ZP ~31). The robust median must stay at 26; the old mean
-    would be dragged to ~27.2.
+    """30 clean stars at ZP 26 + 10 faint stars measuring a bright neighbour's flux (per-star ZP ~31).
+
+    The robust median must stay at 26; the old mean would be dragged to ~27.2.
     """
     clean = [_clean(m) for m in [12, 13, 14, 15, 16] * 6]  # 30 stars, ZP=26
     # faint catalog mag ~20 but flux of a ~mag-15 source (gross contamination)
@@ -84,8 +84,9 @@ def test_zp_ignores_contaminated_faint_tail() -> None:
 
 
 def test_zp_excludes_low_snr_stars() -> None:
-    """Low-SNR stars are below zp_min_snr and must not contribute. Give them a
-    biased ZP; the result must still come from the clean high-SNR sample.
+    """Low-SNR stars are below zp_min_snr and must not contribute.
+
+    Give them a biased ZP; the result must still come from the clean high-SNR sample.
     """
     clean = [_clean(m, snr=100.0) for m in [12, 13, 14, 15, 16] * 3]
     lowsnr = [_result(15.0, flux=10 ** ((28.0 - 15.0) / 2.5), snr=2.0) for _ in range(20)]

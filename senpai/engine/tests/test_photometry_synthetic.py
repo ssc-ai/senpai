@@ -1,18 +1,12 @@
-"""Synthetic-image tests for the live photometry engine
-(senpai.engine.photometry.utils).
+"""Synthetic-image tests for the live photometry engine (senpai.engine.photometry.utils).
 
-We inject 2D Gaussian PSF stars of *known* total flux at *known* positions on a
-flat + Gaussian-noise background (seeded) and check that:
-
-  - circular-aperture photometry recovers the injected flux to a few percent,
-  - SNR lands in a sensible ballpark and tracks brightness,
-  - the quality flag honours min_snr / max_crowding,
-  - the limiting-magnitude / completeness helpers and magnitude-selection /
-    crowding helpers behave as documented.
-
-The photometry functions read the process-wide config singleton via
-get_config(); we initialise it from a real YAML in an autouse fixture (same
-pattern as test_streak_extraction.py) and force plotting off so nothing touches
+We inject 2D Gaussian PSF stars of *known* total flux at *known* positions on a flat +
+Gaussian-noise background (seeded) and check that: - circular-aperture photometry recovers the
+injected flux to a few percent, - SNR lands in a sensible ballpark and tracks brightness, - the
+quality flag honours min_snr / max_crowding, - the limiting-magnitude / completeness helpers and
+magnitude-selection / crowding helpers behave as documented. The photometry functions read the
+process-wide config singleton via get_config(); we initialise it from a real YAML in an autouse
+fixture (same pattern as test_streak_extraction.py) and force plotting off so nothing touches
 the filesystem.
 """
 

@@ -1,17 +1,12 @@
-"""Pure-geometry / measurement tests for the streak extraction and masking
-modules.
+"""Pure-geometry / measurement tests for the streak extraction and masking modules.
 
-These cover the small, deterministic helpers that do not require a full
-pipeline run:
-
-- ``extract_streak_from_metadata`` — turns track-rate + exposure + WCS PC
-  matrix into a (length, rotation) StreakMeasurement.
-- ``streak_fwhm_from_cutout`` / ``streak_length_from_cutout`` /
-  ``refine_streak_len`` — 1D profile measurements on synthetic streak PSFs.
-- ``mask_streak_region`` / ``is_valid_psf`` — bookkeeping helpers used by the
-  robust extractor (not exercised by the existing ``test_masking.py``).
-- ``mask_all_but_border`` / ``mask_border`` — trivial border helpers in
-  ``masking.py`` that have no other coverage.
+These cover the small, deterministic helpers that do not require a full pipeline run: -
+``extract_streak_from_metadata`` — turns track-rate + exposure + WCS PC matrix into a (length,
+rotation) StreakMeasurement. - ``streak_fwhm_from_cutout`` / ``streak_length_from_cutout`` /
+``refine_streak_len`` — 1D profile measurements on synthetic streak PSFs. -
+``mask_streak_region`` / ``is_valid_psf`` — bookkeeping helpers used by the robust extractor
+(not exercised by the existing ``test_masking.py``). - ``mask_all_but_border`` / ``mask_border``
+— trivial border helpers in ``masking.py`` that have no other coverage.
 """
 
 from __future__ import annotations

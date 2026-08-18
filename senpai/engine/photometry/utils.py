@@ -719,6 +719,7 @@ def _save_simple_limiting_mag_plot(
     output_path,
 ) -> None:
     """Sidereal counterpart to the rate-track limiting-mag diagnostic.
+
     Same axes (mag vs log10 SNR) + threshold and limit reference lines.
     """
     import matplotlib.pyplot as plt
@@ -1572,16 +1573,14 @@ def _isolated_result_mask(
     starfield: StarField,
     pad: float = 2.0,
 ) -> list[bool]:
-    """True for results with no *brighter* catalog star within the aperture
-    footprint.
+    """True for results with no *brighter* catalog star within the aperture footprint.
 
-    A faint star whose aperture overlaps a brighter neighbor picks up that
-    neighbor's flux and reports a spuriously high SNR — which inflates the
-    faint-end completeness into a fake floor (and reads as "recovering" stars
-    well past the real limit). Restricting the completeness sample to isolated
-    stars removes that, so the curve actually rolls to ~0. The footprint is
-    ``pad x aperture_radius`` (apertures of the two stars overlap within ~2x a
-    radius). Comparison uses each star's primary magnitude for consistency.
+    A faint star whose aperture overlaps a brighter neighbor picks up that neighbor's flux and
+    reports a spuriously high SNR — which inflates the faint-end completeness into a fake floor
+    (and reads as "recovering" stars well past the real limit). Restricting the completeness
+    sample to isolated stars removes that, so the curve actually rolls to ~0. The footprint is
+    ``pad x aperture_radius`` (apertures of the two stars overlap within ~2x a radius).
+    Comparison uses each star's primary magnitude for consistency.
     """
     catalog = getattr(starfield, "catalog_stars", None) or []
     cx, cy, cm = [], [], []
