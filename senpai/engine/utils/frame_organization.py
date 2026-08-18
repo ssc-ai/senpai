@@ -85,7 +85,7 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
                 arrow_time = _parse_date_string(str(header[header_key]))
                 return arrow_time.datetime
             except Exception as e:
-                logger.exception(f"failed to parse time from {header_key}: {e}")
+                logger.exception("failed to parse time from")
                 continue
 
     arrow_date = None
@@ -95,7 +95,7 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
             try:
                 arrow_date = _parse_date_string(str(header[header_key]))
             except Exception as e:
-                logger.exception(f"failed to parse time from {header_key}: {e}")
+                logger.exception("failed to parse time from")
                 continue
 
     if arrow_date is not None:
@@ -105,7 +105,7 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
                     time_components = _parse_time_string(str(header[header_key]))
                     break
                 except Exception as e:
-                    logger.exception(f"failed to parse time from {header_key}: {e}")
+                    logger.exception("failed to parse time from")
                     continue
 
     # If we have both date and time, combine them

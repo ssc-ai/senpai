@@ -126,7 +126,7 @@ def _export_run_worker(args: tuple) -> "dict | None":
         logger.info(f"Successfully exported {collect_id}")
         return True, collect_id, None
     except Exception as e:
-        logger.exception(f"Failed to export {collect_id}: {e}")
+        logger.exception("Failed to export")
         return False, collect_id, str(e)
 
 
@@ -276,11 +276,7 @@ def split_dataset(
         for split_name, image_ids in splits.items():
             logger.info(f"  {split_name}: {len(image_ids)} images")
     except Exception as e:
-        logger.exception(f"Failed to split dataset: {e}")
-        if verbose:
-            import traceback
-
-            traceback.print_exc()
+        logger.exception("Failed to split dataset")
         raise
 
 
@@ -436,11 +432,7 @@ Examples:
     except KeyboardInterrupt:
         logger.info("Export interrupted by user")
     except Exception as e:
-        logger.exception(f"Export failed: {e}")
-        if args.verbose:
-            import traceback
-
-            traceback.print_exc()
+        logger.exception("Export failed")
         sys.exit(1)
 
 

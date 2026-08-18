@@ -155,7 +155,7 @@ def query_by_ra_dec_bounds(
         return stars
 
     except Exception as e:
-        logger.exception(f"SDSS query failed: {e}")
+        logger.exception("SDSS query failed")
         return []
 
 
@@ -367,7 +367,7 @@ def query_by_bounds(
         return stars
 
     except Exception as e:
-        logger.exception(f"SDSS query failed: {e}")
+        logger.exception("SDSS query failed")
         return []
 
 

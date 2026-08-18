@@ -404,7 +404,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
             try:
                 entry = _run_batch(batch, batch_dir)
             except Exception as e:
-                logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                logger.exception("Batch %s failed", batch.batch_id)
                 entry = _failed_entry(batch, e)
                 n_failed += 1
             else:
@@ -461,7 +461,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
                     try:
                         entry = fut.result()
                     except Exception as e:
-                        logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                        logger.exception("Batch %s failed", batch.batch_id)
                         entry = _failed_entry(batch, e)
                         n_failed += 1
                     else:
@@ -586,7 +586,7 @@ def cmd_flats(args: argparse.Namespace) -> int:
                 maxiters=5,
             )
         except Exception as e:
-            logger.exception("Night %s: master flat failed: %s", night.night_id, e)
+            logger.exception("Night %s: master flat failed", night.night_id)
             rc = 2
     return rc
 

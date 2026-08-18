@@ -517,7 +517,7 @@ def main() -> None:
                 print(f"Could not extract track rates: {e}")
 
     except Exception as e:
-        logger.exception(f"Error processing FITS file: {e}")
+        logger.exception("Error processing FITS file")
         return 1
 
     return 0

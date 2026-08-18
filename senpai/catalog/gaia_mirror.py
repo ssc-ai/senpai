@@ -175,11 +175,10 @@ def download_chunks(
                     failed += 1
                     consec_fail += 1
                     logger.exception(
-                        "chunk %d/%d FAILED after %d attempts (%s); skipping — re-run later to fill the gap",
+                        "chunk %d/%d FAILED after %d attempts; skipping — re-run later to fill the gap",
                         i + 1,
                         nchunks,
                         max_retries,
-                        e,
                     )
     logger.info(
         "download pass complete: %d/%d chunks present, %d still failing in %s",

@@ -136,7 +136,7 @@ def estimate_fwhm(
             0,
         )
     except Exception as e:
-        logger.exception(f"Error estimating FWHM: {e}")
+        logger.exception("Error estimating FWHM")
         return None
 
     try:

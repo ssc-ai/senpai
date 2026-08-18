@@ -1385,7 +1385,7 @@ def run_coverage_analysis(
                     pbar.set_description(f"Position {position_num}/{total_positions} (RA={ra:.1f}°, Dec={dec:.1f}°)")
                     pbar.update(1)
                 except Exception as e:
-                    logger.exception(f"Error processing position {position_num}: {e}")
+                    logger.exception("Error processing position")
                     grid_pos = (round(ra, 2), round(dec, 2))
                     for fov in fov_values:
                         for mag in magnitude_thresholds:
@@ -2722,7 +2722,7 @@ def main() -> int:
                 logger.info(f"Recreated master statistics file: {json_path}")
 
             except Exception as e:
-                logger.exception(f"Failed to load per-position statistics: {e}")
+                logger.exception("Failed to load per-position statistics")
                 return 1
 
         # Fall back to legacy master file if per-position files don't exist
@@ -2960,7 +2960,7 @@ def main() -> int:
                         )
                         pbar.update(1)
                     except Exception as e:
-                        logger.exception(f"Error processing corridor time step {time_step_num}: {e}")
+                        logger.exception("Error processing corridor time step")
                         pbar.update(1)
 
                 pbar.close()

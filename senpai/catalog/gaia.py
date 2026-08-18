@@ -204,8 +204,5 @@ def query_by_ra_dec_bounds(
         return stars
 
     except Exception as e:
-        logger.exception(f"Gaia query failed: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.exception("Gaia query failed")
         return []
