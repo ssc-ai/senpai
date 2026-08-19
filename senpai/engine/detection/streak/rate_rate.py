@@ -191,7 +191,7 @@ def whiten_image(im: np.ndarray, sigma: float = 3, eps: float = 1e-6) -> np.ndar
 
 
 def _block_median_downsample(img: np.ndarray, factor: int) -> np.ndarray:
-    """Downsample by f×f block median rather than mean.
+    """Downsample by fxf block median rather than mean.
 
     The median is robust to hot pixels and cosmics, which would otherwise spike the
     whitened cross-correlation. Trailing rows and columns that don't fill a block are

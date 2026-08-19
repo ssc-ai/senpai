@@ -92,7 +92,7 @@ def _clean_sky_sigma(diff: np.ndarray, patch: int = 128, sky_pctile: float = 10.
 
     Stars (and their non-cancelling residuals under rate tracking) are localized,
     so they raise the noise only in the patches that contain them. Tiling the
-    difference into ``patch``×``patch`` blocks and taking a low percentile of the
+    difference into ``patch``x``patch`` blocks and taking a low percentile of the
     per-block robust std picks the star-free sky blocks -- the true shot+read
     noise -- regardless of how badly the stars cancelled. Falls back to a global
     MAD when the frame is too small to tile.
@@ -217,8 +217,8 @@ def plot_ptc(fit: GainFit, output_path: str | Path, title: str = "detector gain 
     import matplotlib.pyplot as plt
 
     levels = np.array(fit.levels)
-    kept = set(zip(fit.env_levels, fit.env_variances, strict=False))
-    is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances, strict=False)])
+    kept = set(zip(fit.env_levels, fit.env_variances, strict=True))
+    is_kept = np.array([(x, y) in kept for x, y in zip(fit.levels, fit.variances, strict=True)])
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(
         levels[is_kept],

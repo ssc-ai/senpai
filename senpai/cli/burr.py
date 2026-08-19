@@ -429,7 +429,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
         # max_tasks_per_child: when all spawn workers hit that limit together
         # (and they do — they start together on uniform work) the executor
         # can fail to respawn any of them and deadlocks with zero children;
-        # observed hung at exactly jobs×24 batches. A fresh pool per slice is
+        # observed hung at exactly jobsx24 batches. A fresh pool per slice is
         # a few seconds of respawn against many minutes of batch work.
         #
         # 8 batches/worker/cycle: workers grow ~0.5-1 GB per batch (observed

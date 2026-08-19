@@ -223,11 +223,6 @@ fixable = ["ALL"]
 unfixable = []
 
 # Allow unused variables when underscore-prefixed.
-# Characters that are deliberate here rather than homoglyph slips, so RUF001-3 does not have to
-# be switched off wholesale: the multiplication sign in binning factors and PSF multiples, sigma
-# for standard deviation, and the en dash and true minus sign in prose and negative values.
-allowed-confusables = ["×", "σ", "–", "−"]
-
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.format]

@@ -509,7 +509,7 @@ def _confirm_single_candidate(
         # Gate: only try DE-based confirmation for candidates with strong
         # single-frame matched-filter detection.  The reference-frame DE
         # at the candidate position must exceed a high threshold.
-        # This prevents marginal noise peaks (5-7σ) from being confirmed
+        # This prevents marginal noise peaks (5-7 sigma) from being confirmed
         # by coincidental DE values in other frames.
         ref_de_map, ref_noise = de_data.get(ref_frame.index, (None, None))
         ref_de_snr = 0.0
@@ -547,7 +547,7 @@ def _confirm_single_candidate(
             )
             # Other-frame DE SNR > 3.5: the matched-filter response at
             # predicted positions in other frames shows positive signal.
-            # 3.5σ balances sensitivity (real faint streaks ~4-5σ) against
+            # 3.5 sigma balances sensitivity (real faint streaks ~4-5 sigma) against
             # false positives from DE map systematics (star halo residuals,
             # background structure).
             min_de_other_snr = 3.5
@@ -857,7 +857,7 @@ def _measure_streak_from_profile(
     length equals the true streak length because:
     - Too short: misses signal  (SNR ~ sqrt(L))
     - Too long: dilutes with noise  (SNR ~ L_true / sqrt(L))
-    - Just right: captures all signal  (SNR = L_true × signal / sqrt(L_true × noise²))
+    - Just right: captures all signal  (SNR = L_true x signal / sqrt(L_true x noise²))
 
     Returns (center_offset, length, peak_snr) where center_offset is
     relative to the profile center (positive = shifted right).
@@ -1230,9 +1230,9 @@ def _deduplicate_confirmed(
         is_dup = False
         for existing in kept:
             # Check if they share a frame with nearby positions
-            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=False):
+            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=True):
                 for efi, epx, epy in zip(
-                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=False
+                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=True
                 ):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2

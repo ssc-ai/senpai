@@ -117,7 +117,7 @@ class SimplePhotometrySummary:
     # them None.
     stars_mag: list[float] | None = None
     stars_snr: list[float] | None = None
-    # Per-star zero-point offset (m_cat − m_inst), parallel to stars_mag.
+    # Per-star zero-point offset (m_cat - m_inst), parallel to stars_mag.
     # Feeds the per-star extinction curve (offset vs airmass); None entries
     # mark stars whose instrumental magnitude couldn't be measured.
     stars_zp_offset: list[float | None] | None = None
@@ -133,7 +133,7 @@ class SimplePhotometrySummary:
     stars_catalog_id: list[str | None] | None = None
     # Literal aperture/annulus geometry (pixels) actually used on this frame —
     # the PSF-factor policy resolved against this frame's measured FWHM, kept so
-    # a reader needn't re-derive it from FWHM × factors (lossy for rate frames).
+    # a reader needn't re-derive it from FWHM x factors (lossy for rate frames).
     # 'circle' (sidereal): aperture_radius_px + bg_inner_px/bg_outer_px.
     # 'rectangle' (rate): width_px/length_px + bg_width/length_in/out_px + theta_rad.
     # None on the no-photometry early-return paths. The constant factors behind
@@ -161,11 +161,11 @@ def empirical_background_std_adu(image_data: np.ndarray) -> float:
     Frames are background-subtracted upstream (row/col median), so the
     background *level* near any star is ~0 and carries no noise information:
     a level-based Poisson model collapses flux_err to sqrt(source) and
-    inflates faint-star SNR ~8× (mag-20 "SNR 7" on frames whose detection
+    inflates faint-star SNR ~8x (mag-20 "SNR 7" on frames whose detection
     limit is mag 18). The empirical pixel std already contains sky Poisson +
     read noise, so noise models built on it must not add those terms again.
 
-    MAD over an 8×-strided subsample is robust to stars and matches the
+    MAD over an 8x-strided subsample is robust to stars and matches the
     full-frame robust std to ~1% at 1/64 the cost. Returns 0.0 for degenerate
     (constant/empty) images — callers should fall back to a level model.
     """
@@ -688,7 +688,7 @@ def measure_simple_starfield_photometry(
     summary = _calculate_simple_photometry_summary(results, starfield, config, frame_index=frame_index)
 
     # Record the literal circular aperture/annulus pixel dims used here, so the
-    # geometry is recoverable per frame without re-deriving FWHM × factors.
+    # geometry is recoverable per frame without re-deriving FWHM x factors.
     summary.aperture_geometry = {
         "shape": "circle",
         "fwhm_px": round(float(fwhm), 3),
@@ -1033,7 +1033,7 @@ def measure_rate_starfield_photometry(
 
     # Record the literal rectangular aperture/annulus pixel dims used here. The
     # rate box is streak-aligned (theta_rad) and can't be reconstructed from
-    # FWHM × factors alone, so the resolved values are kept per frame.
+    # FWHM x factors alone, so the resolved values are kept per frame.
     summary.aperture_geometry = {
         "shape": "rectangle",
         "fwhm_px": round(float(fwhm), 3),
@@ -1140,7 +1140,7 @@ def measure_detection_photometry(
 
     # Process each detection individually (different FWHM -> different aperture sizes)
     n_measured = 0
-    for idx, pos, fwhm in zip(valid_indices, positions, fwhms, strict=False):
+    for idx, pos, fwhm in zip(valid_indices, positions, fwhms, strict=True):
         det = detections.detections[idx]
         try:
             aperture_radius = config.aperture_radius_factor * fwhm
@@ -1709,7 +1709,7 @@ def compute_completeness_curve(
 
     mags_list: list[float] = []
     snrs_list: list[float] = []
-    for r, keep in zip(results, isolated, strict=False):
+    for r, keep in zip(results, isolated, strict=True):
         if not keep:
             continue
         mag = mag_cache.get(id(r.star))
@@ -1836,7 +1836,7 @@ def _calculate_simple_photometry_summary(
     # Compact per-star (catalog_mag, snr, zp_offset) arrays for downstream
     # observability. Only stars with both a known catalog magnitude AND a
     # positive SNR are retained; that filter keeps the arrays useful for
-    # binned aggregates. zp_offset = m_cat − m_inst (per-star zero point) is
+    # binned aggregates. zp_offset = m_cat - m_inst (per-star zero point) is
     # None where the instrumental magnitude couldn't be measured.
     stars_mag: list[float] = []
     stars_snr: list[float] = []
@@ -1844,7 +1844,7 @@ def _calculate_simple_photometry_summary(
     stars_isolated: list[bool] = []
     stars_catalog_id: list[str | None] = []
     iso_mask = _isolated_result_mask(results, starfield)
-    for r, iso in zip(results, iso_mask, strict=False):
+    for r, iso in zip(results, iso_mask, strict=True):
         mag = getattr(r.star, "magnitude", None)
         if mag is None or r.snr is None or r.snr <= 0:
             continue
@@ -1995,7 +1995,7 @@ def _estimate_simple_limiting_magnitude(
         mags_all_list.append(mag)
         snrs_all_list.append(snr_floor)
 
-        # Only quality, isolated stars contribute to the SNR–mag fit
+        # Only quality, isolated stars contribute to the SNR-mag fit
         # Use original SNR (not floored) for the fit
         if not r.quality_flag:
             continue
@@ -2702,7 +2702,7 @@ def estimate_limiting_magnitude_from_photometry(
     """Estimate limiting magnitude using proper photometry results.
 
     This implementation is shared between sidereal and rate-track pipelines,
-    and is used by WCS refinement code. The default SNR threshold is 3σ,
+    and is used by WCS refinement code. The default SNR threshold is 3 sigma,
     configurable via the min_snr parameter.
     """
     # Determine frame type

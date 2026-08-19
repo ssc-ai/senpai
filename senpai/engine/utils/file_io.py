@@ -52,7 +52,7 @@ def load_dng_file(dng_file: Path | str) -> ProcessedFitsImage:
         # Convert to grayscale by summing all color channels
         gray = np.sum(rgb.astype(np.float32), axis=2)
 
-        # Normalize to 0–1
+        # Normalize to 0-1
         gray /= gray.max()
         # Extract header info (metadata) as FITS Header
         header = fits.Header()

@@ -6,7 +6,7 @@ catalog stars straight from the frame pixels:
 * **sidereal** — stars are points; stack them into a 2D PSF and read off the
   radial profile + RA/Dec cuts (so an elongation reads as a tracking error).
 * **rate** — stars are streaks; stack oriented (streak-aligned) stamps and read
-  off the along-streak and across-streak profiles, with the fitted length×width
+  off the along-streak and across-streak profiles, with the fitted lengthxwidth
   box overlaid.
 
 The stacking is cosmic-ray robust (peak / centroid / SNR taken from a 3x3
@@ -510,7 +510,7 @@ def render_streak_psf(
             ax0.text(L * 1.2 * u[0], L * 1.2 * u[1], name, color=col, fontsize=9, ha="center", va="center")
     ax0.set_xlabel("along streak (px)")
     ax0.set_ylabel("across (px)")
-    ax0.set_title("stacked streak (lime = fitted L×W)")
+    ax0.set_title("stacked streak (lime = fitted LxW)")
 
     ax1.plot(np.arange(stamp.shape[1]) - half_a, along, color="darkorange", lw=2)
     ax1.axvline(-length / 2, color="lime", ls="--", lw=1)

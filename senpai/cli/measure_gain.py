@@ -48,7 +48,7 @@ def _gather_frames(inputs: list[str]) -> list[str]:
 
 
 def _read_center(path: str, crop: int) -> np.ndarray | None:
-    """Read a central ``crop``×``crop`` window.
+    """Read a central ``crop``x``crop`` window.
 
     These frames carry BZERO/BSCALE (offset-stored uint16), which rules out a
     memory-mapped section read, so we load the (scaled) array and crop the
@@ -131,10 +131,10 @@ def main(argv: list[str] | None = None) -> int:
     inv_lo, inv_hi = 1.0 / fit.gain_hi, 1.0 / fit.gain_lo  # ADU/e- inverts order
     print("\n=== detector gain (photon transfer, frame-pair difference) ===")
     print(f"  usable pairs        : {fit.n_pairs}")
-    print(f"  sky level range     : {lvls.min():.0f} – {lvls.max():.0f} ADU")
-    print(f"  GAIN                : {fit.gain:.3f} e-/ADU   (95% CI {fit.gain_lo:.3f}–{fit.gain_hi:.3f})")
-    print(f"                      : {inv:.3f} ADU/e-   (95% CI {inv_lo:.3f}–{inv_hi:.3f})")
-    print(f"  PTC intercept       : {fit.intercept:.1f} ADU²  (= read² − bias/gain; bias frames needed to split it)")
+    print(f"  sky level range     : {lvls.min():.0f} - {lvls.max():.0f} ADU")
+    print(f"  GAIN                : {fit.gain:.3f} e-/ADU   (95% CI {fit.gain_lo:.3f}-{fit.gain_hi:.3f})")
+    print(f"                      : {inv:.3f} ADU/e-   (95% CI {inv_lo:.3f}-{inv_hi:.3f})")
+    print(f"  PTC intercept       : {fit.intercept:.1f} ADU²  (= read² - bias/gain; bias frames needed to split it)")
 
     if not args.no_plot:
         out = plot_ptc(fit, args.out, title=f"detector gain: {Path(args.inputs[0]).name}")

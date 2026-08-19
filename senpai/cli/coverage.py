@@ -758,8 +758,8 @@ def process_single_corridor_time_step(
 
     logger.debug(
         f"  Corridor time step {time_step_num}: Querying square region "
-        f"{query_size:.3f}° × {query_size:.3f}° (to encompass corridor: "
-        f"{corridor_width:.3f}° × {corridor_height:.3f}° at angle) "
+        f"{query_size:.3f}° x {query_size:.3f}° (to encompass corridor: "
+        f"{corridor_width:.3f}° x {corridor_height:.3f}° at angle) "
         f"centered at ({corridor.ra_center:.2f}°, {corridor.dec_center:.2f}°)"
     )
 
@@ -1118,7 +1118,7 @@ def load_position_statistics_from_files(
                 if len(pos_statistics) != expected_count:
                     incomplete_positions[grid_pos] = (
                         f"incomplete: {len(pos_statistics)}/{expected_count} statistics "
-                        f"(expected {len(expected_fovs)} FOVs × {len(expected_mags)} mags). "
+                        f"(expected {len(expected_fovs)} FOVs x {len(expected_mags)} mags). "
                         f"File: {pos_file.name}"
                     )
                     file_size = pos_file.stat().st_size if pos_file.exists() else 0
@@ -2213,10 +2213,10 @@ def plot_star_distribution_debug_corridor(
         title_lines = [
             f"Corridor Time Step {time_step_num}: Stars brighter than mag {mag_threshold:.1f}",
             f"Center: RA={center_ra:.2f}°, Dec={center_dec:.2f}°",
-            f"Query region: {query_x_fov:.2f}° × {query_y_fov:.2f}°",
+            f"Query region: {query_x_fov:.2f}° x {query_y_fov:.2f}°",
         ]
         if corridor_width is not None and corridor_height is not None:
-            title_lines.append(f"Corridor (at angle): {corridor_width:.3f}° × {corridor_height:.3f}°")
+            title_lines.append(f"Corridor (at angle): {corridor_width:.3f}° x {corridor_height:.3f}°")
         title_lines.extend(
             [
                 f"Earth-Moon separation: {corridor.earth_moon_separation_deg:.3f}°",

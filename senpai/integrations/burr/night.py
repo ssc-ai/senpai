@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Window (seconds) within which a frame's filename timestamp must fall after a
 # command's observation_time to be attributed to it. Coverage points run 3
 # sequential sub-exposures (sidereal + rate + rate) plus readouts; in practice
-# the trailing frames land 150–200s after the command logs the start. 300s is
+# the trailing frames land 150-200s after the command logs the start. 300s is
 # the safe upper bound — the "latest preceding command of same type" rule in
 # :func:`_attribute_command` prevents overlap into the next collection.
 _DEFAULT_ATTRIBUTION_WINDOW_S: float = 300.0
@@ -53,7 +53,7 @@ _RATE_TARGET_TOKENS: frozenset[str] = frozenset({"RateTarget"})
 
 # Inter-frame gap (seconds) above which we treat orphan frames of the same task
 # as belonging to *different* pointings. Within-pointing gaps for burr's
-# photometric_standards and twilight_flats sequences are 7–25s; the next
+# photometric_standards and twilight_flats sequences are 7-25s; the next
 # pointing's first frame is typically ≥60s later (intervening slew + a
 # logged collection in between).
 _ORPHAN_CLUSTER_GAP_S: float = 60.0

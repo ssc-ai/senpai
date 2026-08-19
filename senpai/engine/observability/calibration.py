@@ -72,7 +72,7 @@ class FramePhoto:
     altitude_deg: float | None = None
     azimuth_deg: float | None = None
     airmass: float | None = None
-    fov_sq_deg: float | None = None  # x_fov × y_fov from WCS, for area metrics
+    fov_sq_deg: float | None = None  # x_fov x y_fov from WCS, for area metrics
     # Moon geometry (filled by _add_moon_geometry; None if astropy/site absent).
     # Moonglow raises sky background → degrades SNR/depth, but NOT the zero
     # point (the star's flux is background-subtracted), so it's a depth-only
@@ -100,7 +100,7 @@ class FramePhoto:
     # Empty (not None) when the frame has photometry but no qualifying stars.
     stars_mag: list[float] = field(default_factory=list)
     stars_snr: list[float] = field(default_factory=list)
-    # Per-star ZP offset (m_cat − m_inst), parallel to stars_mag; None entries
+    # Per-star ZP offset (m_cat - m_inst), parallel to stars_mag; None entries
     # mark stars without a measured instrumental magnitude. Empty on runs
     # predating stars_zp_offset retention.
     stars_zp_offset: list[float | None] = field(default_factory=list)
@@ -184,7 +184,7 @@ def _airmass(altitude_deg: float | None) -> float | None:
 def _sky_mu(f: FramePhoto) -> float | None:
     """Sky surface brightness in mag/arcsec², from the captured flat-fielded sky level.
 
-    With m = ZP − 2.5·log10(flux/t_exp), one pixel's sky flux is at m_pix = ZP −
+    With m = ZP - 2.5·log10(flux/t_exp), one pixel's sky flux is at m_pix = ZP -
     2.5·log10(sky_adu/t_exp); converting per-pixel → per-arcsec² adds 2.5·log10(pixel_area) =
     5·log10(pixscale). Returns None if any input (ZP / sky / exposure / plate scale) is missing.
     """
@@ -258,10 +258,10 @@ def _add_moon_geometry(calib: NightCalibration) -> None:
     fields = SkyCoord([f.ra_center_deg for f in fr] * u.deg, [f.dec_center_deg for f in fr] * u.deg)
     seps = np.atleast_1d(fields.separation(moon).deg)
     malt = np.atleast_1d(moon.transform_to(AltAz(obstime=times, location=loc)).alt.deg)
-    for f, s, a in zip(fr, seps, malt, strict=False):
+    for f, s, a in zip(fr, seps, malt, strict=True):
         f.moon_sep_deg = float(s)
         f.moon_alt_deg = float(a)
-    # Illumination from the Sun–Moon elongation at mid-night.
+    # Illumination from the Sun-Moon elongation at mid-night.
     tmid = times[len(times) // 2]
     elong = get_body("moon", tmid, loc).separation(get_sun(tmid)).deg
     calib.moon_illumination = float(0.5 * (1 - math.cos(math.radians(elong))))
@@ -499,7 +499,7 @@ def _fill_timing_altaz(
     aa = sky.transform_to(AltAz(obstime=times, location=loc))
     alt = np.atleast_1d(aa.alt.deg)
     az = np.atleast_1d(aa.az.deg)
-    for t, al, a in zip(timings, alt, az, strict=False):
+    for t, al, a in zip(timings, alt, az, strict=True):
         t.altitude_deg = float(al)
         t.azimuth_deg = float(a)
 
@@ -514,8 +514,8 @@ class ZeroPointStat:
     filter_name: str
     n: int
     median: float
-    p16: float  # 16th percentile (lower 1-σ-ish)
-    p84: float  # 84th percentile (upper 1-σ-ish)
+    p16: float  # 16th percentile (lower 1-sigma-ish)
+    p84: float  # 84th percentile (upper 1-sigma-ish)
     median_err: float | None = None
 
 
@@ -556,7 +556,7 @@ class NightCalibration:
     extinction_per_filter: dict[str, ExtinctionFit] = field(default_factory=dict)
     limiting_mag_p50_per_filter: dict[str, float] = field(default_factory=dict)
     limiting_mag_p90_per_filter: dict[str, float] = field(default_factory=dict)
-    moon_illumination: float | None = None  # 0–1 fraction at mid-night
+    moon_illumination: float | None = None  # 0-1 fraction at mid-night
     # Aperture/annulus definition (PSF factors + human-readable note), lifted
     # from a batch result's top-level `photometry` block so a standalone
     # plot_data.json / night_calibration.json carries the photometry policy
@@ -779,11 +779,11 @@ def _snr_consistent(snr: float, mag: float, f: FramePhoto, tolerance: float = 5.
     """Check whether a star's measured SNR is plausible for its catalog magnitude.
 
     By definition SNR ≈ limiting_snr (3) at the frame's lim50 and scales with
-    flux (×10^0.4 per mag) in the background-dominated regime, so the frame
+    flux (x10^0.4 per mag) in the background-dominated regime, so the frame
     predicts each star's SNR from its magnitude alone. Stars measured far
-    above that (×{tolerance}) are real flux wrongly attributed — bright-star
+    above that (x{tolerance}) are real flux wrongly attributed — bright-star
     wings/spikes outside the isolation radius, variables, bad cross-matches.
-    They are ~2% of isolated SNR≥5 stars but carry ×10–80 flux excess, enough
+    They are ~2% of isolated SNR≥5 stars but carry x10-80 flux excess, enough
     to fabricate entire faint-end bins. Saturated/bright stars always pass
     (measured ≤ predicted there).
     """
@@ -1322,6 +1322,8 @@ def _render_extinction_curve(d: dict, meta: dict, output_dir: str | Path, plt: M
     multi = len(series) > 1
     cmap = plt.cm.viridis(np.linspace(0, 0.85, max(len(series), 1)))
     title_bits = []
+    # strict=False on purpose: the colormap is sampled to max(len(series), 1), so an empty
+    # series legitimately pairs 1 colour against 0 entries.
     for color, s in zip(cmap, series, strict=False):
         pre = f"{s['filter']} " if multi else ""
         X = np.array(s["airmass"])
@@ -1497,7 +1499,7 @@ def _render_zp_drift(d: dict, meta: dict, output_dir: str | Path, plt: ModuleTyp
 # fingerprint of flat-field residual (variance ∝ sky² biases the single-frame
 # gain low), telling you to trust the dark-sky end and/or move to a frame-
 # difference PTC. The night median (used downstream to convert the ADU zero point
-# to electrons) is drawn with its ±1σ spread.
+# to electrons) is drawn with its ±1 sigma spread.
 
 
 def _data_gain(calib: NightCalibration) -> dict | None:
@@ -1690,7 +1692,7 @@ def _fit_slew_model(timings: list[FrameTiming]) -> dict | None:
 
 def _data_search_rate(calib: NightCalibration) -> dict | None:
 
-    # Search rate = sky area/hour surveyable while still reaching a TARGET-σ (3σ)
+    # Search rate = sky area/hour surveyable while still reaching a TARGET-sigma (3 sigma)
     # detection per field. A star measured at SNR s in a known exposure pins its
     # flux, so the time to reach target_snr is t_req = exp·(target_snr/s)² — valid
     # for *any* s>0, giving each star a search rate fov/(t_req+overhead)·3600.
@@ -1701,14 +1703,14 @@ def _data_search_rate(calib: NightCalibration) -> dict | None:
     #      exposure ladder can probe (≈157 deg²/h here for 10s max). Slower rates
     #      need longer exposures, not present in this data.
     #   2. A noise floor: a blank aperture still returns SNR≈1, so measured SNR
-    #      never falls to 0 even well past the limit (it plateaus at ~0.9σ).
+    #      never falls to 0 even well past the limit (it plateaus at ~0.9 sigma).
     # We remove the noise floor by subtracting it in QUADRATURE — the standard
     # debiasing when noise adds in quadrature to a significance measurement:
-    #   s_signal = √(max(s² − s_noise², 0))
-    # Bright stars are essentially unchanged (√(s²−n²)≈s); stars at the noise
+    #   s_signal = √(max(s² - s_noise², 0))
+    # Bright stars are essentially unchanged (√(s²-n²)≈s); stars at the noise
     # level go to zero signal → rate 0. This fills the faint/slow band with the
     # real (small) search rates that ARE in the data in aggregate, while the curve
-    # still reaches 0 at the true limit instead of a 1σ cliff or a noise plateau.
+    # still reaches 0 at the true limit instead of a 1 sigma cliff or a noise plateau.
     # s_noise is measured per-night as the median SNR of stars well past the
     # limiting magnitude, where the flux is negligible and the SNR is pure noise.
     #
@@ -1737,7 +1739,7 @@ def _data_search_rate(calib: NightCalibration) -> dict | None:
         if f.limiting_magnitude_50 is not None:
             lim50s.append(f.limiting_magnitude_50)
         lim = f.limiting_magnitude_50 if f.limiting_magnitude_50 is not None else np.nan
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True):
             if not iso:
                 continue
             m_l.append(m)
@@ -1765,7 +1767,7 @@ def _data_search_rate(calib: NightCalibration) -> dict | None:
     faint = (mg > median_lim50 + 2.5) if median_lim50 is not None else (mg > np.percentile(mg, 95))
     s_noise = float(np.median(sn[faint])) if int(faint.sum()) >= 100 else 0.9
 
-    # Reject spuriously-high SNR (bright-star wings, bad matches): >5× predicted.
+    # Reject spuriously-high SNR (bright-star wings, bad matches): >5x predicted.
     with np.errstate(over="ignore", invalid="ignore"):
         snr_pred = 3.0 * 10 ** (0.4 * (lim - mg))
     consistent = np.isnan(lim) | (sn <= 5.0 * snr_pred)
@@ -1827,7 +1829,7 @@ def _render_search_rate(d: dict, meta: dict, output_dir: str | Path, plt: Module
             capthick=1.5,
             elinewidth=1.5,
             alpha=0.85,
-            label="Binned data (median ± 1σ percentiles)",
+            label="Binned data (median ± 1 sigma percentiles)",
         )
     lim = d.get("lim50")
     if lim is not None:
@@ -1840,7 +1842,7 @@ def _render_search_rate(d: dict, meta: dict, output_dir: str | Path, plt: Module
             ls="--",
             lw=1.8,
             alpha=0.8,
-            label=f"Limiting Mag (G={lim['med']:.2f}, 16/84: {lim['lo']:.2f}–{lim['hi']:.2f})",
+            label=f"Limiting Mag (G={lim['med']:.2f}, 16/84: {lim['lo']:.2f}-{lim['hi']:.2f})",
         )
     elif d["median_lim50"] is not None:
         ax.axvline(
@@ -1852,7 +1854,7 @@ def _render_search_rate(d: dict, meta: dict, output_dir: str | Path, plt: Module
             label=f"Limiting Mag (G={d['median_lim50']:.2f})",
         )
     ax.set_xlabel("Gaia G magnitude (catalog)")
-    ax.set_ylabel(f"Search Rate (deg²/hour to TARGET {d['target_snr']:.0f}σ)")
+    ax.set_ylabel(f"Search Rate (deg²/hour to TARGET {d['target_snr']:.0f}sigma)")
     om = d.get("overhead_model")
     if om and om.get("fov_width_deg"):
         oh_txt = (
@@ -1867,8 +1869,8 @@ def _render_search_rate(d: dict, meta: dict, output_dir: str | Path, plt: Module
     ax.set_title(
         f"{meta['night_id']}: search rate vs magnitude "
         f"({d['n_stars']} isolated stars, sidereal; SNR debiased by "
-        f"{d.get('noise_floor_snr', 0):.2f}σ noise floor, scaled to "
-        f"TARGET {d['target_snr']:.0f}σ)\n{oh_txt}",
+        f"{d.get('noise_floor_snr', 0):.2f}sigma noise floor, scaled to "
+        f"TARGET {d['target_snr']:.0f}sigma)\n{oh_txt}",
         fontsize=10,
     )
     ax.grid(True, alpha=0.3)
@@ -1916,7 +1918,7 @@ def _render_slew_model(d: dict, meta: dict, output_dir: str | Path, plt: ModuleT
         )
     ax.set_xscale("log")
     ax.set_xlabel("Slew separation between consecutive frames (deg, alt/az)")
-    ax.set_ylabel("Inter-frame overhead  =  Δt − exposure  (s)")
+    ax.set_ylabel("Inter-frame overhead  =  Δt - exposure  (s)")
     ax.set_ylim(0, float(np.percentile(over, 98)))
     ax.set_title(f"{meta['night_id']}: inter-frame overhead model (readout + settle + slew)")
     ax.grid(True, which="both", alpha=0.3)
@@ -1941,7 +1943,7 @@ _PSF_MIN_STAMPS = 20  # min stacked stars for a usable profile
 _PSF_MIN_PEAK_SNR = 20.0  # per-stamp peak/background-noise floor: below this the
 # max pixel is a noise spike, so peak-normalization
 # corrupts the stack (e.g. faint stars in a 1s frame)
-_PSF_FWHM_SANITY = 2.5  # reject a stack whose cut FWHM exceeds this × the
+_PSF_FWHM_SANITY = 2.5  # reject a stack whose cut FWHM exceeds this x the
 # frame's detection FWHM (cosmic rays / settling-trailed
 # short frames stack to a meaningless broad blob)
 _PSF_N_BANDS = 3
@@ -2031,7 +2033,7 @@ def _psf_stack_stamp(
         noise = float(np.std(ring))
         st -= np.median(ring)
         # Cosmic rays / hot pixels are single-pixel spikes that can top the real
-        # star peak (common in short exposures); a 3×3 median filter is immune to
+        # star peak (common in short exposures); a 3x3 median filter is immune to
         # them, so we take the peak / SNR / centroid from the filtered stamp. The
         # raw stamp is what gets stacked — residual spikes wash out in the median.
         sm = ndimage.median_filter(st, size=3)
@@ -2301,7 +2303,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
     fig = plt.figure(figsize=(max(13.0, 4.4 * nb), 10.5))
     gs = fig.add_gridspec(2, 2 * nb, height_ratios=[1.05, 1.0])
 
-    for i, (b, c) in enumerate(zip(bands, colors, strict=False)):
+    for i, (b, c) in enumerate(zip(bands, colors, strict=True)):
         ax = fig.add_subplot(gs[0, 2 * i : 2 * i + 2])
         stamp = np.asarray(b["stamp2d"])
         ext = [-half, half, -half, half]
@@ -2320,7 +2322,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
         ax.set_ylim(-win, win)
         sec = f', {b["fwhm_det"] * psc:.1f}"' if psc else ""
         ax.set_title(
-            f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px{sec}\n"
+            f"FWHM {b['fwhm_lo']:.1f}-{b['fwhm_hi']:.1f}px{sec}\n"
             f"{b['exposure']:.0f}s, {a_name}/{b_name}="
             f"{b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px, n={b['n_stars']}",
             fontsize=9,
@@ -2331,16 +2333,16 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
 
     axr = fig.add_subplot(gs[1, :nb])
     axc = fig.add_subplot(gs[1, nb:])
-    for b, c in zip(bands, colors, strict=False):
+    for b, c in zip(bands, colors, strict=True):
         spike = max(b.get("spike_ra") or 0, b.get("spike_dec") or 0)
         # Flag when half-max FWHM is unreliable (narrow core on a broad halo).
         flag = (
-            f"  ⚠spike {spike:.1f}× → FW¼M {b.get('fwqm_ra', 0):.0f}/{b.get('fwqm_dec', 0):.0f}px"
+            f"  ⚠spike {spike:.1f}x → FW¼M {b.get('fwqm_ra', 0):.0f}/{b.get('fwqm_dec', 0):.0f}px"
             if spike >= 1.3
             else ""
         )
         lbl = (
-            f"FWHM {b['fwhm_lo']:.1f}–{b['fwhm_hi']:.1f}px  "
+            f"FWHM {b['fwhm_lo']:.1f}-{b['fwhm_hi']:.1f}px  "
             f"{a_name}/{b_name}={b['fwhm_ra']:.1f}/{b['fwhm_dec']:.1f}px{flag}"
         )
         axr.plot(b["r"], np.clip(b["radial"], 1e-4, None), color=c, lw=2, label=lbl)
@@ -2366,7 +2368,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
     axc.set_xlabel("Δ from center along sky axis (px)" if sky else "Δ from center (px)")
     axc.set_ylabel("normalized flux")
     axc.set_title(
-        f"{a_name} cut (E–W, solid) & {b_name} cut (N–S, dashed)"
+        f"{a_name} cut (E-W, solid) & {b_name} cut (N-S, dashed)"
         if sky
         else f"{a_name} cut (solid) & {b_name} cut (dashed)"
     )
@@ -2617,7 +2619,7 @@ def _data_snr_vs_exposure(calib: NightCalibration) -> dict | None:
         corr = 10 ** (0.4 * k * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         by_task.setdefault(_frame_task(f), []).extend(
             (f.exposure_time, m, s * corr)
-            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False)
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True)
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     order = [t for t in ("coverage", "photometric", "calsats", "other") if by_task.get(t)]
@@ -2672,7 +2674,7 @@ def _render_snr_vs_exposure(d: dict, meta: dict, output_dir: str | Path, plt: Mo
 
     fig, axes = plt.subplots(1, len(order), figsize=(5.5 * len(order), 6.5), sharey=True, squeeze=False)
     axes = axes[0]
-    for ax, tk in zip(axes, order, strict=False):
+    for ax, tk in zip(axes, order, strict=True):
         for ser in d["faceted"].get(tk, []):
             ax.errorbar(
                 ser["x"],
@@ -2762,7 +2764,7 @@ def _data_snr_vs_mag_weathermasked(calib: NightCalibration) -> dict | None:
         corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
         mag_pts.extend(
             (f.exposure_time, m, s * corr)
-            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False)
+            for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True)
             if s > _PLOT_SNR_FLOOR and iso and _snr_consistent(s, m, f)
         )
     if not mag_pts:
@@ -2830,7 +2832,7 @@ def _render_snr_vs_mag_weathermasked(
             color="red",
             ls="--",
             lw=1.8,
-            label=f"Limiting Mag (G={lim['med']:.2f}, 16/84: {lim['lo']:.2f}–{lim['hi']:.2f})",
+            label=f"Limiting Mag (G={lim['med']:.2f}, 16/84: {lim['lo']:.2f}-{lim['hi']:.2f})",
         )
     ax.axhline(d["min_meas_snr"], color="gray", ls=":", lw=1, label=f"SNR = {d['min_meas_snr']:.0f}")
     ax.set_yscale("log")
@@ -2924,7 +2926,7 @@ def _data_snr_vs_moon_distance(calib: NightCalibration) -> dict | None:
     def _norm_stars(f: FramePhoto) -> float | None:
         kk = ext_k.get(f.filter_name or "unknown", k_default)
         corr = 10 ** (0.4 * kk * (f.airmass - 1.0)) if f.airmass is not None else 1.0
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True):
             if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f):
                 yield round(f.exposure_time), m, s * corr
 
@@ -3074,7 +3076,7 @@ def _usable_cal_frames(calib: NightCalibration, zp_mode: str, zp_sig: float) -> 
 def _best_sampled_mag(usable: list[FramePhoto], min_meas_snr: float) -> float | None:
     mag_tot: dict[int, int] = {}
     for f in usable:
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True):
             if iso and m and s and s >= min_meas_snr:
                 mag_tot[int(m)] = mag_tot.get(int(m), 0) + 1
     return max(mag_tot, key=mag_tot.get) if mag_tot else None
@@ -3108,7 +3110,7 @@ def _data_snr_vs_exposure_6s_explained(calib: NightCalibration) -> dict | None:
             else 1.0
         )
         ex = round(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True):
             if iso and m and s > _PLOT_SNR_FLOOR and _snr_consistent(s, m, f) and best_mag <= m < best_mag + 1:
                 prog[tk].setdefault(ex, []).append(s * corr)
     if not any(len(dd) >= 2 for dd in prog.values()):
@@ -3195,7 +3197,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict | None:
             else 1.0
         )
         rt = math.sqrt(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True):
             if iso and m and s and s >= min_meas_snr and target - 2 <= m < target + 2:
                 sm.append(m)
                 sl.append(math.log10(s * corr / rt))
@@ -3208,7 +3210,7 @@ def _data_snr_vs_moon_fixedmag(calib: NightCalibration) -> dict | None:
             else 1.0
         )
         rt = math.sqrt(f.exposure_time)
-        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=False):
+        for m, s, iso in zip(f.stars_mag, f.stars_snr, _isolated_flags(f), strict=True):
             if iso and m and s and s >= min_meas_snr and _snr_consistent(s, m, f) and target - 1 <= m < target + 1:
                 pts.append((f.moon_sep_deg, (s * corr / rt) * 10 ** (slope * (target - m))))
     if len(pts) < 100:
@@ -3301,7 +3303,7 @@ def _render_fwhm(d: dict, meta: dict, output_dir: str | Path, plt: ModuleType, n
         color="firebrick",
         ls="--",
         lw=1.5,
-        label=f"median = {d['median_fwhm']:.1f} px (16/84: {d['p16']:.1f}–{d['p84']:.1f})",
+        label=f"median = {d['median_fwhm']:.1f} px (16/84: {d['p16']:.1f}-{d['p84']:.1f})",
     )
     if any(c > 0 for c in cs):
         cb = plt.colorbar(sc, ax=ax)

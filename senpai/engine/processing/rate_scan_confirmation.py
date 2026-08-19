@@ -11,8 +11,8 @@ approaches, which fail for faint streaks because:
 - Rate errors from single-frame trace length compound across frames
 - Direction ambiguity can't be resolved from noisy profiles
 
-The rate scan is computationally trivial: ~200 trial rates × 2 directions
-× N_frames pixel lookups per candidate.  The DE maps are already computed
+The rate scan is computationally trivial: ~200 trial rates x 2 directions
+x N_frames pixel lookups per candidate.  The DE maps are already computed
 during per-frame detection.
 """
 
@@ -334,8 +334,8 @@ def _rate_scan_candidate(
     stacked_snr = best_sum / noise_combined
 
     # 2. Other frames must contribute real signal (not just reference)
-    #    Require at least 1 other frame with DE > 3σ
-    n_other_with_signal = sum(1 for v, ofd in zip(best_other_vals, other_frames, strict=False) if v > 3 * ofd["noise"])
+    #    Require at least 1 other frame with DE > 3 sigma
+    n_other_with_signal = sum(1 for v, ofd in zip(best_other_vals, other_frames, strict=True) if v > 3 * ofd["noise"])
 
     # 3. The best rate must beat a "no motion" baseline
     #    (catches static artifacts that have signal at the same position in all frames)
@@ -348,9 +348,9 @@ def _rate_scan_candidate(
 
     motion_boost = best_sum - static_sum
 
-    # With constrained angle search (~7 angles × 120 rates × 2 dirs ≈ 1680 trials),
+    # With constrained angle search (~7 angles x 120 rates x 2 dirs ≈ 1680 trials),
     # the expected max under null is moderate.  Require stacked SNR > 12
-    # for detection.  A real streak with 3 frames at ~10σ each gives
+    # for detection.  A real streak with 3 frames at ~10 sigma each gives
     # stacked_snr ≈ 17.
     all_vals = [ref_val, *best_other_vals]
 
@@ -401,7 +401,7 @@ def _rate_scan_candidate(
     best_sin_a = np.sin(np.radians(best_angle))
     n_angle_consistent = 0
     r_search = max(1, round(fwhm))  # Search along streak direction
-    for v, ofd in zip(best_other_vals, other_frames, strict=False):
+    for v, ofd in zip(best_other_vals, other_frames, strict=True):
         if v <= 3 * ofd["noise"]:
             continue
         dx, dy = ofd["shift"]
@@ -508,7 +508,7 @@ def _rate_scan_candidate(
     if ref_frame.frame_metadata and ref_frame.frame_metadata.exposure_time_seconds:
         exposure_time = ref_frame.frame_metadata.exposure_time_seconds
 
-    # Streak length from rate × exposure
+    # Streak length from rate x exposure
     length = best_rate * exposure_time if exposure_time else best_rate
 
     # Direction in [0, 360)
@@ -539,7 +539,7 @@ def _rate_scan_candidate(
     rate_ra, rate_dec, rate_arcsec = None, None, None
 
     wcs_obj = None
-    for fi, px, py in zip(frame_indices, positions_x, positions_y, strict=False):
+    for fi, px, py in zip(frame_indices, positions_x, positions_y, strict=True):
         f = next((f for f in all_frames if f.index == fi), None)
         if f and f.starfield and f.starfield.wcs:
             try:
@@ -802,9 +802,9 @@ def _deduplicate(streaks: list[CorrelatedStreak], fwhm: float) -> list[Correlate
     for cs in streaks:
         is_dup = False
         for existing in kept:
-            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=False):
+            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=True):
                 for efi, epx, epy in zip(
-                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=False
+                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=True
                 ):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2
