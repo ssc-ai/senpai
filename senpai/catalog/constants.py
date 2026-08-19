@@ -1,6 +1,4 @@
-"""
-Catalog-related constants and enums.
-"""
+"""Catalog-related constants and enums."""
 
 from enum import Enum
 
@@ -43,7 +41,7 @@ class SDSSFilter(Enum):
     U = "u"
     G = "g"
     R = "r"
-    I = "i"
+    I = "i"  # noqa: E741 - the SDSS i band; the member name is the public API
     Z = "z"
 
 
@@ -55,7 +53,7 @@ class GaiaFilter(Enum):
     RP = "RP"
 
 
-def get_filters_for_catalog(catalog_type: CatalogType):
+def get_filters_for_catalog(catalog_type: CatalogType) -> list[str]:
     """Get available filters for a given catalog type.
 
     Args:
@@ -63,6 +61,7 @@ def get_filters_for_catalog(catalog_type: CatalogType):
 
     Returns:
         List of available filter names for the catalog
+
     """
     filter_mappings = {
         CatalogType.SSTRC7: SSTRC7Filter,

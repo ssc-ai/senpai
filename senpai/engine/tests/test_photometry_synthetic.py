@@ -1,18 +1,12 @@
-"""Synthetic-image tests for the live photometry engine
-(senpai.engine.photometry.utils).
+"""Synthetic-image tests for the live photometry engine (senpai.engine.photometry.utils).
 
-We inject 2D Gaussian PSF stars of *known* total flux at *known* positions on a
-flat + Gaussian-noise background (seeded) and check that:
-
-  - circular-aperture photometry recovers the injected flux to a few percent,
-  - SNR lands in a sensible ballpark and tracks brightness,
-  - the quality flag honours min_snr / max_crowding,
-  - the limiting-magnitude / completeness helpers and magnitude-selection /
-    crowding helpers behave as documented.
-
-The photometry functions read the process-wide config singleton via
-get_config(); we initialise it from a real YAML in an autouse fixture (same
-pattern as test_streak_extraction.py) and force plotting off so nothing touches
+We inject 2D Gaussian PSF stars of *known* total flux at *known* positions on a flat +
+Gaussian-noise background (seeded) and check that: - circular-aperture photometry recovers the
+injected flux to a few percent, - SNR lands in a sensible ballpark and tracks brightness, - the
+quality flag honours min_snr / max_crowding, - the limiting-magnitude / completeness helpers and
+magnitude-selection / crowding helpers behave as documented. The photometry functions read the
+process-wide config singleton via ``settings``; we initialise it from a real YAML in an autouse
+fixture (same pattern as test_streak_extraction.py) and force plotting off so nothing touches
 the filesystem.
 """
 
@@ -21,11 +15,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from astropy.io import fits
+from scipy.spatial import cKDTree
 
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.engine.models.images import ProcessedFitsImage
-from senpai.engine.models.metadata import FWHMMetadata, ImageMetadata
+from senpai.engine.models.metadata import CollectionMetadata, FWHMMetadata, ImageMetadata
+from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
 from senpai.engine.models.starfield import StarField, StarInSpace
 from senpai.engine.photometry.utils import (
     SimplePhotometryConfig,
@@ -35,6 +31,7 @@ from senpai.engine.photometry.utils import (
     _completeness_limits,
     _find_common_magnitude_system,
     _get_best_magnitude,
+    _guard_aperture_mask_footprint,
     _has_bright_neighbor,
     _isotonic_completeness,
     _precompute_star_magnitudes,
@@ -49,14 +46,14 @@ SIGMA = FWHM / 2.355
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _config():
+def _config() -> None:
     """Process-wide config singleton, plotting off (no files written)."""
     initialize_config(CONFIG_DIR / "burr.yaml")
-    get_config().plotting.photometry = False
-    get_config().plotting.debug = False
+    settings.plotting.photometry = False
+    settings.plotting.debug = False
 
 
-def _cfg(**kw) -> SimplePhotometryConfig:
+def _cfg(**kw: object) -> SimplePhotometryConfig:
     """Photometry config with a simple, deterministic noise model.
 
     gain=1, read noise off -> flux_err is pure shot+sky Poisson in ADU, which
@@ -67,7 +64,7 @@ def _cfg(**kw) -> SimplePhotometryConfig:
     return SimplePhotometryConfig(**base)
 
 
-def _inject_star(data, x0, y0, total_flux, sigma=SIGMA):
+def _inject_star(data: np.ndarray, x0: float, y0: float, total_flux: float, sigma: float = SIGMA) -> None:
     """Add a normalised 2D Gaussian of given total flux in-place."""
     h, w = data.shape
     yy, xx = np.mgrid[0:h, 0:w]
@@ -76,7 +73,8 @@ def _inject_star(data, x0, y0, total_flux, sigma=SIGMA):
     data += psf
 
 
-def _image(data, exposure_time=1.0):
+def _image(data: np.ndarray, exposure_time: float = 1.0) -> ProcessedFitsImage:
+    """Wrap a bare array as a ProcessedFitsImage, with the metadata photometry reads."""
     h, w = data.shape
     return ProcessedFitsImage(
         data=data.astype(np.float64),
@@ -86,18 +84,33 @@ def _image(data, exposure_time=1.0):
     )
 
 
-def _flux_for_mag(mag):
+def _flux_for_mag(mag: float) -> float:
+    """Total flux in ADU that a star of this magnitude has under TRUE_ZP."""
     return 10 ** ((TRUE_ZP - mag) / 2.5)
 
 
-def _single_star_image(total_flux, x0=100.3, y0=98.7, size=200, bg=100.0, sky=5.0, seed=0):
+def _single_star_image(
+    total_flux: float,
+    x0: float = 100.3,
+    y0: float = 98.7,
+    size: int = 200,
+    bg: float = 100.0,
+    sky: float = 5.0,
+    seed: int = 0,
+) -> tuple[ProcessedFitsImage, float, float]:
+    """One Gaussian star of known flux on a seeded noisy background.
+
+    The default position is deliberately fractional: a star centred exactly on a pixel would
+    hide any aperture-placement error that lands on the half-pixel.
+    """
     rng = np.random.default_rng(seed)
     data = bg + rng.normal(0.0, sky, (size, size))
     _inject_star(data, x0, y0, total_flux)
     return _image(data), x0, y0
 
 
-def _fwhm_stats(fwhm=FWHM):
+def _fwhm_stats(fwhm: float = FWHM) -> FWHMMetadata:
+    """FWHM metadata carrying the spread a real measurement would have."""
     return FWHMMetadata(
         n_measurements=10,
         median_fwhm=fwhm,
@@ -111,7 +124,8 @@ def _fwhm_stats(fwhm=FWHM):
     )
 
 
-def _starfield(stars, fwhm=FWHM, size=400):
+def _starfield(stars: list[StarInSpace], fwhm: float = FWHM, size: int = 400) -> StarField:
+    """Build a StarField holding just the catalog stars and FWHM that photometry reads."""
     return StarField.model_construct(
         catalog_stars=list(stars),
         fwhm_stats=_fwhm_stats(fwhm),
@@ -125,7 +139,7 @@ def _starfield(stars, fwhm=FWHM, size=400):
 
 
 @pytest.mark.parametrize("total_flux", [20000.0, 50000.0, 120000.0])
-def test_single_star_recovers_injected_flux(total_flux):
+def test_single_star_recovers_injected_flux(total_flux: float) -> None:
     """Aperture (r = 2*FWHM ~ 7 px) captures ~99.7% of a FWHM-3.5 Gaussian."""
     img, x0, y0 = _single_star_image(total_flux)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
@@ -135,7 +149,7 @@ def test_single_star_recovers_injected_flux(total_flux):
     assert res.flux == pytest.approx(total_flux, rel=0.02)
 
 
-def test_single_star_snr_in_ballpark():
+def test_single_star_snr_in_ballpark() -> None:
     """Background-limited SNR ~ flux / (sky_sigma * sqrt(N_pix)).
 
     The engine's reported SNR uses a shot+sky noise model, so it is >= the
@@ -151,7 +165,12 @@ def test_single_star_snr_in_ballpark():
     assert res.snr < 5.0 * sky_limited
 
 
-def test_brighter_star_has_higher_snr():
+def test_brighter_star_has_higher_snr() -> None:
+    """SNR increases with flux at a fixed background.
+
+    Seeded identically so only the injected flux differs; otherwise noise realisation could
+    account for the ordering.
+    """
     img_f, x0, y0 = _single_star_image(20000.0, seed=7)
     img_b, _, _ = _single_star_image(120000.0, seed=7)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
@@ -160,7 +179,8 @@ def test_brighter_star_has_higher_snr():
     assert bright.snr > faint.snr
 
 
-def test_single_star_background_recovered():
+def test_single_star_background_recovered() -> None:
+    """The annulus recovers the background level and its scatter, not the star's own flux."""
     img, x0, y0 = _single_star_image(50000.0, bg=250.0, sky=4.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
     res = measure_simple_star_photometry(img, star, FWHM, _cfg())
@@ -168,7 +188,8 @@ def test_single_star_background_recovered():
     assert res.background_std == pytest.approx(4.0, abs=1.5)
 
 
-def test_instrumental_magnitude_matches_flux():
+def test_instrumental_magnitude_matches_flux() -> None:
+    """Instrumental magnitude is -2.5*log10(flux), with no zero point applied."""
     img, x0, y0 = _single_star_image(50000.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
     res = measure_simple_star_photometry(img, star, FWHM, _cfg())
@@ -176,26 +197,36 @@ def test_instrumental_magnitude_matches_flux():
     assert res.instrumental_magnitude == pytest.approx(expected, abs=0.01)
 
 
-def test_star_none_coordinates_returns_none():
+def test_star_none_coordinates_returns_none() -> None:
+    """A star with no pixel position is skipped rather than measured at a guessed one."""
     img, _, _ = _single_star_image(50000.0)
     star = StarInSpace(ra=0, dec=0, x=None, y=None, magnitude=14.0)
     assert measure_simple_star_photometry(img, star, FWHM, _cfg()) is None
 
 
-def test_star_near_edge_returns_none():
+def test_star_near_edge_returns_none() -> None:
+    """A star whose aperture would fall off the frame is skipped.
+
+    Measuring it would silently integrate over fewer pixels and report a too-faint flux.
+    """
     img, _, _ = _single_star_image(50000.0, size=200)
     star = StarInSpace(ra=0, dec=0, x=2.0, y=2.0, magnitude=14.0)
     assert measure_simple_star_photometry(img, star, FWHM, _cfg()) is None
 
 
-def test_quality_flag_true_for_bright_isolated_star():
+def test_quality_flag_true_for_bright_isolated_star() -> None:
+    """A bright, isolated star passes every quality gate.
+
+    The counterpart to the rejection tests below: without this, a gate that rejected
+    everything would still look correct.
+    """
     img, x0, y0 = _single_star_image(80000.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
     res = measure_simple_star_photometry(img, star, FWHM, _cfg())
     assert res.quality_flag is True
 
 
-def test_quality_flag_false_when_min_snr_too_high():
+def test_quality_flag_false_when_min_snr_too_high() -> None:
     """Raise min_snr above the star's SNR -> quality flag flips off."""
     img, x0, y0 = _single_star_image(50000.0)
     star = StarInSpace(ra=0, dec=0, x=x0, y=y0, magnitude=14.0)
@@ -211,7 +242,14 @@ def test_quality_flag_false_when_min_snr_too_high():
 # ---------------------------------------------------------------------------
 
 
-def _field_image_and_starfield(seed=1, size=400, sky=5.0):
+def _field_image_and_starfield(
+    seed: int = 1, size: int = 400, sky: float = 5.0
+) -> tuple[ProcessedFitsImage, StarField]:
+    """Eight stars of known magnitude spread across a frame, with their StarField.
+
+    Spanning 12th to 16th magnitude, so the zero-point fit has a real lever arm and the
+    completeness curve has both a bright and a faint end.
+    """
     rng = np.random.default_rng(seed)
     data = 100.0 + rng.normal(0.0, sky, (size, size))
     positions = [(60, 60), (120, 90), (200, 150), (300, 250), (150, 300), (250, 80), (90, 200), (330, 330)]
@@ -225,7 +263,8 @@ def _field_image_and_starfield(seed=1, size=400, sky=5.0):
     return _image(data), _starfield(stars, size=size)
 
 
-def test_starfield_recovers_all_star_fluxes():
+def test_starfield_recovers_all_star_fluxes() -> None:
+    """Every catalog star in the field is measured, and each recovers its injected flux."""
     img, sf = _field_image_and_starfield()
     results, _ = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     assert len(results) == 8
@@ -234,14 +273,16 @@ def test_starfield_recovers_all_star_fluxes():
         assert r.flux == pytest.approx(expected, rel=0.03)
 
 
-def test_starfield_zero_point_recovered():
+def test_starfield_zero_point_recovered() -> None:
+    """The fitted zero point recovers the one the fluxes were injected under."""
     img, sf = _field_image_and_starfield()
     _, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     assert summary.zero_point is not None
     assert summary.zero_point == pytest.approx(TRUE_ZP, abs=0.05)
 
 
-def test_starfield_summary_counts_and_snr():
+def test_starfield_summary_counts_and_snr() -> None:
+    """The summary's counts agree with the per-star results it was derived from."""
     img, sf = _field_image_and_starfield()
     results, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     assert summary.n_stars == len(results)
@@ -251,9 +292,12 @@ def test_starfield_summary_counts_and_snr():
     assert len(summary.stars_mag) == len(summary.stars_snr)
 
 
-def test_starfield_records_circular_aperture_geometry():
-    """The summary carries the literal circular aperture/annulus pixel dims:
-    radius/inner/outer = factor × FWHM, so a reader needn't re-derive them."""
+def test_starfield_records_circular_aperture_geometry() -> None:
+    """The summary carries the literal circular aperture and annulus pixel dimensions.
+
+    Radius, inner and outer are each a factor times FWHM, recorded so a reader does not have
+    to re-derive them from the config.
+    """
     img, sf = _field_image_and_starfield()
     _, summary = measure_simple_starfield_photometry(img, sf, _cfg(), frame_index=None)
     geo = summary.aperture_geometry
@@ -264,24 +308,25 @@ def test_starfield_records_circular_aperture_geometry():
     assert geo["bg_outer_px"] == pytest.approx(5.0 * FWHM)  # bg_outer_factor
 
 
-def test_run_result_records_aperture_policy():
-    """to_result() emits a run-level `photometry` block carrying the PSF-factor
-    policy when the run measured photometry, so the output JSON documents how
-    apertures were sized without the original config.yaml."""
-    from senpai.engine.models.metadata import CollectionMetadata
-    from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
+def test_run_result_records_aperture_policy() -> None:
+    """A run that measured photometry records the aperture-sizing policy in its result.
 
+    ``to_result()`` emits a run-level ``photometry`` block carrying the PSF factors, so the
+    output JSON documents how apertures were sized without needing the original config.yaml.
+    """
     frame = SiderealFrame(
         frame=_image(np.zeros((50, 50))),
         index=0,
         photometry_summary={"n_stars": 3, "aperture_geometry": {"shape": "circle"}},
     )
     run = SenpaiRun(
-        id="t", num_frames=1, collect_metadata=CollectionMetadata(),
+        id="t",
+        num_frames=1,
+        collect_metadata=CollectionMetadata(),
         sidereal_frames=[frame],
     )
     block = run.to_result().photometry
-    pcfg = get_config().photometry
+    pcfg = settings.photometry
     assert block is not None
     assert block["aperture_radius_factor"] == pcfg.aperture_radius_factor
     assert block["bg_inner_factor"] == pcfg.bg_inner_factor
@@ -289,20 +334,23 @@ def test_run_result_records_aperture_policy():
     assert "definition" in block
 
 
-def test_run_result_omits_photometry_block_without_photometry():
+def test_run_result_omits_photometry_block_without_photometry() -> None:
     """A run that measured no photometry omits the run-level block entirely."""
-    from senpai.engine.models.metadata import CollectionMetadata
-    from senpai.engine.models.senpai import SenpaiRun, SiderealFrame
-
     frame = SiderealFrame(frame=_image(np.zeros((50, 50))), index=0, photometry_summary=None)
     run = SenpaiRun(
-        id="t", num_frames=1, collect_metadata=CollectionMetadata(),
+        id="t",
+        num_frames=1,
+        collect_metadata=CollectionMetadata(),
         sidereal_frames=[frame],
     )
     assert run.to_result().photometry is None
 
 
-def test_starfield_no_fwhm_returns_empty():
+def test_starfield_no_fwhm_returns_empty() -> None:
+    """A starfield with no measured FWHM yields no photometry.
+
+    Aperture size is derived from FWHM, so there is nothing to size an aperture with.
+    """
     img, sf = _field_image_and_starfield()
     sf_no_fwhm = StarField.model_construct(
         catalog_stars=sf.catalog_stars,
@@ -314,7 +362,8 @@ def test_starfield_no_fwhm_returns_empty():
     assert summary.n_stars == 0
 
 
-def test_starfield_no_catalog_stars_returns_empty():
+def test_starfield_no_catalog_stars_returns_empty() -> None:
+    """A starfield with no catalog stars yields no photometry and no summary statistics."""
     img, sf = _field_image_and_starfield()
     sf_empty = StarField.model_construct(
         catalog_stars=[],
@@ -331,17 +380,20 @@ def test_starfield_no_catalog_stars_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_assess_quality_rejects_negative_flux():
+def test_assess_quality_rejects_negative_flux() -> None:
+    """Negative flux fails the quality gate: a source fainter than its own background."""
     assert _assess_simple_quality(-1.0, 50.0, 0.0, _cfg()) is False
 
 
-def test_assess_quality_rejects_low_snr():
+def test_assess_quality_rejects_low_snr() -> None:
+    """The quality gate honours min_snr on both sides of the threshold."""
     cfg = _cfg(min_snr=5.0)
     assert _assess_simple_quality(100.0, 2.0, 0.0, cfg) is False
     assert _assess_simple_quality(100.0, 10.0, 0.0, cfg) is True
 
 
-def test_assess_quality_rejects_high_crowding():
+def test_assess_quality_rejects_high_crowding() -> None:
+    """The quality gate honours max_crowding on both sides of the threshold."""
     cfg = _cfg(max_crowding=0.3)
     assert _assess_simple_quality(100.0, 50.0, 0.5, cfg) is False
     assert _assess_simple_quality(100.0, 50.0, 0.1, cfg) is True
@@ -352,7 +404,8 @@ def test_assess_quality_rejects_high_crowding():
 # ---------------------------------------------------------------------------
 
 
-def test_crowding_zero_for_isolated_star():
+def test_crowding_zero_for_isolated_star() -> None:
+    """An isolated star reports essentially no crowding."""
     rng = np.random.default_rng(11)
     data = 100.0 + rng.normal(0.0, 3.0, (200, 200))
     _inject_star(data, 100, 100, 50000.0)
@@ -360,7 +413,8 @@ def test_crowding_zero_for_isolated_star():
     assert crowd < 0.05
 
 
-def test_crowding_higher_with_bright_neighbor():
+def test_crowding_higher_with_bright_neighbor() -> None:
+    """Crowding rises when a neighbour contributes flux inside the aperture."""
     rng = np.random.default_rng(12)
     iso = 100.0 + rng.normal(0.0, 3.0, (200, 200))
     _inject_star(iso, 100, 100, 50000.0)
@@ -373,13 +427,21 @@ def test_crowding_higher_with_bright_neighbor():
     assert crowd_neighbour > crowd_iso
 
 
-def test_has_bright_neighbor_detects_blend():
+def test_has_bright_neighbor_detects_blend() -> None:
+    """A brighter star within the isolation radius is reported as a blend.
+
+    This is what keeps a faint star's borrowed flux out of the completeness sample.
+    """
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     bright = StarInSpace(ra=0, dec=0, x=103.0, y=100.0, magnitude=12.0)
     assert _has_bright_neighbor(faint, 18.0, [faint, bright], iso_radius_pix=10.0, delta_mag=2.0) is True
 
 
-def test_has_bright_neighbor_ignores_distant_or_faint():
+def test_has_bright_neighbor_ignores_distant_or_faint() -> None:
+    """Neither a distant bright star nor a nearby similar-magnitude one counts as a blend.
+
+    Distance and brightness both have to qualify, so this pins each independently.
+    """
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     far_bright = StarInSpace(ra=0, dec=0, x=300.0, y=300.0, magnitude=12.0)
     near_similar = StarInSpace(ra=0, dec=0, x=103.0, y=100.0, magnitude=17.5)
@@ -387,10 +449,8 @@ def test_has_bright_neighbor_ignores_distant_or_faint():
     assert _has_bright_neighbor(faint, 18.0, [faint, near_similar], iso_radius_pix=10.0, delta_mag=2.0) is False
 
 
-def test_has_bright_neighbor_kdtree_matches_bruteforce():
+def test_has_bright_neighbor_kdtree_matches_bruteforce() -> None:
     """KD-tree path and the O(n) fallback must agree."""
-    from scipy.spatial import cKDTree
-
     faint = StarInSpace(ra=0, dec=0, x=100.0, y=100.0, magnitude=18.0)
     bright = StarInSpace(ra=0, dec=0, x=104.0, y=100.0, magnitude=12.0)
     stars = [faint, bright]
@@ -406,36 +466,46 @@ def test_has_bright_neighbor_kdtree_matches_bruteforce():
 # ---------------------------------------------------------------------------
 
 
-def test_get_best_magnitude_prefers_order():
+def test_get_best_magnitude_prefers_order() -> None:
+    """Band preference decides which magnitude is used when a star carries several."""
     star = StarInSpace(ra=0, dec=0, magnitudes={"Sloan_r": 14.0, "Johnson_V": 13.5})
     assert _get_best_magnitude(star) == 13.5  # Johnson_V outranks Sloan_r
 
 
-def test_get_best_magnitude_falls_back_to_primary():
+def test_get_best_magnitude_falls_back_to_primary() -> None:
+    """A star with only a primary magnitude uses it."""
     star = StarInSpace(ra=0, dec=0, magnitude=12.0)
     assert _get_best_magnitude(star) == 12.0
 
 
-def test_get_best_magnitude_none_when_absent():
+def test_get_best_magnitude_none_when_absent() -> None:
+    """A star with no magnitude at all yields None rather than a default."""
     star = StarInSpace(ra=0, dec=0)
     assert _get_best_magnitude(star) is None
 
 
-def test_find_common_magnitude_system_picks_covered_filter():
+def test_find_common_magnitude_system_picks_covered_filter() -> None:
+    """The common system is the band the stars actually carry."""
     stars = [StarInSpace(ra=0, dec=0, magnitudes={"Johnson_V": float(m)}) for m in range(10)]
     assert _find_common_magnitude_system(stars) == "Johnson_V"
 
 
-def test_find_common_magnitude_system_primary_fallback():
+def test_find_common_magnitude_system_primary_fallback() -> None:
+    """Stars with only primary magnitudes resolve to the primary system."""
     stars = [StarInSpace(ra=0, dec=0, magnitude=float(m)) for m in range(5)]
     assert _find_common_magnitude_system(stars) == "primary"
 
 
-def test_find_common_magnitude_system_empty():
+def test_find_common_magnitude_system_empty() -> None:
+    """An empty star list has no common system."""
     assert _find_common_magnitude_system([]) is None
 
 
-def test_precompute_star_magnitudes_uses_common_system():
+def test_precompute_star_magnitudes_uses_common_system() -> None:
+    """The magnitude cache reads every star in the one common system.
+
+    Mixing systems across stars would put a colour term into the zero-point fit.
+    """
     stars = [StarInSpace(ra=0, dec=0, magnitudes={"Johnson_V": float(m), "Sloan_r": float(m) + 0.3}) for m in range(6)]
     cache = _precompute_star_magnitudes(stars)
     for s in stars:
@@ -447,7 +517,12 @@ def test_precompute_star_magnitudes_uses_common_system():
 # ---------------------------------------------------------------------------
 
 
-def test_isotonic_completeness_is_monotone_decreasing():
+def test_isotonic_completeness_is_monotone_decreasing() -> None:
+    """Isotonic smoothing produces a non-increasing curve from a spiky input.
+
+    Completeness cannot rise with magnitude, so the smoothing is what makes a threshold
+    crossing well-defined.
+    """
     mag = [10, 11, 12, 13, 14, 15, 16]
     # deliberately spiky input
     pct = [100, 90, 95, 70, 80, 30, 10]
@@ -455,7 +530,11 @@ def test_isotonic_completeness_is_monotone_decreasing():
     assert all(ys[i] >= ys[i + 1] - 1e-9 for i in range(len(ys) - 1))
 
 
-def test_completeness_limits_crossings():
+def test_completeness_limits_crossings() -> None:
+    """The 50% and 90% crossings are read off in the right order.
+
+    90% completeness is reached at a brighter magnitude than 50%, so m90 < m50.
+    """
     mag = [10, 11, 12, 13, 14, 15, 16, 17]
     pct = [100, 100, 100, 90, 60, 30, 10, 0]
     target, m50, m90 = _completeness_limits(mag, pct, target=0.5)
@@ -465,20 +544,25 @@ def test_completeness_limits_crossings():
     assert target == pytest.approx(m50)
 
 
-def test_completeness_limits_none_for_short_curve():
+def test_completeness_limits_none_for_short_curve() -> None:
+    """A curve with too few points yields no limits rather than an extrapolation."""
     assert _completeness_limits([10, 11], [100, 50]) == (None, None, None)
 
 
-def test_completeness_limits_none_when_never_crosses():
+def test_completeness_limits_none_when_never_crosses() -> None:
+    """A curve that never drops below the target yields None, not its faint end."""
     mag = [10, 11, 12, 13, 14]
     pct = [100, 100, 100, 100, 100]  # never drops below 50%
     _, m50, m90 = _completeness_limits(mag, pct, target=0.5)
     assert m50 is None and m90 is None
 
 
-def test_compute_completeness_curve_rolls_over():
-    """Build results spanning bright->faint with SNR decreasing; the curve
-    should be ~100% at the bright end and drop toward 0 at the faint end."""
+def test_compute_completeness_curve_rolls_over() -> None:
+    """The completeness curve rolls over from complete at the bright end toward zero.
+
+    Built from results spanning bright to faint with SNR decreasing, which is the shape a
+    real frame produces and what makes a threshold crossing meaningful.
+    """
     results = []
     rng = np.random.default_rng(21)
     for mag in np.arange(10.0, 18.0, 0.25):
@@ -488,9 +572,15 @@ def test_compute_completeness_curve_rolls_over():
             star = StarInSpace(ra=0, dec=0, x=50.0, y=50.0, magnitude=float(mag), magnitudes={"Johnson_V": float(mag)})
             results.append(
                 SimplePhotometryResult(
-                    star=star, flux=max(snr, 0.1), flux_err=1.0, snr=snr,
-                    background_level=0.0, background_std=1.0, aperture_radius=7.0,
-                    crowding_factor=0.0, quality_flag=snr >= 3.0,
+                    star=star,
+                    flux=max(snr, 0.1),
+                    flux_err=1.0,
+                    snr=snr,
+                    background_level=0.0,
+                    background_std=1.0,
+                    aperture_radius=7.0,
+                    crowding_factor=0.0,
+                    quality_flag=snr >= 3.0,
                 )
             )
     sf = _starfield([r.star for r in results])
@@ -501,12 +591,20 @@ def test_compute_completeness_curve_rolls_over():
     assert comp_pct[-1] <= 20.0
 
 
-def test_compute_completeness_curve_empty_when_too_few():
+def test_compute_completeness_curve_empty_when_too_few() -> None:
+    """Too few stars per bin yields no curve rather than one built from single stars."""
     star = StarInSpace(ra=0, dec=0, x=50, y=50, magnitude=14.0, magnitudes={"Johnson_V": 14.0})
     res = [
         SimplePhotometryResult(
-            star=star, flux=100.0, flux_err=1.0, snr=50.0, background_level=0.0,
-            background_std=1.0, aperture_radius=7.0, crowding_factor=0.0, quality_flag=True,
+            star=star,
+            flux=100.0,
+            flux_err=1.0,
+            snr=50.0,
+            background_level=0.0,
+            background_std=1.0,
+            aperture_radius=7.0,
+            crowding_factor=0.0,
+            quality_flag=True,
         )
     ]
     sf = _starfield([star])
@@ -518,26 +616,28 @@ def test_compute_completeness_curve_empty_when_too_few():
 # Degenerate FWHM / streak fits must fail the frame, not the worker.
 # --------------------------------------------------------------------------- #
 def test_aperture_mask_footprint_guard_allows_real_apertures() -> None:
-    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
-
     # 50k stars with a 12 px FWHM: a ~100 px background annulus, well inside the cap.
+    """A normal frame's apertures pass the footprint guard."""
     _guard_aperture_mask_footprint(50_000, 100.0, "normal frame")
 
 
 def test_aperture_mask_footprint_guard_rejects_a_degenerate_fwhm() -> None:
-    import pytest
-
-    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
-
     # The production case: a 252 px median FWHM sizes a ~2000 px annulus, and a worse
     # fit scales quadratically from there.
+    """A degenerate FWHM is rejected before it can allocate.
+
+    The production case this guards: a 252 px median FWHM sized a ~2000 px annulus and the
+    masks exhausted memory.
+    """
     with pytest.raises(ValueError, match="aperture photometry too large"):
         _guard_aperture_mask_footprint(5_000, 20_000.0, "median FWHM 252px")
 
 
 def test_aperture_mask_footprint_guard_bounds_by_the_mask_cache_not_the_star_count() -> None:
-    from senpai.engine.photometry.utils import _guard_aperture_mask_footprint
-
     # Masks are cached per sub-pixel offset, so a huge star count with sane apertures
     # costs no more than 64 masks. 1e6 stars must not trip the cap on its own.
+    """A huge star count with sane apertures does not trip the guard.
+
+    Masks are cached per sub-pixel offset, so cost is bounded by the cache, not the stars.
+    """
     _guard_aperture_mask_footprint(1_000_000, 500.0, "dense galactic field")

@@ -1,5 +1,7 @@
-"""Tests for senpai.engine.models — validation rules, computed properties, and
-serialization round-trips for the central pydantic data models.
+"""Tests for the core data models.
+
+Covers validation rules, computed properties and serialization round-trips for the central
+pydantic models.
 
 No network, no Astrometry.net, no FITS files on disk: WCS models are built from
 plain header dicts and exercised through astropy in-memory only.
@@ -40,6 +42,7 @@ from senpai.engine.models.streak_measurement import (
 # A minimal but valid TAN WCS (no SIP) built from a header dict.
 # --------------------------------------------------------------------------- #
 def _wcs_model(naxis1: int = 100, naxis2: int = 100) -> WCSModel:
+    """Build a small TAN WCS model for the round-trip and geometry tests."""
     return WCSModel(
         WCSAXES=2,
         NAXIS1=naxis1,
@@ -66,6 +69,7 @@ def _wcs_model(naxis1: int = 100, naxis2: int = 100) -> WCSModel:
 # --------------------------------------------------------------------------- #
 def test_streak_metadata_radian_and_degree_angle() -> None:
     # sine/cosine of 45 degrees
+    """Streak angle is available in both radians and degrees, consistently."""
     s = StreakMetadata(
         pixel_length=10.0, sine_angle=math.sin(math.radians(45)), cosine_angle=math.cos(math.radians(45)), fwhm=2.0
     )
@@ -74,6 +78,7 @@ def test_streak_metadata_radian_and_degree_angle() -> None:
 
 
 def test_streak_metadata_negative_angle() -> None:
+    """A negative angle is represented consistently in both units."""
     s = StreakMetadata(pixel_length=5.0, sine_angle=-1.0, cosine_angle=0.0, fwhm=1.5)
     assert s.degree_angle() == pytest.approx(-90.0)
     assert s.use_variable_kernel is False
@@ -83,6 +88,7 @@ def test_streak_metadata_negative_angle() -> None:
 # SeeingModel.from_fwhm_stats
 # --------------------------------------------------------------------------- #
 def test_seeing_model_from_fwhm_stats() -> None:
+    """Seeing is derived from the FWHM statistics rather than stored separately."""
     stats = FWHMMetadata(
         n_measurements=12,
         median_fwhm=3.1,
@@ -108,6 +114,7 @@ def test_seeing_model_from_fwhm_stats() -> None:
     [(0, 0), (45, 45), (180, 0), (190, 10), (-10, 170), (360, 0)],
 )
 def test_normalize_angle(angle: float, expected: float) -> None:
+    """Angle normalisation folds a value onto the canonical range."""
     assert normalize_angle(angle) == pytest.approx(expected)
 
 
@@ -122,6 +129,7 @@ def test_normalize_angle(angle: float, expected: float) -> None:
     ],
 )
 def test_angular_difference(a1: float, a2: float, expected: float) -> None:
+    """Angular difference accounts for wrap, so 179 and -179 are two degrees apart."""
     assert angular_difference(a1, a2) == pytest.approx(expected)
     # symmetric
     assert angular_difference(a2, a1) == pytest.approx(expected)
@@ -131,11 +139,13 @@ def test_angular_difference(a1: float, a2: float, expected: float) -> None:
 # StreakMeasurement normalization + aggregation
 # --------------------------------------------------------------------------- #
 def test_streak_measurement_normalizes_rotation() -> None:
+    """A measurement normalises its rotation on construction."""
     m = StreakMeasurement(rotation=200.0, length=10.0, fwhm=2.0)
     assert m.rotation == pytest.approx(20.0)
 
 
 def test_streak_measurements_mean_and_median() -> None:
+    """Mean and median combine the available measurements, weighted."""
     ms = StreakMeasurements(
         header=StreakMeasurement(rotation=30.0, length=100.0, fwhm=2.0),
         frame_extraction=StreakMeasurement(rotation=32.0, length=102.0, fwhm=2.2),
@@ -150,6 +160,7 @@ def test_streak_measurements_mean_and_median() -> None:
 
 
 def test_streak_measurements_empty_returns_zeros() -> None:
+    """With no measurements at all, the combination yields zeros rather than raising."""
     ms = StreakMeasurements()
     mean = ms.mean_measurement()
     assert mean.rotation == 0.0
@@ -158,6 +169,10 @@ def test_streak_measurements_empty_returns_zeros() -> None:
 
 
 def test_streak_measurements_sigma_clip() -> None:
+    """Sigma clipping drops an outlying measurement before combining.
+
+    This is what keeps one badly-wrong source from dragging the combined answer.
+    """
     ms = StreakMeasurements(
         header=StreakMeasurement(rotation=30.0, length=100.0, fwhm=2.0),
         cross_correlation=StreakMeasurement(rotation=31.0, length=101.0, fwhm=2.0),
@@ -173,6 +188,7 @@ def test_streak_measurements_sigma_clip() -> None:
 # StarInImage / StarInSpace serialization (field_serializer rounding)
 # --------------------------------------------------------------------------- #
 def test_star_in_image_rounds_floats() -> None:
+    """Pixel-space star fields are rounded to the precision they carry."""
     s = StarInImage(x=1.23456, y=2.98765, counts=100.5555, snr=12.3456)
     dumped = s.model_dump()
     assert dumped["x"] == 1.23
@@ -182,6 +198,7 @@ def test_star_in_image_rounds_floats() -> None:
 
 
 def test_star_in_image_none_passthrough() -> None:
+    """Absent values stay None rather than being rounded into zeros."""
     s = StarInImage(x=1.0, y=2.0)
     dumped = s.model_dump()
     assert dumped["counts"] is None
@@ -189,6 +206,7 @@ def test_star_in_image_none_passthrough() -> None:
 
 
 def test_star_in_space_radec_rounding_and_roundtrip() -> None:
+    """Sky coordinates round-trip through the model without drift."""
     s = StarInSpace(ra=150.123456789, dec=2.987654321, magnitude=15.55555)
     dumped = s.model_dump()
     assert dumped["ra"] == 150.1235
@@ -201,12 +219,14 @@ def test_star_in_space_radec_rounding_and_roundtrip() -> None:
 
 def test_star_in_space_magnitudes_fallback_to_primary() -> None:
     # magnitudes empty but magnitude set -> serializer synthesizes Primary
+    """A star with no per-band magnitudes falls back to its primary."""
     s = StarInSpace(ra=10.0, dec=20.0, magnitude=14.0, magnitudes={})
     dumped = s.model_dump()
     assert dumped["magnitudes"] == {"Primary": 14.0}
 
 
 def test_satellite_in_image_mag_dict_rounding() -> None:
+    """A satellite's per-band magnitudes are each rounded."""
     sat = SatelliteInImage(
         x=5.0,
         y=6.0,
@@ -224,6 +244,7 @@ def test_satellite_in_image_mag_dict_rounding() -> None:
 # StarListSpace / StarListImage helpers
 # --------------------------------------------------------------------------- #
 def test_star_list_space_centers_radec() -> None:
+    """A sky star list reports its centre in RA and Dec."""
     meta = ImageMetadata(width=100, height=100)
     sl = StarListSpace(
         stars=[
@@ -238,6 +259,7 @@ def test_star_list_space_centers_radec() -> None:
 
 
 def test_star_list_image_centers_xy() -> None:
+    """A pixel star list reports its centre in x and y."""
     meta = ImageMetadata(width=50, height=50)
     direct = StarListImage(
         detections=[
@@ -254,6 +276,7 @@ def test_star_list_image_centers_xy() -> None:
 def test_star_list_image_from_starfield_builds_from_detections() -> None:
     # from_starfield builds the solve input from ``starfield.detections``
     # (x, y, counts), skipping detections without pixel coordinates.
+    """Building a pixel star list from a starfield takes its detections."""
     meta = ImageMetadata(width=50, height=50)
     sf = StarField(
         detections=[
@@ -269,7 +292,9 @@ def test_star_list_image_from_starfield_builds_from_detections() -> None:
     assert sli.detections[0].counts == 10.0
     assert sli.image_metadata is sf.image_metadata
 
+
 def test_starfield_no_wcs_status_default() -> None:
+    """A starfield with no WCS reports an unsolved status rather than an empty one."""
     meta = ImageMetadata(width=100, height=100)
     sf = StarField(detections=[], image_metadata=meta, wcs=None)
     assert sf.wcs_status == WCSStatus.NO_WCS
@@ -277,6 +302,7 @@ def test_starfield_no_wcs_status_default() -> None:
 
 
 def test_starfield_creates_wcs_metadata_from_wcs() -> None:
+    """Assigning a WCS derives the metadata that describes it."""
     meta = ImageMetadata(width=100, height=100)
     sf = StarField(detections=[], image_metadata=meta, wcs=_wcs_model())
     # model_validator(mode="after") populates wcs_metadata
@@ -285,6 +311,7 @@ def test_starfield_creates_wcs_metadata_from_wcs() -> None:
 
 
 def test_starfield_catalog_centers_xy_limiting_magnitude() -> None:
+    """Catalog centres and limiting magnitude are derived from the catalog stars."""
     meta = ImageMetadata(width=100, height=100)
     sf = StarField(
         detections=[],
@@ -302,6 +329,7 @@ def test_starfield_catalog_centers_xy_limiting_magnitude() -> None:
 
 
 def test_starfield_catalog_centers_xy_none_when_no_catalog() -> None:
+    """With no catalog stars, those derived values are None rather than zero."""
     meta = ImageMetadata(width=100, height=100)
     sf = StarField(detections=[], image_metadata=meta, wcs=None)
     assert sf.catalog_centers_xy() is None
@@ -311,6 +339,10 @@ def test_starfield_catalog_centers_xy_none_when_no_catalog() -> None:
 # WCSModel round-trips and coordinate transforms
 # --------------------------------------------------------------------------- #
 def test_wcs_model_to_astropy_and_back_pixel_world() -> None:
+    """The model round-trips through astropy without moving a pixel-to-world mapping.
+
+    SIP handling lives on this boundary, so a drift here would shift every derived position.
+    """
     wcs = _wcs_model()
     # center pixel maps near CRVAL
     ra, dec = wcs.pix2world_0based(49.0, 49.0)
@@ -324,11 +356,13 @@ def test_wcs_model_to_astropy_and_back_pixel_world() -> None:
 
 
 def test_wcs_model_get_boresight() -> None:
+    """The boresight comes back as the reference coordinate."""
     wcs = _wcs_model()
     assert wcs.get_boresight() == (150.0, 2.0)
 
 
 def test_wcs_model_fov_and_dimensions() -> None:
+    """Field of view and pixel dimensions are derived from the WCS and its image shape."""
     wcs = _wcs_model(naxis1=100, naxis2=200)
     fov_w, fov_h, pw, ph = wcs.get_fov_and_dimensions()
     assert pw == 100
@@ -339,6 +373,7 @@ def test_wcs_model_fov_and_dimensions() -> None:
 
 
 def test_wcs_model_serialization_roundtrip() -> None:
+    """The model serialises and reloads unchanged."""
     wcs = _wcs_model()
     dumped = wcs.model_dump()
     again = WCSModel.model_validate(dumped)
@@ -348,6 +383,10 @@ def test_wcs_model_serialization_roundtrip() -> None:
 
 def test_wcs_model_extra_sip_coeffs_allowed() -> None:
     # extra='allow' permits higher-order SIP coefficients beyond the declared ones
+    """Extra SIP coefficients are accepted rather than rejected as unknown fields.
+
+    SIP order varies by solve, so the model cannot enumerate its coefficients up front.
+    """
     wcs = WCSModel(**{**_wcs_model().model_dump(), "A_3_0": 1e-9})
     assert wcs.model_dump()["A_3_0"] == 1e-9
 
@@ -356,6 +395,7 @@ def test_wcs_model_extra_sip_coeffs_allowed() -> None:
 # Enums
 # --------------------------------------------------------------------------- #
 def test_track_mode_values() -> None:
+    """The track-mode enum carries the values written to and read from headers."""
     assert TrackMode.RATE.value == "rate"
     assert TrackMode.SIDEREAL.value == "sidereal"
     assert TrackMode.UNKNOWN.value == "unknown"

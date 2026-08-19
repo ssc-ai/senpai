@@ -20,12 +20,11 @@ from photutils.aperture import (
 from senpai.engine.photometry.utils import _shared_shape_aperture_sums
 
 
-def _streak_field(n=400, size=1500, seed=5):
+def _streak_field(n: int = 400, size: int = 1500, seed: int = 5) -> tuple[np.ndarray, np.ndarray]:
+    """Build a field of streaks and the positions to measure them at."""
     rng = np.random.default_rng(seed)
     data = rng.normal(0.0, 5.0, (size, size)).astype(np.float32)
-    pos = np.column_stack(
-        [rng.uniform(120, size - 120, n), rng.uniform(120, size - 120, n)]
-    )
+    pos = np.column_stack([rng.uniform(120, size - 120, n), rng.uniform(120, size - 120, n)])
     sig_l, sig_w, ang = 16.0, 3.8, np.deg2rad(35)
     yy, xx = np.mgrid[-60:61, -60:61]
     for x, y in pos:
@@ -34,11 +33,16 @@ def _streak_field(n=400, size=1500, seed=5):
         uu = fxs * np.cos(ang) + fys * np.sin(ang)
         vv = -fxs * np.sin(ang) + fys * np.cos(ang)
         g = 5000.0 * np.exp(-(uu**2 / (2 * sig_l**2) + vv**2 / (2 * sig_w**2)))
-        data[iy - 60:iy + 61, ix - 60:ix + 61] += g.astype(np.float32)
+        data[iy - 60 : iy + 61, ix - 60 : ix + 61] += g.astype(np.float32)
     return data, pos
 
 
-def _assert_matches_photutils(data, pos, build):
+def _assert_matches_photutils(data: np.ndarray, pos: np.ndarray, build: object) -> None:
+    """Assert the fast aperture sums equal what photutils computes.
+
+    The fast path caches masks per sub-pixel offset instead of regenerating them, so equality with
+    photutils is the whole contract.
+    """
     ref = aperture_photometry(data, build(pos), method="subpixel", subpixels=5)
     ref0 = np.asarray(ref["aperture_sum_0"], dtype=float)
     got0, got1 = _shared_shape_aperture_sums(data, pos, build)
@@ -52,7 +56,8 @@ def _assert_matches_photutils(data, pos, build):
     assert np.median(np.abs(got1 - ref1)) < 0.05 * np.median(np.abs(ref1) + 1.0)
 
 
-def test_rectangular_apertures_match_photutils():
+def test_rectangular_apertures_match_photutils() -> None:
+    """Rectangular aperture sums match photutils exactly."""
     data, pos = _streak_field()
     w, h, theta = 36.0, 56.0, np.deg2rad(125.4)
     _assert_matches_photutils(
@@ -60,14 +65,13 @@ def test_rectangular_apertures_match_photutils():
         pos,
         lambda p: [
             RectangularAperture(p, w=w, h=h, theta=theta),
-            RectangularAnnulus(
-                p, w_in=w + 18, w_out=w + 36, h_in=h + 18, h_out=h + 36, theta=theta
-            ),
+            RectangularAnnulus(p, w_in=w + 18, w_out=w + 36, h_in=h + 18, h_out=h + 36, theta=theta),
         ],
     )
 
 
-def test_circular_apertures_match_photutils():
+def test_circular_apertures_match_photutils() -> None:
+    """Circular aperture sums match photutils exactly."""
     data, pos = _streak_field()
     _assert_matches_photutils(
         data,
@@ -79,15 +83,22 @@ def test_circular_apertures_match_photutils():
     )
 
 
-def test_partially_off_frame_aperture_is_clipped_not_crashed():
+def test_partially_off_frame_aperture_is_clipped_not_crashed() -> None:
+    """An aperture overhanging the frame is clipped rather than raising.
+
+    A star near the edge is still worth measuring; the sum just covers the pixels that exist.
+    """
     data, _ = _streak_field(n=10, size=600)
     # Centers close enough to the border that the annulus bbox leaves the
     # frame; callers margin-filter, but the helper must clip like photutils.
     pos = np.array([[15.0, 300.0], [300.0, 590.0], [595.0, 8.0]])
-    def build(p):
+
+    def build(p: np.ndarray) -> list:
+        """Build apertures at the given positions."""
         return [
             CircularAperture(p, r=12.0),
             CircularAnnulus(p, r_in=18.0, r_out=30.0),
         ]
+
     got0, got1 = _shared_shape_aperture_sums(data, pos, build)
     assert np.all(np.isfinite(got0)) and np.all(np.isfinite(got1))

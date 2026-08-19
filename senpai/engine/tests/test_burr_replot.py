@@ -6,6 +6,7 @@ needing a full processed FITS or a solved StarField in the fixture.
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -20,19 +21,23 @@ from senpai.engine.models.senpai import (
 )
 from senpai.engine.plotting.replot import (
     _find_result_json,
+    _streak_candidate_objs,
     find_batch_dirs,
     replot_batch_dir,
 )
 
 
 @pytest.fixture(autouse=True)
-def _config():
-    """Replot reads completeness/SNR defaults from the global config, which the
-    CLI always initializes; mirror that here."""
+def _config() -> None:
+    """Initialise the config replot reads its completeness and SNR defaults from.
+
+    The CLI always initialises it, so the tests mirror that.
+    """
     initialize_config(CONFIG_DIR / "dao.yaml")
 
 
-def _photometry_summary():
+def _photometry_summary() -> dict:
+    """Build a photometry summary carrying the arrays replot reads."""
     mags = list(np.linspace(10, 20, 24))
     # completeness rolls over from 1.0 -> ~0.3 across the range
     pct = list(np.clip(105 - (np.array(mags) - 10) * 9, 30, 100))
@@ -47,7 +52,8 @@ def _photometry_summary():
     }
 
 
-def _write_batch(tmp_path, with_fits=False):
+def _write_batch(tmp_path: Path, with_fits: bool = False) -> Path:
+    """Write a batch directory, optionally with the processed FITS beside its JSON."""
     batch = tmp_path / "DAO-01_20260529_xxx_coverage_3_abc12345"
     batch.mkdir()
 
@@ -74,14 +80,16 @@ def _write_batch(tmp_path, with_fits=False):
     return batch
 
 
-def test_find_result_json_excludes_summary(tmp_path):
+def test_find_result_json_excludes_summary(tmp_path: Path) -> None:
+    """Locating a run's result JSON skips the summary file beside it."""
     batch = _write_batch(tmp_path)
     found = _find_result_json(batch)
     assert found is not None
     assert found.name == "senpai_abc12345.json"
 
 
-def test_find_batch_dirs_discovers_nested(tmp_path):
+def test_find_batch_dirs_discovers_nested(tmp_path: Path) -> None:
+    """Batch discovery recurses into nested directories."""
     batch = _write_batch(tmp_path)
     # discovery from a parent several levels up
     dirs = find_batch_dirs(tmp_path)
@@ -90,7 +98,8 @@ def test_find_batch_dirs_discovers_nested(tmp_path):
     assert find_batch_dirs(batch) == [batch]
 
 
-def test_replot_photometry_curves_from_json(tmp_path):
+def test_replot_photometry_curves_from_json(tmp_path: Path) -> None:
+    """The photometry curves regenerate from the stored JSON, without the original frames."""
     batch = _write_batch(tmp_path)
     counts = replot_batch_dir(batch, kinds=("photometry",), force=False, gifs=False)
     assert counts["photometry"] == 2
@@ -98,7 +107,8 @@ def test_replot_photometry_curves_from_json(tmp_path):
     assert (batch / "frame_0_limiting_mag.png").exists()
 
 
-def test_replot_photometry_skips_existing_without_force(tmp_path):
+def test_replot_photometry_skips_existing_without_force(tmp_path: Path) -> None:
+    """An existing plot is left alone unless regeneration is forced."""
     batch = _write_batch(tmp_path)
     replot_batch_dir(batch, kinds=("photometry",), gifs=False)
     # second pass should write nothing (files already present)
@@ -109,23 +119,22 @@ def test_replot_photometry_skips_existing_without_force(tmp_path):
     assert counts["photometry"] == 2
 
 
-def test_streak_candidate_objs_wraps_dicts():
-    """Serializable streak_candidates are dicts; plot_single_frame reads them by
-    attribute. The wrapper must expose .x/.length_pixels etc. (regression: the
-    full replot failed 6 batches with 'dict' object has no attribute 'x')."""
-    from senpai.engine.plotting.replot import _streak_candidate_objs
+def test_streak_candidate_objs_wraps_dicts() -> None:
+    """Serializable streak_candidates are dicts; plot_single_frame reads them by attribute.
 
+    The wrapper must expose .x/.length_pixels etc. (regression: the full replot failed 6 batches
+    with 'dict' object has no attribute 'x').
+    """
     assert _streak_candidate_objs(None) is None
     assert _streak_candidate_objs([]) is None
     objs = _streak_candidate_objs(
-        [{"x": 7603.4, "y": 3818.5, "angle_deg": 80.0, "length_pixels": 40.0,
-          "width_pixels": 12.7}]
+        [{"x": 7603.4, "y": 3818.5, "angle_deg": 80.0, "length_pixels": 40.0, "width_pixels": 12.7}]
     )
     assert objs[0].x == 7603.4
     assert objs[0].length_pixels == 40.0
 
 
-def test_replot_review_with_dict_candidates(tmp_path):
+def test_replot_review_with_dict_candidates(tmp_path: Path) -> None:
     """End-to-end review replot on a frame carrying dict streak_candidates."""
     batch = tmp_path / "DAO-01_x_coverage_3_def67890"
     batch.mkdir()
@@ -135,13 +144,12 @@ def test_replot_review_with_dict_candidates(tmp_path):
         index=0,
         timestamp="2026-05-30T02:24:35",
         processed_frame_path=str(fpath),
-        streak_candidates=[
-            {"x": 24.0, "y": 24.0, "angle_deg": 30.0, "length_pixels": 10.0,
-             "width_pixels": 3.0}
-        ],
+        streak_candidates=[{"x": 24.0, "y": 24.0, "angle_deg": 30.0, "length_pixels": 10.0, "width_pixels": 3.0}],
     )
     result = SenpaiRunResult(
-        id="def67890", num_frames=1, collect_metadata=CollectionMetadata(),
+        id="def67890",
+        num_frames=1,
+        collect_metadata=CollectionMetadata(),
         sidereal_frames=[sid],
     )
     (batch / "senpai_def67890.json").write_text(json.dumps(result.model_dump()))
@@ -151,7 +159,8 @@ def test_replot_review_with_dict_candidates(tmp_path):
     assert (batch / "final_0.png").exists()
 
 
-def test_replot_missing_result_json_raises(tmp_path):
+def test_replot_missing_result_json_raises(tmp_path: Path) -> None:
+    """A batch with no result JSON raises rather than silently producing nothing."""
     empty = tmp_path / "not_a_batch"
     empty.mkdir()
     with pytest.raises(FileNotFoundError):

@@ -1,3 +1,10 @@
+"""Endpoints that plate-solve, either from a source list or from an uploaded frame.
+
+Solving from sources is the cheaper contract: a caller that has already detected its own stars
+sends coordinates instead of pixels, and gets a WCS back without an image ever crossing the
+wire.
+"""
+
 import logging
 import time
 
@@ -6,12 +13,15 @@ from fastapi.responses import JSONResponse
 
 from senpai.api.models.examples import StarListImageExample
 from senpai.astrometry import solve_field
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.point.sidereal import extract_point_sources
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.starfield import StarField, StarListImage
 from senpai.engine.plotting.images import plot_single_frame
 from senpai.engine.utils.preprocessing import remove_column_and_row_medians
+
+#: Built once at import rather than in the parameter default, which is what B008 asks for.
+_SOURCES_EXAMPLES = StarListImageExample().get_openapi_examples()
 
 router = APIRouter()
 
@@ -19,13 +29,13 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/")
-async def index(request: Request):
+async def index(request: Request) -> JSONResponse:
+    """Report the astrometry endpoints and the running version."""
     logger.info("GET / - Fetching API info")
-    config = get_config()
     return JSONResponse(
         {
             "api": request.base_url.__str__(),  # This gets the full URL path
-            "config": config.model_dump(),  # This converts the config to a dictionary with all fields
+            "config": settings.model_dump(),  # This converts the config to a dictionary with all fields
         }
     )
 
@@ -33,9 +43,9 @@ async def index(request: Request):
 @router.post("/solve/sources")
 async def solve_sources(
     request: Request,
-    sources: StarListImage = Body(description="sources list", examples=StarListImageExample().get_openapi_examples()),
+    sources: StarListImage = Body(description="sources list", examples=_SOURCES_EXAMPLES),
 ) -> StarField:
-    """Astrometry solve endpoint
+    """Astrometry solve endpoint.
 
     Args:
         request (Request): FastAPI request object
@@ -43,6 +53,7 @@ async def solve_sources(
 
     Returns:
         StarField: A StarField object, which enriches the input StarListImage with astrometry information when solved.
+
     """
     logger.info("POST %s - Solving astrometry for image_id: %s", request.url.path, sources.image_metadata.image_id)
     start_time = time.time()
@@ -70,7 +81,7 @@ async def solve_fits(
     request: Request,
     fits_file: UploadFile = File(..., description="FITS image file"),
 ) -> StarField:
-    """Astrometry solve endpoint for FITS files
+    """Astrometry solve endpoint for FITS files.
 
     Args:
         request (Request): FastAPI request object
@@ -78,6 +89,7 @@ async def solve_fits(
 
     Returns:
         StarField: A StarField object containing the astrometry solution
+
     """
     logger.info("POST %s - Solving astrometry for FITS file: %s", request.url.path, fits_file.filename)
 

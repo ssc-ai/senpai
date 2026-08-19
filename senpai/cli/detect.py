@@ -93,7 +93,7 @@ if __name__ == "__main__":
     config.detection.detect_streaks = args.detect
     set_log_level(config.logging.level)
 
-    save_run_metadata(output_dir, "senpai.cli.detect", config)
+    save_run_metadata(output_dir, "senpai.cli.detect")
 
     require_astrometry_install()
     enforce_indices()
@@ -137,10 +137,7 @@ if __name__ == "__main__":
             path = output_dir / f"streak_candidates_{frame.index}.json"
             with open(path, "w") as f:
                 json.dump(
-                    [
-                        sc.model_dump(mode="json") if hasattr(sc, "model_dump") else sc
-                        for sc in frame.streak_candidates
-                    ],
+                    [sc.model_dump(mode="json") if hasattr(sc, "model_dump") else sc for sc in frame.streak_candidates],
                     f,
                 )
 

@@ -1,3 +1,5 @@
+"""The detection engine: everything between a raw frame and a satellite observation."""
+
 import logging
 
 # from engine.utils.astropy import setup_astropy
@@ -6,9 +8,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def initialize_engine():
+def initialize_engine() -> None:
     """Initialize all required engine components."""
-
     logger.info("Initializing engine...")
 
     # Set up matplotlib first (affects matplotlib imports)

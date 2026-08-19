@@ -1,13 +1,14 @@
 """Statistics helpers shared by detection stages."""
 
 import os
+from collections.abc import Iterator
 
 import numpy as np
 from astropy.stats import sigma_clipped_stats
 from scipy import fft as _scipy_fft
 
 
-def fft_workers():
+def fft_workers() -> Iterator[None]:
     """Context manager letting scipy FFT-based ops use all cores.
 
     scipy.fft defaults to a single worker, so scipy.signal.convolve /

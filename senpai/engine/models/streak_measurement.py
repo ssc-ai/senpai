@@ -1,3 +1,10 @@
+"""A streak's measured length, angle and width, plus angle arithmetic.
+
+Streak angles need their own comparison because a streak has no direction: its two ends are
+indistinguishable in a single frame, so 5 degrees and 185 degrees are the same streak and a
+naive subtraction reports a 180-degree disagreement between identical measurements.
+"""
+
 import numpy as np
 from pydantic import BaseModel, model_validator
 
@@ -10,6 +17,7 @@ def normalize_angle(angle: float) -> float:
 
     Returns:
         Normalized angle in [0, 180) range
+
     """
     # First normalize to [0, 180)
     normalized = angle % 180
@@ -28,6 +36,7 @@ def angular_difference(angle1: float, angle2: float) -> float:
 
     Returns:
         Minimum angular difference in degrees (0 to 90)
+
     """
     # Normalize both angles to [0, 180)
     a1 = normalize_angle(angle1)
@@ -51,6 +60,8 @@ def angular_difference(angle1: float, angle2: float) -> float:
 
 
 class StreakMeasurement(BaseModel):
+    """One streak measurement: its rotation, length and width."""
+
     rotation: float
     length: float
     fwhm: float | None = None
@@ -64,6 +75,13 @@ class StreakMeasurement(BaseModel):
 
 
 class StreakMeasurements(BaseModel):
+    """The same streak measured several independent ways, so they can be combined.
+
+    Each source has a different failure mode -- header rates are wrong if the mount lied,
+    cross-correlation fails on a sparse field, direct extraction fails on a faint trail --
+    so keeping them separate and combining at the end is more robust than trusting one.
+    """
+
     header: StreakMeasurement | None = None
     cross_correlation: StreakMeasurement | None = None
     frame_extraction: StreakMeasurement | None = None
@@ -75,6 +93,11 @@ class StreakMeasurements(BaseModel):
     def filtered_results(
         self,
     ) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+        """Collect the measurements that were actually made, with their weights.
+
+        Returns rotations, lengths, FWHMs and the two weight lists, each holding only the
+        sources that produced a value.
+        """
         # Get all non-None values for each attribute
         frames = [
             self.header,
@@ -102,6 +125,7 @@ class StreakMeasurements(BaseModel):
         return rotations, lengths, fwhms, filtered_weights, fwhm_weights
 
     def mean_measurement(self) -> StreakMeasurement:
+        """Weighted mean across the available measurements."""
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 
         # Apply weighted average if we have values
@@ -118,15 +142,9 @@ class StreakMeasurements(BaseModel):
         else:
             rotation_avg = 0.0
 
-        if lengths:
-            length_avg = np.average(lengths, weights=weights)
-        else:
-            length_avg = 0.0
+        length_avg = np.average(lengths, weights=weights) if lengths else 0.0
 
-        if fwhms:
-            fwhm_avg = np.average(fwhms, weights=fwhm_weights)
-        else:
-            fwhm_avg = None
+        fwhm_avg = np.average(fwhms, weights=fwhm_weights) if fwhms else None
 
         return StreakMeasurement(
             rotation=rotation_avg,
@@ -135,6 +153,11 @@ class StreakMeasurements(BaseModel):
         )
 
     def median_measurement(self) -> StreakMeasurement:
+        """Weighted median across the available measurements.
+
+        Preferred over the mean when one source may be badly wrong rather than merely
+        noisy, since a single outlier cannot drag a median.
+        """
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 
         # For weighted median, we'll use a simple implementation
@@ -196,6 +219,7 @@ class StreakMeasurements(BaseModel):
 
         Returns:
             StreakMeasurement with sigma-clipped mean values
+
         """
         rotations, lengths, fwhms, weights, fwhm_weights = self.filtered_results()
 

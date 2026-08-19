@@ -252,7 +252,17 @@ docstring-code-format = false
 # enabled.
 docstring-code-line-length = "dynamic"
 
+# FastAPI declares request parameters by calling Body()/File()/Depends() in the default, which
+# is the framework's convention rather than the mutable-default bug B008 targets.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Body", "fastapi.File", "fastapi.Depends", "fastapi.Query"]
+
 [tool.ruff.lint.extend-per-file-ignores]
+# These build read-only catalog queries by formatting. Every interpolated value is a numeric
+# bound (RA/Dec/magnitude, all float-annotated) or a module-level column-name constant, and
+# neither ADQL over TAP nor the SDSS endpoint accepts bind parameters, so there is no
+# parameterised form to use and no string input to inject through.
+"senpai/catalog/{gaia,sdss,gaia_mirror}.py" = ["S608"]
 
 "{tests,senpai/engine/tests,senpai/api/tests}/**/*.py" = [
     # at least this three should be fine in tests:

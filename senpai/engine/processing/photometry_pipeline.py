@@ -7,7 +7,7 @@ import numpy as np
 
 from senpai.astrometry import solve_field
 from senpai.catalog.runner import enforce_catalog, query_catalog
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.point.fwhm import measure_fwhm_from_catalog_stars
 from senpai.engine.detection.point.sidereal import extract_point_sources
 from senpai.engine.models.images import ProcessedFitsImage
@@ -30,8 +30,7 @@ def process_image_photometry(
     save_apertures: bool = False,
     verbose: bool = False,
 ) -> dict:
-    """
-    Process photometry on a single FITS image.
+    """Process photometry on a single FITS image.
 
     Parameters
     ----------
@@ -52,6 +51,7 @@ def process_image_photometry(
     -------
     dict
         Photometry results and summary
+
     """
     enforce_catalog()
 
@@ -60,12 +60,11 @@ def process_image_photometry(
     image = load_fits_file(fits_path)
 
     # Apply preprocessing
-    app_config = get_config()
-    image = preprocess_image(image, app_config, store_intermediates=False)
+    image = preprocess_image(image, store_intermediates=False)
 
     # Extract point sources and solve astrometry
     logger.info("Extracting point sources and solving astrometry...")
-    sources, initial_fwhm = extract_point_sources(image, max_detections=app_config.astrometry.max_sources)
+    sources, initial_fwhm = extract_point_sources(image, max_detections=settings.astrometry.max_sources)
 
     # Solve field to get WCS solution
     starfield = solve_field(sources)
@@ -81,16 +80,16 @@ def process_image_photometry(
         catalog = query_catalog(starfield.wcs, max_stars=1000, apply_sip=True)
 
         # Apply radius filtering if configured
-        if app_config.astrometry.reduce_field_by_radius is not None:
+        if settings.astrometry.reduce_field_by_radius is not None:
             from senpai.engine.utils.propagate_wcs import filter_catalog_stars_by_radius
 
             catalog = filter_catalog_stars_by_radius(
-                catalog, starfield.image_metadata, app_config.astrometry.reduce_field_by_radius
+                catalog, starfield.image_metadata, settings.astrometry.reduce_field_by_radius
             )
             logger.info(
                 "Filtered catalog stars to %i stars within %.2f%% of image circle",
                 len(catalog.stars),
-                app_config.astrometry.reduce_field_by_radius * 100,
+                settings.astrometry.reduce_field_by_radius * 100,
             )
 
         # Merge catalog information
@@ -101,9 +100,7 @@ def process_image_photometry(
 
         # Measure FWHM from catalog stars
         logger.info("Measuring FWHM from catalog stars...")
-        fwhm_stats = measure_fwhm_from_catalog_stars(
-            image, catalog.stars, initial_fwhm, app_config, sat_level=sources.sat_level
-        )
+        fwhm_stats = measure_fwhm_from_catalog_stars(image, catalog.stars, initial_fwhm, sat_level=sources.sat_level)
         starfield.fwhm_stats = fwhm_stats
         logger.info(f"FWHM measured: {fwhm_stats.median_fwhm:.2f} pixels (from {fwhm_stats.n_measurements} stars)")
 
@@ -184,7 +181,7 @@ def _save_photometry_plots(
     photometry_results: list,
     starfield: StarField,
     output_dir: Path,
-):
+) -> None:
     """Save diagnostic plots for photometry results."""
     try:
         from senpai.engine.plotting.images import plot_single_frame
@@ -206,7 +203,7 @@ def _save_aperture_visualization(
     image: ProcessedFitsImage,
     photometry_results: list,
     output_dir: Path,
-):
+) -> None:
     """Save aperture visualization for photometry results."""
     try:
         import matplotlib.pyplot as plt

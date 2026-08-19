@@ -15,13 +15,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Commands that produced one or more FITS frames. Everything else (run started,
 # catalog updates, map creation, rejected flats) is purely bookkeeping.
-COLLECTION_COMMANDS: frozenset[str] = frozenset({
-    "calsat_observed",
-    "coverage_point_observed",
-    "flat_field_saved",
-    "photometric_standards_observed",  # not yet observed in logs but allowed
-    "lunar_background_observed",
-})
+COLLECTION_COMMANDS: frozenset[str] = frozenset(
+    {
+        "calsat_observed",
+        "coverage_point_observed",
+        "flat_field_saved",
+        "photometric_standards_observed",  # not yet observed in logs but allowed
+        "lunar_background_observed",
+    }
+)
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
@@ -50,29 +52,36 @@ class ExecutedCommand(BaseModel):
 
     @property
     def is_collection(self) -> bool:
+        """Whether this command actually took frames, as opposed to slewing or calibrating."""
         return self.command in COLLECTION_COMMANDS
 
     @property
     def observation_time(self) -> datetime | None:
+        """When the frames were taken, or None if the command did not record it."""
         return _parse_iso(self.metadata.get("observation_time"))
 
     @property
     def tracking_modes(self) -> list[str]:
+        """Track modes used, which is what says whether a collect mixed rate and sidereal."""
         return list(self.metadata.get("tracking_modes", []))
 
     @property
     def exposure_time(self) -> float | None:
+        """Single exposure time, for commands that took one length of frame."""
         v = self.metadata.get("exposure_time")
         return float(v) if v is not None else None
 
     @property
     def exposure_times(self) -> list[float]:
+        """Every exposure time used, for commands that varied it within one collect."""
         return [float(x) for x in self.metadata.get("exposure_times", [])]
 
     @property
     def target_label(self) -> str | None:
-        """Human-readable target identifier (NORAD id for calsats, pixel id for
-        coverage, etc.). Returns the most specific id available, or None."""
+        """Human-readable target identifier (NORAD id for calsats, pixel id for coverage, etc.).
+
+        Returns the most specific id available, or None.
+        """
         md = self.metadata
         if "norad_id" in md:
             return f"norad_{md['norad_id']}"
@@ -82,6 +91,8 @@ class ExecutedCommand(BaseModel):
 
 
 class SiteConfig(BaseModel):
+    """Where the telescope is, which is what alt/az and Moon geometry are computed from."""
+
     model_config = ConfigDict(extra="ignore")
     name: str | None = None
     latitude: float | None = None
@@ -90,8 +101,10 @@ class SiteConfig(BaseModel):
 
 
 class RunConfig(BaseModel):
-    """The `config` block — site + schedule + hardware. We only model what
-    downstream code reads; everything else is preserved as `extra='allow'`."""
+    """The `config` block — site + schedule + hardware.
+
+    We only model what downstream code reads; everything else is preserved as `extra='allow'`.
+    """
 
     model_config = ConfigDict(extra="allow")
     site: SiteConfig | None = None
@@ -99,6 +112,12 @@ class RunConfig(BaseModel):
 
 
 class LightingSchedule(BaseModel):
+    """The night's darkness and Moon windows, as the scheduler computed them.
+
+    Recorded rather than recomputed, so an analysis sees the same night boundaries the run
+    was planned against.
+    """
+
     model_config = ConfigDict(extra="allow")
     night_start: str | None = None
     night_end: str | None = None
@@ -109,8 +128,11 @@ class LightingSchedule(BaseModel):
 
 
 class RunState(BaseModel):
-    """Top-level run_state.json. Models the fields we read; allows extras for
-    forward compatibility with the burr controller's evolving schema."""
+    """Top-level run_state.json.
+
+    Models the fields we read; allows extras for forward compatibility with the burr
+    controller's evolving schema.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -125,10 +147,11 @@ class RunState(BaseModel):
     executed_commands: list[ExecutedCommand] = Field(default_factory=list)
 
     @classmethod
-    def load(cls, path: str | Path) -> "RunState":
-
+    def load(cls, path: str | Path) -> RunState:
+        """Read a run state from its JSON file."""
         text = Path(path).read_text()
         return cls.model_validate_json(text)
 
     def collection_commands(self) -> list[ExecutedCommand]:
+        """Just the commands that took frames, in the order they ran."""
         return [c for c in self.executed_commands if c.is_collection]

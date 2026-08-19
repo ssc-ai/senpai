@@ -29,6 +29,7 @@ def gaia_bp_rp_to_johnson_v(g: float, bp_rp: float) -> float | None:
     -------
     float or None
         Johnson V magnitude, or None if color is outside valid range
+
     """
     if bp_rp < -0.5 or bp_rp > 5.0:
         return None
@@ -56,6 +57,7 @@ def gaia_bp_rp_to_sloan_r(g: float, bp_rp: float) -> float | None:
     -------
     float or None
         Sloan r magnitude, or None if color is outside valid range
+
     """
     if bp_rp < -0.5 or bp_rp > 4.0:
         return None

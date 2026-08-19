@@ -1,9 +1,22 @@
+"""Decide whether a proposed frame-to-frame shift is real before committing to it.
+
+A cross-correlation always returns a peak, including on frames with nothing in common. Accepting
+it unchecked propagates a wrong WCS into every later frame in the collect, and the failure is
+silent -- the astrometry looks solved, just wrong.
+
+So a proposed shift is tested against the pixels: boxes around known stars are compared before
+and after the shift, and the shift is accepted only if it actually brings them into agreement.
+The lightweight check exists to reject bad candidates cheaply, before the expensive full
+validation runs.
+"""
+
 import logging
 import time
 
 import numpy as np
+from scipy.stats import pearsonr, spearmanr
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.starfield import StarInSpace
 from senpai.engine.models.streak_measurement import StreakMeasurement
@@ -17,19 +30,21 @@ def extract_box_statistics(
     y: float,
     box_size: int = 11,
 ) -> dict:
-    """
-    Extract simple statistics from a box around a position.
-    Much faster than flood-fill for validation purposes.
+    """Extract simple statistics from a box around a position.
+
+    Much faster than flood-fill, and enough for validation.
 
     Args:
         image: The image data
-        x, y: Center position
+        x: Centre column
+        y: Centre row
         box_size: Size of box to extract (should be odd)
 
     Returns:
         dict with 'max', 'sum', 'mean', 'valid' keys
+
     """
-    x_int, y_int = int(round(x)), int(round(y))
+    x_int, y_int = round(x), round(y)
     half_box = box_size // 2
 
     # Check bounds
@@ -42,9 +57,7 @@ def extract_box_statistics(
         return {"max": 0.0, "sum": 0.0, "mean": 0.0, "valid": False}
 
     # Extract box
-    box = image[
-        y_int - half_box : y_int + half_box + 1, x_int - half_box : x_int + half_box + 1
-    ]
+    box = image[y_int - half_box : y_int + half_box + 1, x_int - half_box : x_int + half_box + 1]
 
     return {
         "max": float(np.max(box)),
@@ -65,13 +78,13 @@ def quick_correlation_from_boxes(
     max_stars: int = 50,
     debug_label: str = "",
 ) -> tuple[float, int, list]:
-    """
-    Fast correlation calculation using box statistics instead of flood-fill.
+    """Fast correlation calculation using box statistics instead of flood-fill.
 
     Args:
         target_frame: Target frame data
         source_frame: Source frame data
-        shift_x, shift_y: Shift to apply to source positions
+        shift_x: Column shift to apply to source positions
+        shift_y: Row shift to apply to source positions
         catalog_stars: List of catalog stars
         box_size: Size of box around each star
         max_stars: Maximum number of stars to use
@@ -79,11 +92,10 @@ def quick_correlation_from_boxes(
 
     Returns:
         tuple: (correlation, n_valid_stars, box_stats_list)
+
     """
     # Sort stars by magnitude (brightest first)
-    sorted_stars = sorted(
-        catalog_stars, key=lambda s: s.magnitude if hasattr(s, "magnitude") else 999
-    )
+    sorted_stars = sorted(catalog_stars, key=lambda s: s.magnitude if hasattr(s, "magnitude") else 999)
     stars_to_test = sorted_stars[:max_stars]
 
     source_stats = []
@@ -103,9 +115,7 @@ def quick_correlation_from_boxes(
         y_shifted = star.y - shift_y
 
         # Extract target box stats
-        target_box = extract_box_statistics(
-            target_frame, x_shifted, y_shifted, box_size
-        )
+        target_box = extract_box_statistics(target_frame, x_shifted, y_shifted, box_size)
         if not target_box["valid"]:
             continue
 
@@ -156,16 +166,14 @@ def quick_correlation_from_boxes(
         # A real source should have positive net flux
         if target_net <= 0:
             logger.debug(
-                f"{debug_label}: Star at ({star.x:.1f}, {star.y:.1f}) rejected: "
-                f"target_net={target_net:.1f} <= 0"
+                f"{debug_label}: Star at ({star.x:.1f}, {star.y:.1f}) rejected: target_net={target_net:.1f} <= 0"
             )
             continue
 
         # Also ensure source is positive (should be, as it's a catalog star)
         if source_net <= 0:
             logger.debug(
-                f"{debug_label}: Star at ({star.x:.1f}, {star.y:.1f}) rejected: "
-                f"source_net={source_net:.1f} <= 0"
+                f"{debug_label}: Star at ({star.x:.1f}, {star.y:.1f}) rejected: source_net={source_net:.1f} <= 0"
             )
             continue
 
@@ -185,9 +193,7 @@ def quick_correlation_from_boxes(
     # We'll apply skepticism to high correlations with few stars later
     min_stars = 3
     if valid_count < min_stars:
-        logger.debug(
-            f"{debug_label}: Insufficient valid stars: {valid_count} < {min_stars}"
-        )
+        logger.debug(f"{debug_label}: Insufficient valid stars: {valid_count} < {min_stars}")
         return 0.0, valid_count, []
 
     # Calculate correlation
@@ -200,8 +206,6 @@ def quick_correlation_from_boxes(
     # 1. Spearman on net flux (original)
     # 2. Spearman on max values (simpler, no background subtraction)
     # 3. Pearson on net flux (for comparison)
-
-    from scipy.stats import pearsonr, spearmanr
 
     corr_spearman_net, _ = spearmanr(source_stats, target_stats)
     corr_spearman_max, _ = spearmanr(source_max_vals, target_max_vals)
@@ -227,12 +231,7 @@ def quick_correlation_from_boxes(
     # Taking the max is too lenient - random noise can make ONE metric correlate
     # Instead, give primary weight to Spearman (robust) and secondary to Pearson
     # Also prefer net flux over raw max (better background handling)
-    correlation = (
-        0.4 * corr_spearman_net
-        + 0.3 * corr_pearson_net
-        + 0.2 * corr_spearman_max
-        + 0.1 * corr_pearson_max
-    )
+    correlation = 0.4 * corr_spearman_net + 0.3 * corr_pearson_net + 0.2 * corr_spearman_max + 0.1 * corr_pearson_max
 
     # Log all metrics for debugging
     logger.debug(
@@ -242,22 +241,15 @@ def quick_correlation_from_boxes(
     )
 
     # Also log when metrics strongly disagree (could indicate measurement issues)
-    metric_std = np.std(
-        [corr_spearman_net, corr_spearman_max, corr_pearson_net, corr_pearson_max]
-    )
+    metric_std = np.std([corr_spearman_net, corr_spearman_max, corr_pearson_net, corr_pearson_max])
     if metric_std > 0.3:
         logger.warning(
             f"{debug_label}: Metrics disagree significantly (std={metric_std:.3f}) - "
             f"possible noise correlation OR measurement issues (e.g., box too small for streaks)"
         )
         # When metrics disagree, also return the best single metric for comparison
-        best_single_metric = max(
-            corr_spearman_net, corr_spearman_max, corr_pearson_net, corr_pearson_max
-        )
-        logger.info(
-            f"{debug_label}: Best single metric: {best_single_metric:.3f} "
-            f"(weighted gave {correlation:.3f})"
-        )
+        best_single_metric = max(corr_spearman_net, corr_spearman_max, corr_pearson_net, corr_pearson_max)
+        logger.info(f"{debug_label}: Best single metric: {best_single_metric:.3f} (weighted gave {correlation:.3f})")
 
     return correlation, valid_count, list(zip(source_stats, target_stats, strict=False))
 
@@ -272,8 +264,7 @@ def validate_shift_lightweight(
     streak_rotation_deg: float | None = None,
     fwhm_exclusion: float | None = None,
 ) -> tuple[bool, float, StreakMeasurement | None, tuple[float, float]]:
-    """
-    Lightweight validation using box statistics and random shift comparison.
+    """Lightweight validation using box statistics and random shift comparison.
 
     Args:
         target: The frame we're shifting to align with the source frame
@@ -288,28 +279,25 @@ def validate_shift_lightweight(
 
     Returns:
         tuple: (valid, correlation, streak_measurement, shift_correction)
+
     """
-    config = get_config()
     target_frame = target.frame.data
     source_frame = source.frame.data
 
     start_time = time.time()
 
     # Get config parameters
-    base_box_size = config.validation.box_size
-    n_random_trials = config.validation.n_random_trials
-    random_radius = config.validation.random_radius_pixels
-    max_stars = config.validation.max_validation_stars
+    base_box_size = settings.validation.box_size
+    n_random_trials = settings.validation.n_random_trials
+    random_radius = settings.validation.random_radius_pixels
+    max_stars = settings.validation.max_validation_stars
 
     # Adaptive box size: increase for wide streaks to capture full flux
     # fwhm_exclusion represents the streak width perpendicular to motion
     if fwhm_exclusion is not None and fwhm_exclusion > 8:
         # For wide streaks, use larger boxes (at least 2x FWHM, minimum base_box_size)
         box_size = max(base_box_size, int(fwhm_exclusion * 2.5))
-        logger.info(
-            f"Using adaptive box size {box_size}px (base={base_box_size}px) "
-            f"for FWHM={fwhm_exclusion:.1f}px"
-        )
+        logger.info(f"Using adaptive box size {box_size}px (base={base_box_size}px) for FWHM={fwhm_exclusion:.1f}px")
     else:
         box_size = base_box_size
 
@@ -326,13 +314,15 @@ def validate_shift_lightweight(
     # The seed is derived from the frame pair, the trial number and the proposed shift, so distinct
     # shifts still get independent draws while any given shift always sees the same null. Mirrors
     # the seeded generator already used in engine/utils/wcs_validation.py.
-    rng = np.random.default_rng((
-        int(getattr(source, "index", 0)) & 0xFFFF,
-        int(getattr(target, "index", 0)) & 0xFFFF,
-        int(trial) & 0xFF,
-        int(round(float(shift_x) * 100)) & 0xFFFFF,
-        int(round(float(shift_y) * 100)) & 0xFFFFF,
-    ))
+    rng = np.random.default_rng(
+        (
+            int(getattr(source, "index", 0)) & 0xFFFF,
+            int(getattr(target, "index", 0)) & 0xFFFF,
+            int(trial) & 0xFF,
+            round(float(shift_x) * 100) & 0xFFFFF,
+            round(float(shift_y) * 100) & 0xFFFFF,
+        )
+    )
 
     logger.info(
         f"Lightweight validation: shift=({shift_x:.1f}, {shift_y:.1f}), "
@@ -351,9 +341,7 @@ def validate_shift_lightweight(
         debug_label="PROPOSED",
     )
 
-    logger.info(
-        f"Proposed shift: correlation={proposed_corr:.3f}, n_stars={proposed_n_stars}"
-    )
+    logger.info(f"Proposed shift: correlation={proposed_corr:.3f}, n_stars={proposed_n_stars}")
 
     # If we don't have enough stars, reject immediately
     if proposed_n_stars < 4:
@@ -368,7 +356,7 @@ def validate_shift_lightweight(
     # chain. If the negated shift correlates decisively better, the proposed
     # shift is the wrong branch of that ambiguity — reject it here so the
     # solver can try again rather than poison every downstream frame.
-    if config.validation.test_negated_shift and shift_magnitude > 5.0:
+    if settings.validation.test_negated_shift and shift_magnitude > 5.0:
         negated_corr, negated_n_stars, _ = quick_correlation_from_boxes(
             target_frame,
             source_frame,
@@ -379,10 +367,7 @@ def validate_shift_lightweight(
             max_stars,
             debug_label="NEGATED",
         )
-        if (
-            negated_n_stars >= 4
-            and negated_corr > proposed_corr * config.validation.negated_rejection_ratio
-        ):
+        if negated_n_stars >= 4 and negated_corr > proposed_corr * settings.validation.negated_rejection_ratio:
             logger.warning(
                 "Rejecting proposed shift (%.1f, %.1f): its negation correlates "
                 "better (%.3f vs %.3f) — direction ambiguity",
@@ -411,9 +396,7 @@ def validate_shift_lightweight(
         # Backward compatibility: use streak_rotation_deg if provided
         min_perpendicular_offset = random_radius * 0.5
         max_perpendicular_offset = random_radius
-        logger.info(
-            f"Using legacy streak rotation parameter ({streak_rotation_deg:.1f}°)"
-        )
+        logger.info(f"Using legacy streak rotation parameter ({streak_rotation_deg:.1f}°)")
     else:
         # No exclusion info - use broader circular sampling
         min_perpendicular_offset = 0
@@ -435,27 +418,15 @@ def validate_shift_lightweight(
             # Sample perpendicular to shift direction, avoiding the streak
             # Alternate between positive and negative offsets for better coverage
             sign = 1 if i % 2 == 0 else -1
-            perp_offset = sign * rng.uniform(
-                min_perpendicular_offset, max_perpendicular_offset
-            )
+            perp_offset = sign * rng.uniform(min_perpendicular_offset, max_perpendicular_offset)
 
             # Add small random component along shift direction (to test slight position errors)
             # Keep this minimal to avoid landing on the streak
-            along_shift_offset = rng.uniform(
-                -min_perpendicular_offset * 0.3, min_perpendicular_offset * 0.3
-            )
+            along_shift_offset = rng.uniform(-min_perpendicular_offset * 0.3, min_perpendicular_offset * 0.3)
 
             # Calculate random shift position
-            rand_x = (
-                shift_x
-                + perp_offset * np.cos(perp_angle_rad)
-                + along_shift_offset * np.cos(shift_angle_rad)
-            )
-            rand_y = (
-                shift_y
-                + perp_offset * np.sin(perp_angle_rad)
-                + along_shift_offset * np.sin(shift_angle_rad)
-            )
+            rand_x = shift_x + perp_offset * np.cos(perp_angle_rad) + along_shift_offset * np.cos(shift_angle_rad)
+            rand_y = shift_y + perp_offset * np.sin(perp_angle_rad) + along_shift_offset * np.sin(shift_angle_rad)
 
             rand_corr, rand_n_stars_val, _ = quick_correlation_from_boxes(
                 target_frame,
@@ -465,14 +436,14 @@ def validate_shift_lightweight(
                 catalog_stars,
                 box_size,
                 max_stars,
-                debug_label=f"RANDOM_{i+1}",
+                debug_label=f"RANDOM_{i + 1}",
             )
             random_correlations.append(rand_corr)
             random_shifts.append((rand_x, rand_y))
             random_n_stars.append(rand_n_stars_val)
 
             logger.info(
-                f"Random trial {i+1}: shift=({rand_x:.1f}, {rand_y:.1f}), "
+                f"Random trial {i + 1}: shift=({rand_x:.1f}, {rand_y:.1f}), "
                 f"perp_offset={perp_offset:.1f}, along_offset={along_shift_offset:.1f}, "
                 f"corr={rand_corr:.3f}, n_stars={rand_n_stars_val}"
             )
@@ -481,29 +452,15 @@ def validate_shift_lightweight(
         streak_angle_rad = np.deg2rad(streak_rotation_deg)
         perp_angle_rad = streak_angle_rad + np.pi / 2
 
-        logger.info(
-            f"Using provided streak rotation ({streak_rotation_deg:.1f}°) for perpendicular sampling"
-        )
+        logger.info(f"Using provided streak rotation ({streak_rotation_deg:.1f}°) for perpendicular sampling")
 
         for i in range(n_random_trials):
             sign = 1 if i % 2 == 0 else -1
-            perp_offset = sign * rng.uniform(
-                min_perpendicular_offset, max_perpendicular_offset
-            )
-            along_streak_offset = rng.uniform(
-                -min_perpendicular_offset * 0.3, min_perpendicular_offset * 0.3
-            )
+            perp_offset = sign * rng.uniform(min_perpendicular_offset, max_perpendicular_offset)
+            along_streak_offset = rng.uniform(-min_perpendicular_offset * 0.3, min_perpendicular_offset * 0.3)
 
-            rand_x = (
-                shift_x
-                + perp_offset * np.cos(perp_angle_rad)
-                + along_streak_offset * np.cos(streak_angle_rad)
-            )
-            rand_y = (
-                shift_y
-                + perp_offset * np.sin(perp_angle_rad)
-                + along_streak_offset * np.sin(streak_angle_rad)
-            )
+            rand_x = shift_x + perp_offset * np.cos(perp_angle_rad) + along_streak_offset * np.cos(streak_angle_rad)
+            rand_y = shift_y + perp_offset * np.sin(perp_angle_rad) + along_streak_offset * np.sin(streak_angle_rad)
 
             rand_corr, rand_n_stars_val, _ = quick_correlation_from_boxes(
                 target_frame,
@@ -513,14 +470,14 @@ def validate_shift_lightweight(
                 catalog_stars,
                 box_size,
                 max_stars,
-                debug_label=f"RANDOM_{i+1}",
+                debug_label=f"RANDOM_{i + 1}",
             )
             random_correlations.append(rand_corr)
             random_shifts.append((rand_x, rand_y))
             random_n_stars.append(rand_n_stars_val)
 
             logger.info(
-                f"Random trial {i+1}: shift=({rand_x:.1f}, {rand_y:.1f}), "
+                f"Random trial {i + 1}: shift=({rand_x:.1f}, {rand_y:.1f}), "
                 f"perp_offset={perp_offset:.1f}, corr={rand_corr:.3f}, n_stars={rand_n_stars_val}"
             )
     else:
@@ -535,9 +492,7 @@ def validate_shift_lightweight(
             angle = rng.uniform(0, 2 * np.pi)
             # Use annulus (ring) instead of full circle to ensure separation
             if min_perpendicular_offset > 0:
-                radius = rng.uniform(
-                    min_perpendicular_offset, max_perpendicular_offset
-                )
+                radius = rng.uniform(min_perpendicular_offset, max_perpendicular_offset)
             else:
                 radius = rng.uniform(0, max_perpendicular_offset)
             rand_x = shift_x + radius * np.cos(angle)
@@ -551,14 +506,14 @@ def validate_shift_lightweight(
                 catalog_stars,
                 box_size,
                 max_stars,
-                debug_label=f"RANDOM_{i+1}",
+                debug_label=f"RANDOM_{i + 1}",
             )
             random_correlations.append(rand_corr)
             random_shifts.append((rand_x, rand_y))
             random_n_stars.append(rand_n_stars_val)
 
             logger.info(
-                f"Random trial {i+1}: shift=({rand_x:.1f}, {rand_y:.1f}), "
+                f"Random trial {i + 1}: shift=({rand_x:.1f}, {rand_y:.1f}), "
                 f"radius={radius:.1f}, corr={rand_corr:.3f}, n_stars={rand_n_stars_val}"
             )
 
@@ -568,9 +523,9 @@ def validate_shift_lightweight(
     random_correlations = np.array(random_correlations)
     random_n_stars = np.array(random_n_stars)
 
-    all_correlations_raw = np.array([proposed_corr] + list(random_correlations))
-    all_n_stars = np.array([proposed_n_stars] + list(random_n_stars))
-    all_shifts = [(shift_x, shift_y)] + random_shifts
+    all_correlations_raw = np.array([proposed_corr, *list(random_correlations)])
+    all_n_stars = np.array([proposed_n_stars, *list(random_n_stars)])
+    all_shifts = [(shift_x, shift_y), *random_shifts]
 
     # Calculate confidence-weighted scores
     # Confidence increases with sqrt(n) because standard error decreases with sqrt(n)
@@ -598,16 +553,12 @@ def validate_shift_lightweight(
         # Strong skepticism ONLY for perfect correlations with 3-5 stars
         if corr >= 0.98 and n_stars <= 5:
             # Perfect correlation (>0.98) with 3-5 stars is suspicious
-            skepticism_factor = 0.4 + 0.6 * (
-                (n_stars - 3) / 2.0
-            )  # 0.4 at 3 stars, 1.0 at 5 stars
+            skepticism_factor = 0.4 + 0.6 * ((n_stars - 3) / 2.0)  # 0.4 at 3 stars, 1.0 at 5 stars
 
         # Moderate skepticism for very high correlations with only 3-4 stars
         elif corr >= 0.95 and n_stars <= 4:
             # Very high correlation (0.95-0.98) with 3-4 stars
-            skepticism_factor = 0.6 + 0.4 * (
-                (n_stars - 3) / 1.0
-            )  # 0.6 at 3 stars, 1.0 at 4 stars
+            skepticism_factor = 0.6 + 0.4 * ((n_stars - 3) / 1.0)  # 0.6 at 3 stars, 1.0 at 4 stars
 
         # Light skepticism for high correlations with only 3 stars
         elif corr >= 0.85 and n_stars == 3:
@@ -656,9 +607,7 @@ def validate_shift_lightweight(
 
     # Calculate proposed shift's weighted correlation and ratio to best
     proposed_corr_weighted = all_correlations_weighted[0]
-    corr_ratio = (
-        proposed_corr_weighted / best_corr_weighted if best_corr_weighted > 0 else 0.0
-    )
+    corr_ratio = proposed_corr_weighted / best_corr_weighted if best_corr_weighted > 0 else 0.0
 
     logger.info(
         f"Star counts: proposed={proposed_n_stars}, "
@@ -667,8 +616,7 @@ def validate_shift_lightweight(
     )
 
     logger.info(
-        f"Random correlations (raw): mean={np.mean(random_correlations):.3f}, "
-        f"max={np.max(random_correlations):.3f}"
+        f"Random correlations (raw): mean={np.mean(random_correlations):.3f}, max={np.max(random_correlations):.3f}"
     )
     logger.info(
         f"Random correlations (weighted): mean={np.mean(all_correlations_weighted[1:]):.3f}, "
@@ -690,9 +638,9 @@ def validate_shift_lightweight(
 
     # 4. Validate based on "near-best" criterion
     # Accept if proposed is within a few percent of the best AND has reasonable absolute correlation
-    min_corr_ratio = config.validation.min_correlation_ratio
-    min_absolute_corr = config.validation.min_absolute_correlation
-    lenient_absolute_corr = config.validation.lenient_absolute_correlation
+    min_corr_ratio = settings.validation.min_correlation_ratio
+    min_absolute_corr = settings.validation.min_absolute_correlation
+    lenient_absolute_corr = settings.validation.lenient_absolute_correlation
 
     # SPECIAL CASE: If proposed is FAR better than ALL random trials (all negative/near-zero)
     # then we should be very lenient with absolute threshold - it's clearly the only real signal
@@ -737,13 +685,11 @@ def validate_shift_lightweight(
         # (was a hardcoded 0.99, which razor-thin-rejected correct shifts at
         # ratio ~0.987 → fell through to a flipped shift); the random-trials noise
         # guard below + the absolute-correlation floor still catch bad shifts.
-        min_corr_ratio = max(min_corr_ratio, config.validation.fewer_stars_correlation_ratio)
+        min_corr_ratio = max(min_corr_ratio, settings.validation.fewer_stars_correlation_ratio)
 
     # CRITICAL: If proposed has significantly fewer stars than MULTIPLE random trials,
     # this strongly suggests we're matching noise and the proposed shift is wrong
-    random_stars_above_proposed = sum(
-        1 for n in random_n_stars if n > proposed_n_stars + 3
-    )
+    random_stars_above_proposed = sum(1 for n in random_n_stars if n > proposed_n_stars + 3)
     if random_stars_above_proposed >= 3:
         # At least 3 random trials found significantly more stars (4+ more)
         logger.error(
@@ -751,14 +697,12 @@ def validate_shift_lightweight(
             f"than proposed ({proposed_n_stars}). This suggests noise correlation!"
         )
         # Require much stricter validation (config-driven).
-        min_corr_ratio = config.validation.noise_correlation_ratio
+        min_corr_ratio = settings.validation.noise_correlation_ratio
         effective_min_absolute_corr = max(
-            effective_min_absolute_corr, config.validation.noise_min_absolute_correlation
+            effective_min_absolute_corr, settings.validation.noise_min_absolute_correlation
         )
 
-    valid = (corr_ratio >= min_corr_ratio) and (
-        proposed_corr >= effective_min_absolute_corr
-    )
+    valid = (corr_ratio >= min_corr_ratio) and (proposed_corr >= effective_min_absolute_corr)
 
     elapsed = time.time() - start_time
 
@@ -778,13 +722,9 @@ def validate_shift_lightweight(
         if not ratio_ok:
             failure_reasons.append(f"ratio {corr_ratio:.3f} < {min_corr_ratio:.2f}")
         if not abs_ok:
-            failure_reasons.append(
-                f"correlation {proposed_corr:.3f} < {effective_min_absolute_corr:.2f}"
-            )
+            failure_reasons.append(f"correlation {proposed_corr:.3f} < {effective_min_absolute_corr:.2f}")
 
-        logger.warning(
-            f"Validation FAILED in {elapsed:.2f}s: {' AND '.join(failure_reasons)}"
-        )
+        logger.warning(f"Validation FAILED in {elapsed:.2f}s: {' AND '.join(failure_reasons)}")
 
         # Additional diagnostic: if proposed is clearly better than randoms but correlation is low,
         # this suggests measurement issues (box size, background, etc.) rather than bad alignment
@@ -797,7 +737,7 @@ def validate_shift_lightweight(
             )
 
     # Debug plotting if enabled
-    if config.plotting.debug:
+    if settings.plotting.debug:
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle
 
@@ -809,9 +749,7 @@ def validate_shift_lightweight(
         scaled_target = np.clip((scaled_target - vmin) / (vmax - vmin), 0, 1)
 
         fig, ax = plt.subplots(figsize=(12, 12))
-        ax.imshow(
-            scaled_target, cmap="viridis", origin="upper", interpolation="nearest"
-        )
+        ax.imshow(scaled_target, cmap="viridis", origin="upper", interpolation="nearest")
         ax.set_title(
             f"Lightweight Validation: {source.index} -> {target.index} (trial {trial})\n"
             f"Proposed: corr={proposed_corr:.3f}, ratio={corr_ratio:.3f}, valid={valid}"
@@ -819,9 +757,7 @@ def validate_shift_lightweight(
 
         # Draw boxes around proposed shift positions
         # Get stars used in validation (sorted by magnitude, brightest first)
-        sorted_stars = sorted(
-            catalog_stars, key=lambda s: s.magnitude if hasattr(s, "magnitude") else 999
-        )
+        sorted_stars = sorted(catalog_stars, key=lambda s: s.magnitude if hasattr(s, "magnitude") else 999)
         stars_to_plot = sorted_stars[:max_stars]
 
         box_half = box_size // 2
@@ -890,9 +826,7 @@ def validate_shift_lightweight(
                         edgecolors="white",
                         linewidths=1.5,
                         alpha=0.9,
-                        label=(
-                            f"Random {i+1}: {corr:.3f}" if i < 5 else ""
-                        ),  # Only label first 5 to avoid clutter
+                        label=(f"Random {i + 1}: {corr:.3f}" if i < 5 else ""),  # Only label first 5 to avoid clutter
                         zorder=8,
                     )
 
@@ -935,8 +869,7 @@ def validate_shift_lightweight(
         ax.set_ylabel("Y (pixels)")
 
         output_file = (
-            config.runtime.output_dir
-            / f"lightweight_validation_{source.index}_to_{target.index}_trial_{trial}.png"
+            settings.runtime.output_dir / f"lightweight_validation_{source.index}_to_{target.index}_trial_{trial}.png"
         )
         plt.tight_layout()
         plt.savefig(output_file, dpi=150, bbox_inches="tight")
@@ -958,8 +891,7 @@ def validate_proposed_shift(
     streak_rotation_deg: float | None = None,
     fwhm_exclusion: float | None = None,
 ) -> tuple[bool, float, StreakMeasurement | None, tuple[float, float]]:
-    """
-    Validate proposed shift via lightweight box-based correlation.
+    """Validate proposed shift via lightweight box-based correlation.
 
     Args:
         target: The frame we're shifting to align with the source frame
@@ -973,6 +905,7 @@ def validate_proposed_shift(
 
     Returns:
         tuple: (valid, correlation, streak_measurement, shift_correction)
+
     """
     logger.info(f"Using lightweight box-based validation (trial {trial})")
     return validate_shift_lightweight(
@@ -985,4 +918,3 @@ def validate_proposed_shift(
         streak_rotation_deg,
         fwhm_exclusion,
     )
-

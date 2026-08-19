@@ -2,16 +2,28 @@
 
 import logging
 import math
+from typing import TYPE_CHECKING
 
 from senpai.catalog.runner import query_catalog
+from senpai.core.config import settings
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
-from senpai.engine.models.astrometry import WCSModel
-from senpai.engine.models.starfield import StarInSpace, StarListSpace
+from senpai.engine.models.astrometry import WCSMetadata, WCSModel, WCSStatus
+from senpai.engine.models.starfield import StarField, StarInSpace, StarListSpace
+
+if TYPE_CHECKING:
+    from senpai.engine.models.metadata import ImageMetadata
+    from senpai.engine.models.senpai import FrameShift, SenpaiRun
 
 logger = logging.getLogger(__name__)
 
 
 def shift_wcs(wcs_model: WCSModel, shift_x: float, shift_y: float) -> WCSModel:
+    """Translate a WCS by a pixel offset, returning a new model.
+
+    Only the reference pixel moves: a translation does not change the plate scale, the
+    rotation or the distortion, so CRPIX is the whole of it. The original is left alone,
+    since the source frame keeps its own solution.
+    """
     # Create a new WCSModel by copying the source model and updating CRPIX values
     # Use model_dump() and model_validate() to create a copy with updated values
     wcs_data = wcs_model.model_dump()
@@ -47,31 +59,24 @@ def compute_wcs_distortion_metrics(
 
         # Use a nominal unit rate in RA; metrics are relative and do not depend
         # sensitively on the absolute rate when used just for distortion gating.
-        metrics = wcs_distortion_metrics(
-            astropy_wcs, rate_ra=1.0, rate_dec=0.0, nx=nx, ny=ny
-        )
+        metrics = wcs_distortion_metrics(astropy_wcs, rate_ra=1.0, rate_dec=0.0, nx=nx, ny=ny)
 
         return {
             "delta_J": float(metrics["delta_J"]),
             "max_angle_variation_deg": float(metrics["max_angle_variation_deg"]),
-            "max_length_variation_fraction": float(
-                metrics["max_length_variation_fraction"]
-            ),
+            "max_length_variation_fraction": float(metrics["max_length_variation_fraction"]),
         }
     except Exception as e:
         logger.warning(f"Failed to compute WCS distortion metrics: {e}")
         return None
 
 
-def catalog_stars_from_wcs(
-    wcs_model: WCSModel, limiting_magnitude: float | None = None
-) -> StarListSpace:
+def catalog_stars_from_wcs(wcs_model: WCSModel, limiting_magnitude: float | None = None) -> StarListSpace:
+    """Query the configured catalog for the stars a solved WCS puts in frame."""
     return query_catalog(wcs_model, faint_lim=limiting_magnitude)
 
 
-def existing_stars_from_wcs(
-    wcs_model: WCSModel, star_list: list[StarInSpace]
-) -> list[StarInSpace]:
+def existing_stars_from_wcs(wcs_model: WCSModel, star_list: list[StarInSpace]) -> list[StarInSpace]:
     """Update an existing list of stars to match a new WCS model.
 
     Args:
@@ -80,6 +85,7 @@ def existing_stars_from_wcs(
 
     Returns:
         list[StarInSpace]: Updated list of stars with new pixel coordinates
+
     """
     # Convert WCS model to astropy WCS
     astropy_wcs = wcs_model.to_astropy_wcs()
@@ -118,21 +124,16 @@ def existing_stars_from_wcs(
     return updated_stars
 
 
-def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
+def shift_wcs_by_pixel_shift(senpai_run: "SenpaiRun", frame_shift: "FrameShift") -> None:
     """Shift WCS from a source frame to a target frame using pixel offsets.
 
     Args:
         senpai_run: SenpaiRun containing all frames.
         frame_shift: FrameShift with source/target indices and pixel shifts.
-    """
-    from senpai.core.config import get_config
-    from senpai.engine.models.astrometry import WCSMetadata, WCSStatus
-    from senpai.engine.models.starfield import StarField
 
+    """
     # Get the source frame's WCS
-    logger.info(
-        f"Shifting WCS from frame {frame_shift.source_index} to {frame_shift.target_index}"
-    )
+    logger.info(f"Shifting WCS from frame {frame_shift.source_index} to {frame_shift.target_index}")
     source_frame = senpai_run.get_frame_by_index(frame_shift.source_index)
     if source_frame.starfield.wcs_status == WCSStatus.NO_WCS:
         logger.error("Source frame WCS status is NO_WCS... no WCS to shift!")
@@ -141,15 +142,9 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
     source_wcs_model = source_frame.starfield.wcs
 
     # Debug: Show initial WCS quality
-    logger.info(
-        f"Source frame WCS CRPIX: ({source_wcs_model.CRPIX1:.2f}, {source_wcs_model.CRPIX2:.2f})"
-    )
-    logger.info(
-        f"Source frame has {len(source_frame.starfield.astrometric_fit_stars)} astrometric fit stars"
-    )
-    logger.info(
-        f"Source frame has {len(source_frame.starfield.catalog_stars)} catalog stars"
-    )
+    logger.info(f"Source frame WCS CRPIX: ({source_wcs_model.CRPIX1:.2f}, {source_wcs_model.CRPIX2:.2f})")
+    logger.info(f"Source frame has {len(source_frame.starfield.astrometric_fit_stars)} astrometric fit stars")
+    logger.info(f"Source frame has {len(source_frame.starfield.catalog_stars)} catalog stars")
 
     # Get the target frame
     target_frame = senpai_run.get_frame_by_index(frame_shift.target_index)
@@ -162,28 +157,19 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
 
     target_wcs_model = shift_wcs(source_wcs_model, shift_x, shift_y)
 
-    logger.info(
-        f"Target frame WCS CRPIX after shift: ({target_wcs_model.CRPIX1:.2f}, {target_wcs_model.CRPIX2:.2f})"
-    )
+    logger.info(f"Target frame WCS CRPIX after shift: ({target_wcs_model.CRPIX1:.2f}, {target_wcs_model.CRPIX2:.2f})")
 
-    target_stars_astrometry = existing_stars_from_wcs(
-        target_wcs_model, source_frame.starfield.astrometric_fit_stars
-    )
+    target_stars_astrometry = existing_stars_from_wcs(target_wcs_model, source_frame.starfield.astrometric_fit_stars)
 
     # Propagate catalog stars from source frame by re-projecting RA/Dec
     # to target pixel coords. This preserves the full catalog; re-querying
     # with a shifted WCS can return fewer stars due to catalog boundary effects,
     # leaving bright stars unaccounted for in downstream rejection.
-    target_stars_catalog_list = existing_stars_from_wcs(
-        target_wcs_model, source_frame.starfield.catalog_stars
-    )
+    target_stars_catalog_list = existing_stars_from_wcs(target_wcs_model, source_frame.starfield.catalog_stars)
     # Filter to stars within image bounds
     if target_frame.frame is not None and hasattr(target_frame.frame, "data"):
         h, w = target_frame.frame.data.shape[:2]
-        target_stars_catalog_list = [
-            s for s in target_stars_catalog_list
-            if 0 <= s.x < w and 0 <= s.y < h
-        ]
+        target_stars_catalog_list = [s for s in target_stars_catalog_list if 0 <= s.x < w and 0 <= s.y < h]
     logger.info(
         "Propagated %d catalog stars from source frame (source had %d)",
         len(target_stars_catalog_list),
@@ -191,9 +177,9 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
     )
 
     # Apply radius filtering if configured
-    config = get_config()
-    if config.astrometry.reduce_field_by_radius is not None:
+    if settings.astrometry.reduce_field_by_radius is not None:
         from senpai.engine.models.starfield import StarListSpace
+
         wrapped = StarListSpace(
             stars=target_stars_catalog_list,
             image_metadata=source_frame.starfield.image_metadata,
@@ -201,13 +187,13 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
         wrapped = filter_catalog_stars_by_radius(
             wrapped,
             target_frame.frame.metadata,
-            config.astrometry.reduce_field_by_radius,
+            settings.astrometry.reduce_field_by_radius,
         )
         target_stars_catalog_list = wrapped.stars
         logger.info(
             "Filtered catalog stars to %i stars within %.2f%% of image circle",
             len(target_stars_catalog_list),
-            config.astrometry.reduce_field_by_radius * 100,
+            settings.astrometry.reduce_field_by_radius * 100,
         )
 
     # Build image metadata from source frame (same image dimensions, similar boresight)
@@ -222,9 +208,7 @@ def shift_wcs_by_pixel_shift(senpai_run, frame_shift):
         image_metadata=refined_image_metadata,
         fit=True,
         wcs=target_wcs_model,
-        wcs_metadata=WCSMetadata.from_wcsmodel(
-            target_wcs_model
-        ),  # Keep the same metadata
+        wcs_metadata=WCSMetadata.from_wcsmodel(target_wcs_model),  # Keep the same metadata
         wcs_status=WCSStatus.PIXEL_SHIFTED_WCS,
         detection_metadata=source_frame.starfield.detection_metadata,
         astrometry=None,
@@ -250,6 +234,7 @@ def scale_wcs_solution(wcs_model: WCSModel, scale_factor: float) -> WCSModel:
 
     Returns:
         WCSModel: A new WCS model scaled to the original image dimensions
+
     """
     # Get the original WCS
     astropy_wcs = wcs_model.to_astropy_wcs()
@@ -277,10 +262,9 @@ def scale_wcs_solution(wcs_model: WCSModel, scale_factor: float) -> WCSModel:
 
 
 def filter_catalog_stars_by_radius(
-    catalog_stars: StarListSpace, image_metadata, radius_factor: float | None
+    catalog_stars: StarListSpace, image_metadata: "ImageMetadata", radius_factor: float | None
 ) -> StarListSpace:
-    """
-    Filter catalog stars to only include those within a specified radius of the image center.
+    """Filter catalog stars to only include those within a specified radius of the image center.
 
     Args:
         catalog_stars: StarListSpace object containing catalog stars
@@ -289,14 +273,13 @@ def filter_catalog_stars_by_radius(
 
     Returns:
         StarListSpace: Filtered catalog stars
+
     """
     if radius_factor is None:
         return catalog_stars
 
     if radius_factor <= 0.0 or radius_factor > 1.0:
-        raise ValueError(
-            f"radius_factor must be between 0.0 and 1.0, got {radius_factor}"
-        )
+        raise ValueError(f"radius_factor must be between 0.0 and 1.0, got {radius_factor}")
 
     # Calculate image center
     center_x = image_metadata.width / 2.0
@@ -324,6 +307,4 @@ def filter_catalog_stars_by_radius(
         if distance <= filter_radius:
             filtered_stars.append(star)
 
-    return StarListSpace(
-        stars=filtered_stars, image_metadata=catalog_stars.image_metadata
-    )
+    return StarListSpace(stars=filtered_stars, image_metadata=catalog_stars.image_metadata)

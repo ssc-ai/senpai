@@ -1,28 +1,42 @@
+"""Turn a raw frame into one the detector can work on: darks, flats, medians, background.
+
+Every step here is optional and config-gated, because what a frame needs depends on what the
+sensor gave you. The order is not: darks before flats before medians before background, since
+each step's estimate is only valid once the previous ones have been removed.
+
+Steps record themselves in the image's processing history, and each checks that history before
+running. That is what makes the pipeline safe to re-enter on a frame someone already partly
+calibrated -- a second dark subtraction would remove the dark current twice and leave a
+negative pedestal that every later estimate inherits.
+"""
+
 import logging
+from copy import deepcopy
 from pathlib import Path
-from typing import Optional, Union
 
 import numpy as np
-
-from senpai.core.config import settings
-
-logger = logging.getLogger(__name__)
 from astropy.io import fits
 from astropy.stats import SigmaClip
 from photutils.background import Background2D
 from scipy.ndimage import gaussian_filter, zoom
 
-from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
-from senpai.engine.models.metadata import FWHMMetadata
+from senpai.core.config import config_if_initialized, settings
+from senpai.engine.models.images import ProcessedFitsImage, ProcessingMetadata, ProcessingStep
+from senpai.engine.models.metadata import FWHMMetadata, StreakMetadata
 from senpai.engine.models.starfield import StarField
 from senpai.engine.utils.darks import apply_dark_subtraction as _apply_dark_subtraction
 from senpai.engine.utils.flats import apply_flat_field as _apply_flat_field
 
+logger = logging.getLogger(__name__)
+
 
 def handle_negative_values(image: ProcessedFitsImage) -> ProcessedFitsImage:
-    """
-    Handle negative values in the image by setting them to the maximum value
-    based on the BITPIX header.
+    """Replace negative pixels with the detector's maximum value.
+
+    Negative pixels are almost always wrapped saturation: a value that overflowed the
+    detector's signed range and came back as a large negative number. The maximum implied
+    by BITPIX is what they should have read, so that is what they are set to. Leaving them
+    negative would drag every background and median estimate downward.
 
     Parameters
     ----------
@@ -33,6 +47,7 @@ def handle_negative_values(image: ProcessedFitsImage) -> ProcessedFitsImage:
     -------
     ProcessedFitsImage
         Image with negative values replaced
+
     """
     # Get BITPIX from header
     bitpix = image.header.get("BITPIX", 16)  # Default to 16-bit if not found
@@ -48,14 +63,13 @@ def handle_negative_values(image: ProcessedFitsImage) -> ProcessedFitsImage:
     n_negative = np.sum(negative_mask)
 
     if n_negative > 0:
-        print(f"Found {n_negative} negative pixels, setting to max value {max_value} (BITPIX={bitpix})")
+        logger.info(f"Found {n_negative} negative pixels, setting to max value {max_value} (BITPIX={bitpix})")
         image.data[negative_mask] = max_value
 
     return image
 
 
-def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
-                           row_stride: int = 8) -> float | None:
+def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None, row_stride: int = 8) -> float | None:
     """Photon-transfer gain (electrons per ADU) from sky shot noise in one frame.
 
     For a sky-dominated frame the per-pixel ADU variance is the sky electron
@@ -75,7 +89,7 @@ def estimate_gain_from_sky(array: np.ndarray, sky_level_adu: float | None,
     """
     if sky_level_adu is None or sky_level_adu <= 0.0:
         return None
-    sub = array[::max(int(row_stride), 1), :]
+    sub = array[:: max(int(row_stride), 1), :]
     diff = sub[:, :-1].astype(np.float64) - sub[:, 1:].astype(np.float64)
     diff = diff[np.isfinite(diff)]
     if diff.size < 1000:
@@ -96,6 +110,7 @@ def preprocess_float_dtype() -> np.dtype:
     Returns:
         ``np.float64`` when ``calibrations.preprocess_float_dtype`` selects it,
         otherwise ``np.float32`` -- the precision the pipeline runs in.
+
     """
     return np.float64 if settings.calibrations.preprocess_float_dtype == "float64" else np.float32
 
@@ -120,9 +135,8 @@ def remove_column_and_row_medians(
 
     Returns:
         The image with column and row medians subtracted.
-    """
-    from senpai.engine.models.images import ProcessingMetadata
 
+    """
     array = image.data
 
     # Convert to a signed float so the subtraction can go negative.
@@ -148,9 +162,7 @@ def remove_column_and_row_medians(
     col_params = {"sky_median_adu": sky_median_adu}
     if gain_e_per_adu is not None:
         col_params["gain_e_per_adu"] = gain_e_per_adu
-    col_metadata = ProcessingMetadata(
-        step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT,
-        parameters=col_params)
+    col_metadata = ProcessingMetadata(step_type=ProcessingStep.COLUMN_MEDIAN_SUBTRACT, parameters=col_params)
     image.processing_history.append(col_metadata)
 
     # Subtract row medians (shape: (n_rows, 1))
@@ -184,8 +196,15 @@ def remove_background(
     store_intermediates: bool = False,
     mask_sources: bool = False,
 ) -> ProcessedFitsImage:
-    from senpai.engine.models.images import ProcessingMetadata
+    """Subtract a 2D background model from the frame, recording the step in its history.
 
+    Wraps :func:`measure_background` and applies the result. The subtraction is forced back
+    to float32 because Background2D returns float64 and the pipeline runs float32 -- letting
+    the subtraction upcast silently doubles every later array's memory.
+
+    The frame is then shifted so its minimum is zero, since a background-subtracted frame
+    is otherwise centred near zero and half its pixels are negative.
+    """
     background = measure_background(
         image.data, box_size, filter_size, exclude_percentile, sigma, maxiters, mask_sources
     )
@@ -228,8 +247,7 @@ def measure_background(
     maxiters: int = 10,
     mask_sources: bool = False,
 ) -> np.ndarray:
-    """
-    Subtract the 2D background from an image using photutils Background2D.
+    """Subtract the 2D background from an image using photutils Background2D.
 
     Parameters
     ----------
@@ -245,11 +263,16 @@ def measure_background(
         Sigma clipping parameter for identifying outliers
     maxiters : int
         Maximum number of sigma-clipping iterations
+    mask_sources : bool
+        Exclude sources from the background mesh, so their flux is not measured as
+        background and then subtracted away. This is the faint-source over-subtraction
+        that the default background step suffers from.
 
     Returns
     -------
     np.ndarray
         Background-subtracted image
+
     """
     # Optionally mask sources so their flux does not inflate the background mesh
     # and get subtracted away (the faint-source over-subtraction the default
@@ -293,7 +316,7 @@ def measure_background(
             return background.background
         except Exception:
             # If all else fails, fall back to a simple global median subtraction
-            print("Warning: Background2D failed, falling back to global median subtraction")
+            logger.warning("Background2D failed, falling back to global median subtraction")
             return np.median(image)
 
 
@@ -305,8 +328,7 @@ def background_subtract(
     sigma: float = 3.0,
     maxiters: int = 10,
 ) -> np.ndarray:
-    """
-    Subtract the 2D background from an image using photutils Background2D.
+    """Subtract the 2D background from an image using photutils Background2D.
 
     Parameters
     ----------
@@ -327,19 +349,18 @@ def background_subtract(
     -------
     np.ndarray
         Background-subtracted image
-    """
 
+    """
     background = measure_background(image, box_size, filter_size, exclude_percentile, sigma, maxiters)
     return image - background
 
 
 def apply_flat_field(
     image: ProcessedFitsImage,
-    master_flat: Union[str, Path, np.ndarray],
+    master_flat: str | Path | np.ndarray,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Apply flat field correction to a ProcessedFitsImage.
+    """Apply flat field correction to a ProcessedFitsImage.
 
     This is a wrapper around the flat field utilities that integrates with
     the preprocessing workflow.
@@ -357,18 +378,18 @@ def apply_flat_field(
     -------
     ProcessedFitsImage
         Flat field corrected image
+
     """
     return _apply_flat_field(image, master_flat, store_intermediates)
 
 
 def apply_dark_subtraction(
     image: ProcessedFitsImage,
-    master_dark: Union[str, Path, np.ndarray],
-    dark_exposure_time: Optional[float] = None,
+    master_dark: str | Path | np.ndarray,
+    dark_exposure_time: float | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Apply dark subtraction to a ProcessedFitsImage.
+    """Apply dark subtraction to a ProcessedFitsImage.
 
     This is a wrapper around the dark subtraction utilities that integrates with
     the preprocessing workflow.
@@ -388,17 +409,17 @@ def apply_dark_subtraction(
     -------
     ProcessedFitsImage
         Dark-subtracted image
+
     """
     return _apply_dark_subtraction(image, master_dark, dark_exposure_time, store_intermediates)
 
 
 def auto_apply_calibrations(
     image: ProcessedFitsImage,
-    config: Optional[object] = None,
+    config: object | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Automatically apply calibration frames (flats, darks) based on configuration.
+    """Automatically apply calibration frames (flats, darks) based on configuration.
 
     Parameters
     ----------
@@ -413,17 +434,12 @@ def auto_apply_calibrations(
     -------
     ProcessedFitsImage
         Calibrated image
+
     """
     if config is None:
-        try:
-            from senpai.core.config import get_config
-
-            config = get_config()
-        except ImportError:
-            print("Warning: Could not import config, skipping auto-calibration")
-            return image
-        except RuntimeError:
-            print("Warning: Config not initialized, skipping auto-calibration")
+        config = config_if_initialized()
+        if config is None:
+            logger.warning("Config not initialized, skipping auto-calibration")
             return image
 
     # Check if calibrations config exists
@@ -433,45 +449,45 @@ def auto_apply_calibrations(
     cal_config = config.calibrations
 
     # Helper function to check if a step has already been applied
-    def step_already_applied(step_type):
+    def step_already_applied(step_type: ProcessingStep) -> bool:
         return any(step.step_type == step_type for step in image.processing_history)
 
     # Apply darks first if configured
     if cal_config.auto_apply_darks:
         if step_already_applied(ProcessingStep.DARK_SUBTRACT):
-            print("Dark subtraction already applied, skipping")
+            logger.info("Dark subtraction already applied, skipping")
         else:
             # Use intelligent dark matching that considers exposure time
             master_dark_path = _find_best_dark_calibration(
                 image, cal_config.master_darks_dir, cal_config.dark_matching_headers, cal_config.max_dark_exposure_ratio
             )
             if master_dark_path:
-                print(f"Applying master dark: {master_dark_path}")
+                logger.info(f"Applying master dark: {master_dark_path}")
                 image = apply_dark_subtraction(image, master_dark_path, store_intermediates=store_intermediates)
             else:
-                print("Warning: Auto-apply darks enabled but no matching master dark found")
+                logger.warning("Auto-apply darks enabled but no matching master dark found")
 
     # Apply preprocessing steps based on configuration
     if cal_config.auto_remove_column_median:
         if step_already_applied(ProcessingStep.COLUMN_MEDIAN_SUBTRACT):
-            print("Column median removal already applied, skipping")
+            logger.info("Column median removal already applied, skipping")
         else:
-            print("Applying column median removal")
+            logger.info("Applying column median removal")
             image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
     elif cal_config.auto_remove_row_median:
         if step_already_applied(ProcessingStep.ROW_MEDIAN_SUBTRACT):
-            print("Row median removal already applied, skipping")
+            logger.info("Row median removal already applied, skipping")
         else:
             # If only row median removal is enabled, we need a separate function
             # For now, we'll still call the combined function but note this in the future
-            print("Applying row median removal")
+            logger.info("Applying row median removal")
             image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
 
     if cal_config.auto_subtract_background:
         if step_already_applied(ProcessingStep.BACKGROUND_SUBTRACT):
-            print("Background subtraction already applied, skipping")
+            logger.info("Background subtraction already applied, skipping")
         else:
-            print("Applying background subtraction")
+            logger.info("Applying background subtraction")
             image = remove_background(
                 image,
                 box_size=cal_config.background_box_size,
@@ -486,25 +502,24 @@ def auto_apply_calibrations(
     # Apply flats if configured
     if cal_config.auto_apply_flats:
         if step_already_applied(ProcessingStep.FLAT_DIVIDE):
-            print("Flat correction already applied, skipping")
+            logger.info("Flat correction already applied, skipping")
         else:
             master_flat_path = _find_master_calibration(
                 image, cal_config.master_flats_dir, cal_config.flat_matching_headers, "flat"
             )
             if master_flat_path:
-                print(f"Applying master flat: {master_flat_path}")
+                logger.info(f"Applying master flat: {master_flat_path}")
                 image = apply_flat_field(image, master_flat_path, store_intermediates)
             else:
-                print("Warning: Auto-apply flats enabled but no matching master flat found")
+                logger.warning("Auto-apply flats enabled but no matching master flat found")
 
     return image
 
 
 def _find_master_calibration(
-    image: ProcessedFitsImage, calibration_dir: Optional[str], matching_headers: list[str], calibration_type: str
-) -> Optional[Path]:
-    """
-    Find the appropriate master calibration file for an image by matching FITS headers.
+    image: ProcessedFitsImage, calibration_dir: str | None, matching_headers: list[str], calibration_type: str
+) -> Path | None:
+    """Find the appropriate master calibration file for an image by matching FITS headers.
 
     Parameters
     ----------
@@ -521,19 +536,20 @@ def _find_master_calibration(
     -------
     Path or None
         Path to matching master calibration file, or None if not found
+
     """
     if not calibration_dir:
         return None
 
     calibration_dir = Path(calibration_dir)
     if not calibration_dir.exists():
-        print(f"Warning: {calibration_type} directory does not exist: {calibration_dir}")
+        logger.warning(f"{calibration_type} directory does not exist: {calibration_dir}")
         return None
 
     # Get all FITS files in the calibration directory
     calib_files = list(calibration_dir.glob("*.fits")) + list(calibration_dir.glob("*.fit"))
     if not calib_files:
-        print(f"Warning: No FITS files found in {calibration_type} directory: {calibration_dir}")
+        logger.warning(f"No FITS files found in {calibration_type} directory: {calibration_dir}")
         return None
 
     # Extract target metadata from image header
@@ -560,10 +576,10 @@ def _find_master_calibration(
                 break
 
         if header_key not in target_metadata:
-            print(f"Warning: Required header '{header_key}' not found in science image")
+            logger.warning(f"Required header '{header_key}' not found in science image")
             return None
 
-    print(f"Looking for {calibration_type} with metadata: {target_metadata}")
+    logger.info(f"Looking for {calibration_type} with metadata: {target_metadata}")
 
     # Science frame time, for picking the nearest-in-time calibration when
     # several match (e.g. one master flat per night in a shared dir).
@@ -577,7 +593,7 @@ def _find_master_calibration(
         target_time = None
 
     # Collect every calibration file whose headers match
-    candidates: list[tuple[Path, Optional[float], dict]] = []
+    candidates: list[tuple[Path, float | None, dict]] = []
     for calib_file in calib_files:
         try:
             with fits.open(calib_file) as hdul:
@@ -629,25 +645,23 @@ def _find_master_calibration(
                     candidates.append((calib_file, calib_time, calib_metadata))
 
         except Exception as e:
-            print(f"Warning: Could not read {calibration_type} file {calib_file}: {e}")
+            logger.warning(f"Could not read {calibration_type} file {calib_file}: {e}")
 
     if candidates:
         if target_time is not None and len(candidates) > 1:
             # Prefer the calibration taken closest in time; undated ones last.
-            candidates.sort(
-                key=lambda c: abs(c[1] - target_time) if c[1] is not None else float("inf")
-            )
+            candidates.sort(key=lambda c: abs(c[1] - target_time) if c[1] is not None else float("inf"))
         calib_file, _, calib_metadata = candidates[0]
-        print(
+        logger.info(
             f"Found matching {calibration_type}: {calib_file.name} with metadata: "
             f"{calib_metadata} ({len(candidates)} candidate(s))"
         )
         return calib_file
 
-    print(f"No matching {calibration_type} found for metadata: {target_metadata}")
+    logger.info(f"No matching {calibration_type} found for metadata: {target_metadata}")
 
     # Show available calibration files for debugging
-    print(f"Available {calibration_type} files:")
+    logger.info(f"Available {calibration_type} files:")
     for calib_file in calib_files[:5]:  # Show first 5 files
         try:
             with fits.open(calib_file) as hdul:
@@ -659,18 +673,17 @@ def _find_master_calibration(
                         if isinstance(value, str):
                             value = value.lower().strip()
                         calib_metadata[header_key] = value
-                print(f"  {calib_file.name}: {calib_metadata}")
-        except:
-            print(f"  {calib_file.name}: <could not read headers>")
+                logger.info(f"  {calib_file.name}: {calib_metadata}")
+        except Exception:
+            logger.info(f"  {calib_file.name}: <could not read headers>")
 
     return None
 
 
 def _find_best_dark_calibration(
-    image: ProcessedFitsImage, dark_dir: Optional[str], matching_headers: list[str], max_exposure_ratio: float
-) -> Optional[Path]:
-    """
-    Find the best dark calibration file by matching headers and finding closest exposure time.
+    image: ProcessedFitsImage, dark_dir: str | None, matching_headers: list[str], max_exposure_ratio: float
+) -> Path | None:
+    """Find the best dark calibration file by matching headers and finding closest exposure time.
 
     Parameters
     ----------
@@ -687,19 +700,20 @@ def _find_best_dark_calibration(
     -------
     Path or None
         Path to best matching master dark file, or None if not found
+
     """
     if not dark_dir:
         return None
 
     dark_dir = Path(dark_dir)
     if not dark_dir.exists():
-        print(f"Warning: Dark directory does not exist: {dark_dir}")
+        logger.warning(f"Dark directory does not exist: {dark_dir}")
         return None
 
     # Get all FITS files in the dark directory
     dark_files = list(dark_dir.glob("*.fits")) + list(dark_dir.glob("*.fit"))
     if not dark_files:
-        print(f"Warning: No FITS files found in dark directory: {dark_dir}")
+        logger.warning(f"No FITS files found in dark directory: {dark_dir}")
         return None
 
     # Get image exposure time
@@ -713,7 +727,7 @@ def _find_best_dark_calibration(
             break
 
     if image_exptime is None:
-        print("Warning: Could not determine image exposure time, using exact header matching")
+        logger.warning("Could not determine image exposure time, using exact header matching")
         return _find_master_calibration(image, dark_dir, matching_headers, "dark")
 
     # Extract target metadata from image header (excluding exposure time)
@@ -736,10 +750,10 @@ def _find_best_dark_calibration(
                 break
 
         if header_key not in target_metadata:
-            print(f"Warning: Required header '{header_key}' not found in science image")
+            logger.warning(f"Required header '{header_key}' not found in science image")
             return None
 
-    print(f"Looking for dark with metadata: {target_metadata} (image exposure: {image_exptime}s)")
+    logger.info(f"Looking for dark with metadata: {target_metadata} (image exposure: {image_exptime}s)")
 
     # Find all darks that match the required headers
     matching_darks = []
@@ -792,10 +806,10 @@ def _find_best_dark_calibration(
                             matching_darks.append((dark_file, dark_exptime, ratio))
 
         except Exception as e:
-            print(f"Warning: Could not read dark file {dark_file}: {e}")
+            logger.warning(f"Could not read dark file {dark_file}: {e}")
 
     if not matching_darks:
-        print(f"No matching darks found for metadata: {target_metadata}")
+        logger.info(f"No matching darks found for metadata: {target_metadata}")
         return None
 
     # Sort by exposure time ratio (closest match first)
@@ -803,56 +817,42 @@ def _find_best_dark_calibration(
 
     best_dark_file, best_dark_exptime, best_ratio = matching_darks[0]
 
-    print(f"Found {len(matching_darks)} matching darks:")
+    logger.info(f"Found {len(matching_darks)} matching darks:")
     for dark_file, dark_exptime, ratio in matching_darks[:5]:  # Show first 5
-        print(f"  {dark_file.name}: {dark_exptime}s (ratio: {ratio:.2f})")
+        logger.info(f"  {dark_file.name}: {dark_exptime}s (ratio: {ratio:.2f})")
 
-    print(f"Selected best dark: {best_dark_file.name} ({best_dark_exptime}s, ratio: {best_ratio:.2f})")
+    logger.info(f"Selected best dark: {best_dark_file.name} ({best_dark_exptime}s, ratio: {best_ratio:.2f})")
 
     return best_dark_file
 
 
 def preprocess_image(
     image: ProcessedFitsImage,
-    config: Optional[object] = None,
+    config: object | None = None,
     store_intermediates: bool = False,
 ) -> ProcessedFitsImage:
-    """
-    Complete preprocessing pipeline that applies all configured steps.
-    """
-    import numpy as np
-
+    """Complete preprocessing pipeline that applies all configured steps."""
     fname = Path(image.file_path).name if image.file_path else "?"
 
-    def log_stats(stage, arr):
+    def log_stats(stage: str, arr: np.ndarray) -> None:
         # Median on a stride-8 subsample: this is a diagnostic log line, and
         # four full-frame medians per frame cost ~1 s each on 66 Mpix.
         logger.info(
             "[%s] %s: min=%.1f, max=%.1f, median=%.1f, mean=%.1f",
-            fname, stage, np.min(arr), np.max(arr),
-            np.median(arr[::8, ::8]), np.mean(arr),
+            fname,
+            stage,
+            np.min(arr),
+            np.max(arr),
+            np.median(arr[::8, ::8]),
+            np.mean(arr),
         )
 
     log_stats("loaded", image.data)
 
     if config is None:
-        try:
-            from senpai.core.config import get_config
-
-            config = get_config()
-        except ImportError:
-            print("Warning: Could not import config, applying default preprocessing")
-            # Apply default preprocessing steps only if not already applied
-            if not any(
-                step.step_type in [ProcessingStep.ROW_MEDIAN_SUBTRACT, ProcessingStep.COLUMN_MEDIAN_SUBTRACT]
-                for step in image.processing_history
-            ):
-                image = remove_column_and_row_medians(image, store_intermediates, dtype=preprocess_float_dtype())
-            if not any(step.step_type == ProcessingStep.BACKGROUND_SUBTRACT for step in image.processing_history):
-                image = remove_background(image, store_intermediates=store_intermediates)
-            return image
-        except RuntimeError:
-            print("Warning: Config not initialized, applying default preprocessing")
+        config = config_if_initialized()
+        if config is None:
+            logger.warning("Config not initialized, applying default preprocessing")
             # Apply default preprocessing steps only if not already applied
             if not any(
                 step.step_type in [ProcessingStep.ROW_MEDIAN_SUBTRACT, ProcessingStep.COLUMN_MEDIAN_SUBTRACT]
@@ -870,7 +870,7 @@ def preprocess_image(
     # Handle negative values once at the beginning
     image = handle_negative_values(image)
 
-    def step_already_applied(step_type):
+    def step_already_applied(step_type: ProcessingStep) -> bool:
         return any(step.step_type == step_type for step in image.processing_history)
 
     # Step 1: Apply darks first (if configured)
@@ -966,8 +966,7 @@ def preprocess_image(
 def collect_detailed_fwhm_stats(
     starfield: StarField, target_fwhm: float = 3.0, oversample_threshold: float = 4.0
 ) -> FWHMMetadata:
-    """
-    Collect comprehensive FWHM statistics from star detections.
+    """Collect comprehensive FWHM statistics from star detections.
 
     Parameters
     ----------
@@ -982,6 +981,7 @@ def collect_detailed_fwhm_stats(
     -------
     FWHMMetadata
         Comprehensive FWHM statistics
+
     """
     # Get FWHM measurements from different sources
     fwhm_values = []
@@ -1075,8 +1075,7 @@ def collect_detailed_fwhm_stats(
 
 
 def scale_image_block_median(image: ProcessedFitsImage, scale_factor: float) -> ProcessedFitsImage:
-    """
-    Scale image using block median method (fast + removes hot pixels).
+    """Scale image using block median method (fast + removes hot pixels).
 
     Parameters
     ----------
@@ -1089,9 +1088,8 @@ def scale_image_block_median(image: ProcessedFitsImage, scale_factor: float) -> 
     -------
     ProcessedFitsImage
         Scaled image
-    """
-    from senpai.engine.models.images import ProcessingMetadata
 
+    """
     # Calculate block size first
     block_size = int(np.ceil(scale_factor))
 
@@ -1152,8 +1150,7 @@ def scale_image_block_median(image: ProcessedFitsImage, scale_factor: float) -> 
 
 
 def scale_image_blur_decimate(image: ProcessedFitsImage, scale_factor: float) -> ProcessedFitsImage:
-    """
-    Scale image using Gaussian blur + decimation (better photometry).
+    """Scale image using Gaussian blur + decimation (better photometry).
 
     Parameters
     ----------
@@ -1166,13 +1163,11 @@ def scale_image_blur_decimate(image: ProcessedFitsImage, scale_factor: float) ->
     -------
     ProcessedFitsImage
         Scaled image
-    """
-    from senpai.engine.models.images import ProcessingMetadata
 
+    """
     # Calculate target dimensions first
     target_height = int(image.data.shape[0] / scale_factor)
     target_width = int(image.data.shape[1] / scale_factor)
-    output_shape = (target_height, target_width)
 
     # Apply Gaussian blur to avoid aliasing
     # Sigma should be ~scale_factor/2 to prevent aliasing
@@ -1218,8 +1213,7 @@ def scale_image_to_target_fwhm(
     method: str = "block_median",
     oversample_threshold: float = 4.0,
 ) -> tuple[ProcessedFitsImage, float]:
-    """
-    Scale image to achieve target FWHM using specified method.
+    """Scale image to achieve target FWHM using specified method.
 
     Parameters
     ----------
@@ -1238,15 +1232,18 @@ def scale_image_to_target_fwhm(
     -------
     tuple[ProcessedFitsImage, float]
         (scaled_image, scale_factor_used)
+
     """
     if fwhm_stats.median_fwhm <= oversample_threshold:
-        print(f"FWHM {fwhm_stats.median_fwhm:.1f} <= {oversample_threshold}, no scaling needed")
+        logger.info(f"FWHM {fwhm_stats.median_fwhm:.1f} <= {oversample_threshold}, no scaling needed")
         return image, 1.0
 
     scale_factor = fwhm_stats.median_fwhm / target_fwhm
 
-    print(f"Scaling image: {fwhm_stats.median_fwhm:.1f} -> {target_fwhm:.1f} pixels FWHM (factor: {scale_factor:.2f})")
-    print(f"Method: {method}, {fwhm_stats.n_measurements} FWHM measurements")
+    logger.info(
+        f"Scaling image: {fwhm_stats.median_fwhm:.1f} -> {target_fwhm:.1f} pixels FWHM (factor: {scale_factor:.2f})"
+    )
+    logger.info(f"Method: {method}, {fwhm_stats.n_measurements} FWHM measurements")
 
     if method == "block_median":
         scaled_image = scale_image_block_median(image, scale_factor)
@@ -1259,8 +1256,7 @@ def scale_image_to_target_fwhm(
 
 
 def scale_starfield_coordinates(starfield: StarField, scale_factor: float) -> StarField:
-    """
-    Update starfield coordinates after image scaling.
+    """Update starfield coordinates after image scaling.
 
     Parameters
     ----------
@@ -1273,6 +1269,7 @@ def scale_starfield_coordinates(starfield: StarField, scale_factor: float) -> St
     -------
     StarField
         Updated starfield with scaled coordinates
+
     """
     # Scale detection coordinates
     for star in starfield.detections:
@@ -1329,8 +1326,7 @@ def scale_starfield_coordinates(starfield: StarField, scale_factor: float) -> St
 def unscale_starfield_coordinates(
     starfield: StarField, scale_factor: float, scaling_method: str = "block_median"
 ) -> StarField:
-    """
-    Unscale starfield coordinates back to original image size.
+    """Unscale starfield coordinates back to original image size.
 
     This is the reverse of scale_starfield_coordinates, accounting for the specific scaling method used.
 
@@ -1347,6 +1343,7 @@ def unscale_starfield_coordinates(
     -------
     StarField
         Updated starfield with unscaled coordinates
+
     """
     if scale_factor == 1.0:
         return starfield
@@ -1411,7 +1408,8 @@ def unscale_starfield_coordinates(
         import warnings
 
         warnings.warn(
-            "Block median unscaling may not be exact due to trimming. Consider using simple_integer scaling for precise coordinate mapping."
+            "Block median unscaling may not be exact due to trimming. Consider using simple_integer scaling for precise coordinate mapping.",
+            stacklevel=2,
         )
 
         # Use the same logic as simple_integer for now
@@ -1459,9 +1457,10 @@ def unscale_starfield_coordinates(
     return starfield
 
 
-def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "block_median"):
-    """
-    Unscale streak metadata back to original image size.
+def unscale_streak_metadata(
+    streak: StreakMetadata, scale_factor: float, scaling_method: str = "block_median"
+) -> StreakMetadata:
+    """Unscale streak metadata back to original image size.
 
     Parameters
     ----------
@@ -1476,12 +1475,12 @@ def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "
     -------
     StreakMetadata
         Updated streak metadata with unscaled values
+
     """
     if streak is None or scale_factor == 1.0:
         return streak
 
     # Import here to avoid circular imports
-    from copy import deepcopy
 
     # Create a deep copy to avoid modifying the original
     unscaled_streak = deepcopy(streak)
@@ -1494,10 +1493,9 @@ def unscale_streak_metadata(streak, scale_factor: float, scaling_method: str = "
 
 
 def apply_fwhm_optimization(
-    image: ProcessedFitsImage, starfield: StarField, config: Optional[object] = None
+    image: ProcessedFitsImage, starfield: StarField, config: object | None = None
 ) -> tuple[ProcessedFitsImage, StarField]:
-    """
-    Apply FWHM-based optimization after WCS fitting.
+    """Apply FWHM-based optimization after WCS fitting.
 
     This function:
     1. Collects detailed FWHM statistics
@@ -1537,19 +1535,17 @@ def apply_fwhm_optimization(
     -------
     tuple[ProcessedFitsImage, StarField]
         (optimized_image, updated_starfield)
+
     """
     if config is None:
-        try:
-            from senpai.core.config import get_config
-
-            config = get_config()
-        except (ImportError, RuntimeError):
-            print("Warning: Config not available, skipping FWHM optimization")
+        config = config_if_initialized()
+        if config is None:
+            logger.warning("Config not available, skipping FWHM optimization")
             return image, starfield
 
     # Check if calibrations config exists
     if not hasattr(config, "calibrations"):
-        print("No calibrations config found, skipping FWHM optimization")
+        logger.info("No calibrations config found, skipping FWHM optimization")
         return image, starfield
 
     cal_config = config.calibrations
@@ -1559,7 +1555,7 @@ def apply_fwhm_optimization(
     # Step 2: Apply scaling if enabled and beneficial
     if cal_config.auto_scale_images and fwhm_stats.is_oversampled:
         try:
-            print("Applying image scaling optimization...")
+            logger.info("Applying image scaling optimization...")
             scaled_image, scale_factor = scale_image_to_target_fwhm(
                 image,
                 fwhm_stats,
@@ -1570,26 +1566,28 @@ def apply_fwhm_optimization(
 
             if scale_factor > 1.0:
                 # Update starfield coordinates
-                print("Updating starfield coordinates for scaled image...")
+                logger.info("Updating starfield coordinates for scaled image...")
                 updated_starfield = scale_starfield_coordinates(starfield, scale_factor)
 
-                print(
+                logger.info(
                     f"Image optimized: {image.data.shape} -> {scaled_image.data.shape} "
                     f"(scale factor: {scale_factor:.2f})"
                 )
 
                 return scaled_image, updated_starfield
             else:
-                print("No scaling applied - image already optimal")
+                logger.info("No scaling applied - image already optimal")
                 return image, starfield
 
         except Exception as e:
-            print(f"Warning: Image scaling failed: {e}")
+            logger.warning(f"Image scaling failed: {e}")
             return image, starfield
     else:
         if not cal_config.auto_scale_images:
-            print("Auto-scaling disabled in configuration")
+            logger.info("Auto-scaling disabled in configuration")
         elif not fwhm_stats.is_oversampled:
-            print(f"Image not oversampled (FWHM={fwhm_stats.median_fwhm:.1f} <= {cal_config.oversample_threshold})")
+            logger.info(
+                f"Image not oversampled (FWHM={fwhm_stats.median_fwhm:.1f} <= {cal_config.oversample_threshold})"
+            )
 
         return image, starfield

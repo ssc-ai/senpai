@@ -26,14 +26,26 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable
 
+from senpai.astrometry import enforce_indices, require_astrometry_install
+from senpai.catalog.runner import enforce_catalog
+from senpai.cli.calibrate import main as calibrate_main
 from senpai.cli.common import ensure_output_dir, save_run_metadata
-from senpai.core.config import get_config, initialize_config
+from senpai.core.config import initialize_config, settings
 from senpai.core.constants import CONFIG_DIR
 from senpai.core.logging import set_log_level
+from senpai.engine.models.senpai import SenpaiRunResult
+from senpai.engine.observability.calibration import summarize_nights
+from senpai.engine.plotting.replot import ALL_KINDS, replot
+from senpai.engine.processing.collect import final_plots, process_senpai_collect
+from senpai.engine.utils.file_io import load_fits_files
+from senpai.engine.utils.fits_io import extract_header_value
+from senpai.engine.utils.flats import _create_master_flat_from_files
+from senpai.export.coco import SenpaiCocoExporter
+from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
 from senpai.integrations.burr import BurrNight, FrameBatch
 
 # Default senpai config tuned to burr's FITS header conventions
@@ -57,28 +69,28 @@ def _batch_output_dir(night_root: Path, batch: FrameBatch) -> Path:
 
 
 def _batch_already_done(batch_dir: Path, batch_id: str) -> bool:
-    """We consider a batch complete if both the full result and the summary
-    JSON exist. Anything less means we re-run — partial state is unsafe."""
-    return (
-        (batch_dir / f"senpai_{batch_id}.json").is_file()
-        and (batch_dir / f"senpai_{batch_id}_summary.json").is_file()
-    )
+    """We consider a batch complete if both the full result and the summary JSON exist.
+
+    Anything less means we re-run — partial state is unsafe.
+    """
+    return (batch_dir / f"senpai_{batch_id}.json").is_file() and (
+        batch_dir / f"senpai_{batch_id}_summary.json"
+    ).is_file()
 
 
 @contextmanager
-def _tee_logs(log_path: Path):
-    """Tee root-logger output into ``log_path`` for the duration of the block,
-    so each batch's full senpai processing log is saved beside its outputs
-    (WCS solve, frame-to-frame shift solves, photometry — the record needed to
-    diagnose per-frame failures). Captures whatever level the root logger is
-    set to; set ``config.logging.level: DEBUG`` for the most detail."""
+def _tee_logs(log_path: Path) -> Iterator[None]:
+    """Tee root-logger output into ``log_path`` for the duration of the block.
 
+    Each batch's full processing log is saved beside its outputs -- the WCS solve, the
+    frame-to-frame shift solves, the photometry -- which is the record needed to diagnose a
+    per-frame failure after the fact. Captures whatever level the root logger is
+    set to; set ``config.logging.level: DEBUG`` for the most detail.
+    """
     root = logging.getLogger()
     handler = logging.FileHandler(log_path, mode="w")
     handler.setLevel(logging.NOTSET)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    )
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     root.addHandler(handler)
     try:
         yield
@@ -93,16 +105,11 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
 
     Returns a small manifest entry (paths + timing) for the night's manifest.
     """
-
-    from senpai.engine.processing.collect import final_plots, process_senpai_collect
-    from senpai.engine.utils.file_io import load_fits_files
-
     batch_dir.mkdir(parents=True, exist_ok=True)
-    config = get_config()
-    config.runtime.output_dir = batch_dir
-    config.runtime.run_id = batch.batch_id
+    settings.runtime.output_dir = batch_dir
+    settings.runtime.run_id = batch.batch_id
 
-    save_run_metadata(batch_dir, "senpai.cli.burr", config)
+    save_run_metadata(batch_dir, "senpai.cli.burr")
 
     t0 = time.time()
     with _tee_logs(batch_dir / "senpai.log"):
@@ -130,7 +137,8 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
         except Exception as e:
             logger.warning(
                 "final_plots failed for %s (results already saved): %s",
-                batch.batch_id, e,
+                batch.batch_id,
+                e,
             )
 
     elapsed = time.time() - t0
@@ -149,9 +157,10 @@ def _run_batch(batch: FrameBatch, batch_dir: Path) -> dict:
     }
 
 
-def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
-    """Fill in tracking mode ONLY for frames whose header carries no usable
-    ``TRKMODE`` — never overwrite a present one.
+def _apply_intended_track_mode_overrides(file_list: list[Path], batch: FrameBatch) -> None:
+    """Fill in tracking mode only for frames whose header carries no usable ``TRKMODE``.
+
+    Never overwrites a present one.
 
     ``TRKMODE`` is authoritative: burr records sidereal vs rate as the mount
     *actually tracked*, and writes ``sidereal`` when it tracked sidereal (a raw
@@ -166,12 +175,8 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
     batches (e.g. by TASKID), so the hint mislabels real rate frames as sidereal.
     We keep it only as a last resort for a frame with no TRKMODE at all.
     """
-    from senpai.engine.utils.fits_io import extract_header_value
-
-    mode_keys = get_config().headers.tracking.track_mode_keys or ["TRKMODE"]
-    path_to_intent: dict[str, str | None] = {
-        str(r.path): r.intended_tracking_mode for r in batch.frames
-    }
+    mode_keys = settings.headers.tracking.track_mode_keys or ["TRKMODE"]
+    path_to_intent: dict[str, str | None] = {str(r.path): r.intended_tracking_mode for r in batch.frames}
     filled: dict[str, str] = {}
     for img in file_list:
         file_path = getattr(img, "file_path", None)
@@ -193,20 +198,22 @@ def _apply_intended_track_mode_overrides(file_list, batch: FrameBatch) -> None:
     if filled:
         logger.info(
             "Filled TRKMODE from intent for %d header-less frame(s) in batch %s: %s",
-            len(filled), batch.batch_id, filled,
+            len(filled),
+            batch.batch_id,
+            filled,
         )
 
 
 def _write_manifest(night_root: Path, night: BurrNight, entries: list[dict]) -> Path:
-    """A per-night manifest of what was processed, for the calibration and
-    dataset stages to consume without re-walking the data dir.
+    """Write a per-night manifest of what was processed.
+
+    The calibration and dataset stages consume it instead of re-walking the data dir.
 
     Merges with any existing manifest (keyed by ``batch_id``) so running `night`
     repeatedly against the same ``-o`` — e.g. one task at a time, or resuming —
     accumulates batches rather than clobbering the prior run's. New entries
     replace same-id old ones; the union is written back in batch-id order.
     """
-
     path = night_root / "manifest.json"
     merged: dict[str, dict] = {}
     if path.is_file():
@@ -237,7 +244,9 @@ def _write_manifest(night_root: Path, night: BurrNight, entries: list[dict]) -> 
         json.dump(manifest, f, indent=2)
     logger.info(
         "Wrote night manifest: %s (%d batches, %d new this run)",
-        path, len(batches), len(entries),
+        path,
+        len(batches),
+        len(entries),
     )
     return path
 
@@ -279,25 +288,18 @@ def _iter_filtered_batches(
 
 
 def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
-    """One or more BurrNights to process. ``--auto-nights`` splits a flat,
-    multi-night data dir (burr's "didn't split per night" bug) into one night
-    per observing session; otherwise it's the single run_state-delimited night."""
+    """One or more BurrNights to process.
 
+    ``--auto-nights`` splits a flat, multi-night data dir (burr's "didn't split per night" bug)
+    into one night per observing session; otherwise it's the single run_state-delimited night.
+    """
     if not args.auto_nights:
-        return [
-            BurrNight.from_night_dir(
-                args.night_dir, burr_root=args.burr_root, data_dir=args.data_dir
-            )
-        ]
+        return [BurrNight.from_night_dir(args.night_dir, burr_root=args.burr_root, data_dir=args.data_dir)]
 
     if args.data_dir is None:
-        raise SystemExit(
-            "--auto-nights requires --data-dir (the flat FITS dir to split)."
-        )
+        raise SystemExit("--auto-nights requires --data-dir (the flat FITS dir to split).")
     run_state_path = Path(args.night_dir) / "metadata" / "run_state.json"
-    nights = BurrNight.auto_nights(
-        run_state_path, args.data_dir, gap_hours=args.gap_hours
-    )
+    nights = BurrNight.auto_nights(run_state_path, args.data_dir, gap_hours=args.gap_hours)
     if args.night:
         nights = [n for n in nights if args.night in n.night_id]
         if not nights:
@@ -306,14 +308,19 @@ def _resolve_nights(args: argparse.Namespace) -> list[BurrNight]:
 
 
 def _worker_init(
-    config_path: str, log_level: str, detect: bool,
-    save_processed_fits: bool = True, detect_streaks: bool = True,
+    config_path: str,
+    log_level: str,
+    detect: bool,
+    save_processed_fits: bool = True,
+    detect_streaks: bool = True,
 ) -> None:
-    """Per-worker setup for parallel batch processing. Spawned workers start with
-    no initialized config singleton, so each must load it; BLAS is already pinned
-    to 1 thread via the env set before the pool was created (inherited at import).
-    CLI overrides applied to the parent config must be re-applied here — workers
-    re-read the YAML and would otherwise silently drop them."""
+    """Per-worker setup for parallel batch processing.
+
+    Spawned workers start with no initialized config singleton, so each must load it; BLAS is
+    already pinned to 1 thread via the env set before the pool was created (inherited at
+    import). CLI overrides applied to the parent config must be re-applied here — workers
+    re-read the YAML and would otherwise silently drop them.
+    """
     config = initialize_config(Path(config_path))
     set_log_level(log_level)
     config.detection.detect = detect
@@ -333,20 +340,22 @@ def _failed_entry(batch: FrameBatch, exc: Exception) -> dict:
 
 
 def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path) -> int:
-    """Run every selected batch of one night; write its manifest. Returns 0 on
-    full success, 2 if any batch failed. With --jobs N>1, independent batches run
-    in parallel across N worker processes."""
+    """Run every selected batch of one night; write its manifest.
 
-    batches = list(_iter_filtered_batches(
-        night, args.task, args.limit, args.max_frames, seq_key=args.seq_key
-    ))
+    Returns 0 on full success, 2 if any batch failed. With --jobs N>1, independent batches run
+    in parallel across N worker processes.
+    """
+    batches = list(_iter_filtered_batches(night, args.task, args.limit, args.max_frames, seq_key=args.seq_key))
     night_root = output_root / night.night_id
     night_root.mkdir(parents=True, exist_ok=True)
     jobs = max(1, getattr(args, "jobs", 1))
     logger.info(
-        "BurrNight %s: %d batches to process (tasks=%s, limit=%s, jobs=%d, "
-        "grouped on seq_key=%s)",
-        night.night_id, len(batches), args.task or "all", args.limit, jobs,
+        "BurrNight %s: %d batches to process (tasks=%s, limit=%s, jobs=%d, grouped on seq_key=%s)",
+        night.night_id,
+        len(batches),
+        args.task or "all",
+        args.limit,
+        jobs,
         args.seq_key or "command/filename",
     )
 
@@ -365,15 +374,17 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
         batch_dir = _batch_output_dir(night_root, batch)
         if args.skip_existing and _batch_already_done(batch_dir, batch.batch_id):
             logger.info("skip (existing): %s", batch.batch_id)
-            entries.append({
-                "batch_id": batch.batch_id,
-                "seq_id": batch.seq_id,
-                "task": batch.task,
-                "num_frames": len(batch.frames),
-                "skipped": True,
-                "result_path": str(batch_dir / f"senpai_{batch.batch_id}.json"),
-                "summary_path": str(batch_dir / f"senpai_{batch.batch_id}_summary.json"),
-            })
+            entries.append(
+                {
+                    "batch_id": batch.batch_id,
+                    "seq_id": batch.seq_id,
+                    "task": batch.task,
+                    "num_frames": len(batch.frames),
+                    "skipped": True,
+                    "result_path": str(batch_dir / f"senpai_{batch.batch_id}.json"),
+                    "summary_path": str(batch_dir / f"senpai_{batch.batch_id}_summary.json"),
+                }
+            )
             n_skipped += 1
         else:
             todo.append((batch, batch_dir))
@@ -381,13 +392,19 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
     n_total = len(todo)
     if jobs == 1 or n_total <= 1:
         for i, (batch, batch_dir) in enumerate(todo, start=1):
-            logger.info("[%d/%d] batch %s [seq_id=%s] (%s, %d frames)",
-                        i, n_total, batch.batch_id, batch.seq_id or "none",
-                        batch.task, len(batch.frames))
+            logger.info(
+                "[%d/%d] batch %s [seq_id=%s] (%s, %d frames)",
+                i,
+                n_total,
+                batch.batch_id,
+                batch.seq_id or "none",
+                batch.task,
+                len(batch.frames),
+            )
             try:
                 entry = _run_batch(batch, batch_dir)
             except Exception as e:
-                logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                logger.exception("Batch %s failed", batch.batch_id)
                 entry = _failed_entry(batch, e)
                 n_failed += 1
             else:
@@ -401,8 +418,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
 
         # Pin BLAS to 1 thread/worker so N processes don't oversubscribe cores
         # (set before the spawn pool so children inherit it at numpy import).
-        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-                    "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             os.environ.setdefault(var, "1")
         ctx = mp.get_context("spawn")
         logger.info("Processing %d batches across %d workers", n_total, jobs)
@@ -413,7 +429,7 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
         # max_tasks_per_child: when all spawn workers hit that limit together
         # (and they do — they start together on uniform work) the executor
         # can fail to respawn any of them and deadlocks with zero children;
-        # observed hung at exactly jobs×24 batches. A fresh pool per slice is
+        # observed hung at exactly jobsx24 batches. A fresh pool per slice is
         # a few seconds of respawn against many minutes of batch work.
         #
         # 8 batches/worker/cycle: workers grow ~0.5-1 GB per batch (observed
@@ -425,14 +441,18 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
         tasks_per_cycle = jobs * 8
         n = 0
         for lo in range(0, len(todo), tasks_per_cycle):
-            chunk = todo[lo:lo + tasks_per_cycle]
+            chunk = todo[lo : lo + tasks_per_cycle]
             with concurrent.futures.ProcessPoolExecutor(
-                max_workers=jobs, mp_context=ctx,
+                max_workers=jobs,
+                mp_context=ctx,
                 initializer=_worker_init,
-                initargs=(str(args.config), get_config().logging.level,
-                          args.detect,
-                          get_config().runtime.save_processed_fits,
-                          args.detect and not args.no_streaks),
+                initargs=(
+                    str(args.config),
+                    settings.logging.level,
+                    args.detect,
+                    settings.runtime.save_processed_fits,
+                    args.detect and not args.no_streaks,
+                ),
             ) as ex:
                 futs = {ex.submit(_run_batch, b, bd): b for (b, bd) in chunk}
                 for fut in concurrent.futures.as_completed(futs):
@@ -441,14 +461,19 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
                     try:
                         entry = fut.result()
                     except Exception as e:
-                        logger.exception("Batch %s failed: %s", batch.batch_id, e)
+                        logger.exception("Batch %s failed", batch.batch_id)
                         entry = _failed_entry(batch, e)
                         n_failed += 1
                     else:
                         n_done += 1
-                        logger.info("[%d/%d done] batch %s [seq_id=%s] (%s)",
-                                    n, n_total, batch.batch_id,
-                                    batch.seq_id or "none", batch.task)
+                        logger.info(
+                            "[%d/%d done] batch %s [seq_id=%s] (%s)",
+                            n,
+                            n_total,
+                            batch.batch_id,
+                            batch.seq_id or "none",
+                            batch.task,
+                        )
                     entries.append(entry)
                     if n % MANIFEST_FLUSH_EVERY == 0:
                         _write_manifest(night_root, night, entries)
@@ -456,26 +481,26 @@ def _process_night(night: BurrNight, args: argparse.Namespace, output_root: Path
     _write_manifest(night_root, night, entries)
     logger.info(
         "Night %s complete: %d processed, %d skipped, %d failed (out of %d)",
-        night.night_id, n_done, n_skipped, n_failed, len(batches),
+        night.night_id,
+        n_done,
+        n_skipped,
+        n_failed,
+        len(batches),
     )
     return 0 if n_failed == 0 else 2
 
 
 def cmd_night(args: argparse.Namespace) -> int:
     """Process one (or, with --auto-nights, several) collected burr nights."""
-
     nights = _resolve_nights(args)
 
     if args.dry_run:
         from collections import Counter
+
         if not nights:
             print("No nights resolved (empty data dir?).")
         for night in nights:
-            batches = list(
-                _iter_filtered_batches(
-                    night, args.task, args.limit, args.max_frames, seq_key=args.seq_key
-                )
-            )
+            batches = list(_iter_filtered_batches(night, args.task, args.limit, args.max_frames, seq_key=args.seq_key))
             by_task = Counter(b.task for b in batches)
             win = night.night_window()
             print(f"BurrNight {night.night_id}: {len(batches)} batches")
@@ -488,9 +513,6 @@ def cmd_night(args: argparse.Namespace) -> int:
             if len(batches) > 5:
                 print(f"  ... and {len(batches) - 5} more")
         return 0
-
-    from senpai.astrometry import enforce_indices, require_astrometry_install
-    from senpai.catalog.runner import enforce_catalog
 
     output_root = ensure_output_dir(Path(args.output_dir), default_stem="burr_runs")
 
@@ -527,8 +549,6 @@ def cmd_flats(args: argparse.Namespace) -> int:
     BINNING-matched apply path (``app.calibrations.master_flats_dir`` +
     ``auto_apply_flats``) can pick it up.
     """
-    from senpai.engine.utils.flats import _create_master_flat_from_files
-
     output_dir = Path(args.output_dir)
     rc = 0
     for night in _resolve_nights(args):
@@ -540,14 +560,18 @@ def cmd_flats(args: argparse.Namespace) -> int:
         if len(files) < args.min_frames:
             logger.warning(
                 "Night %s: only %d twilight_flats frames (< %d) — skipping",
-                night.night_id, len(files), args.min_frames,
+                night.night_id,
+                len(files),
+                args.min_frames,
             )
             rc = 2
             continue
         out_path = output_dir / f"{night.night_id}_master_flat.fits"
         logger.info(
             "Night %s: building master flat from %d twilight frames -> %s",
-            night.night_id, len(files), out_path,
+            night.night_id,
+            len(files),
+            out_path,
         )
         try:
             _create_master_flat_from_files(
@@ -561,8 +585,8 @@ def cmd_flats(args: argparse.Namespace) -> int:
                 sigma=3.0,
                 maxiters=5,
             )
-        except Exception as e:
-            logger.exception("Night %s: master flat failed: %s", night.night_id, e)
+        except Exception:
+            logger.exception("Night %s: master flat failed", night.night_id)
             rc = 2
     return rc
 
@@ -572,8 +596,6 @@ def cmd_flats(args: argparse.Namespace) -> int:
 
 def cmd_nights_summary(args: argparse.Namespace) -> int:
     """Cross-night conditions table (PSF / sky / extinction vs Moon & weather)."""
-    from senpai.engine.observability.calibration import summarize_nights
-
     table = summarize_nights(args.root, csv_path=args.csv)
     print(table)
     return 0
@@ -585,8 +607,6 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     Thin alias for the standalone ``senpai.cli.calibrate`` (calibration is not
     burr-specific); kept so ``senpai-burr calibrate`` keeps working.
     """
-    from senpai.cli.calibrate import main as calibrate_main
-
     argv = [str(args.processed_night_dir)]
     if args.output_dir:
         argv += ["-o", str(args.output_dir)]
@@ -607,7 +627,6 @@ def cmd_live(args: argparse.Namespace) -> int:
     becomes complete (matched command + expected frame count, or timeout
     after the last frame's arrival).
     """
-
     raise NotImplementedError(
         "senpai-burr live is not yet implemented. Use `night` against a "
         "completed night for now; live mode lands in a follow-up commit "
@@ -625,8 +644,6 @@ def cmd_plots(args: argparse.Namespace) -> int:
     re-processing), so plotting is decoupled from the slow night pipeline and
     iterating on a plot never costs a re-run.
     """
-    from senpai.engine.plotting.replot import ALL_KINDS, replot
-
     config = initialize_config(Path(args.config))
     set_log_level(config.logging.level)
 
@@ -645,25 +662,29 @@ def cmd_plots(args: argparse.Namespace) -> int:
 
 
 def _export_worker_init(config_path: str) -> None:
-    """Per-worker config init for parallel dataset export — spawned workers start
-    with no config singleton, so each loads it (the exporter may consult config
-    when rebuilding a processed frame in place from raw)."""
+    """Initialise the config singleton in a freshly spawned export worker.
+
+    A spawned worker starts with no singleton, and the exporter may consult config when
+    rebuilding a processed frame in place from raw, so each worker loads it once.
+    """
     initialize_config(Path(config_path))
 
 
 def _export_one_batch(task: tuple) -> tuple:
-    """Export one batch's SenpaiRunResult into the shared pool dir. Each call
-    writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json``
-    + FITS), so concurrent workers never collide. Returns (batch_id, ok, error)."""
-    from senpai.engine.models.senpai import SenpaiRunResult
-    from senpai.export.coco import SenpaiCocoExporter
+    """Export one batch's SenpaiRunResult into the shared pool dir.
 
-    (result_path, batch_id, pool_dir, snr_cut, max_streak_length,
-     process_sidereal, link_source) = task
+    Each call writes uuid-named per-frame files (``*_point_sat.json`` / ``*_line_star.json`` +
+    FITS), so concurrent workers never collide. Returns (batch_id, ok, error).
+    """
+    (result_path, batch_id, pool_dir, snr_cut, max_streak_length, process_sidereal, link_source) = task
     exporter = SenpaiCocoExporter(
-        output_dir=Path(pool_dir), write_fits=True, write_png=False,
-        snr_cut=snr_cut, max_streak_length=max_streak_length,
-        process_sidereal=process_sidereal, link_source=link_source,
+        output_dir=Path(pool_dir),
+        write_fits=True,
+        write_png=False,
+        snr_cut=snr_cut,
+        max_streak_length=max_streak_length,
+        process_sidereal=process_sidereal,
+        link_source=link_source,
     )
     try:
         result = SenpaiRunResult.model_validate_json(Path(result_path).read_text())
@@ -677,23 +698,17 @@ def _export_one_batch(task: tuple) -> tuple:
 
 
 def cmd_build_dataset(args: argparse.Namespace) -> int:
-    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool, then
-    (optionally) split it.
+    """Export per-night SenpaiRun outputs into a starcsp-ready COCO pool, then (optionally) split it.
 
-    1. Collect every non-skipped batch's ``SenpaiRunResult`` across the nights.
-    2. Export each via :class:`SenpaiCocoExporter` into ONE pool dir (per-frame
-       ``*_point_sat.json`` + ``*_line_star.json`` + FITS). With ``-j N`` this
-       runs across N worker processes — the export is the expensive, embarrassingly
-       parallel step.
-    3. Unless ``--export-only``, hand the pool to :class:`DatasetSplitter`, which
-       writes ``{train,val,test}/`` + ``annotations/{points,lines}_{split}.json``.
-
-    ``--export-only`` keeps the pool as the "ready data" and skips the split, so
-    it can be split repeatedly later (``split-dataset``) — e.g. data-scaling
-    ablations against a fixed val/test — without re-exporting.
+    1. Collect every non-skipped batch's ``SenpaiRunResult`` across the nights. 2. Export each
+    via :class:`SenpaiCocoExporter` into ONE pool dir (per-frame ``*_point_sat.json`` +
+    ``*_line_star.json`` + FITS). With ``-j N`` this runs across N worker processes — the export
+    is the expensive, embarrassingly parallel step. 3. Unless ``--export-only``, hand the pool
+    to :class:`DatasetSplitter`, which writes ``{train,val,test}/`` +
+    ``annotations/{points,lines}_{split}.json``. ``--export-only`` keeps the pool as the "ready
+    data" and skips the split, so it can be split repeatedly later (``split-dataset``) — e.g.
+    data-scaling ablations against a fixed val/test — without re-exporting.
     """
-    from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
-
     output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_dataset")
     # With --export-only the output dir IS the ready-data pool (a flat dir of FITS
     # + per-frame JSONs). Otherwise export into a _staging subdir and split into
@@ -715,15 +730,20 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
             result_path = entry.get("result_path")
             if not result_path or not Path(result_path).is_file():
                 continue  # skipped/failed batch left no JSON
-            tasks.append((
-                result_path, entry["batch_id"], str(pool_dir),
-                args.snr_cut, args.max_streak_length, args.include_sidereal,
-                args.link_source,
-            ))
+            tasks.append(
+                (
+                    result_path,
+                    entry["batch_id"],
+                    str(pool_dir),
+                    args.snr_cut,
+                    args.max_streak_length,
+                    args.include_sidereal,
+                    args.link_source,
+                )
+            )
 
     jobs = max(1, getattr(args, "jobs", 1))
-    logger.info("Exporting %d batches from %d nights into %s (jobs=%d)",
-                len(tasks), n_nights, pool_dir, jobs)
+    logger.info("Exporting %d batches from %d nights into %s (jobs=%d)", len(tasks), n_nights, pool_dir, jobs)
 
     n_ok = n_fail = 0
     if jobs == 1 or len(tasks) <= 1:
@@ -738,13 +758,14 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
         import concurrent.futures
         import multiprocessing as mp
 
-        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-                    "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             os.environ.setdefault(var, "1")
         ctx = mp.get_context("spawn")
         with concurrent.futures.ProcessPoolExecutor(
-            max_workers=jobs, mp_context=ctx,
-            initializer=_export_worker_init, initargs=(str(args.config),),
+            max_workers=jobs,
+            mp_context=ctx,
+            initializer=_export_worker_init,
+            initargs=(str(args.config),),
         ) as ex:
             futs = [ex.submit(_export_one_batch, t) for t in tasks]
             for i, fut in enumerate(concurrent.futures.as_completed(futs), 1):
@@ -757,12 +778,10 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
                 if i % 200 == 0:
                     logger.info("  exported %d/%d batches", i, len(tasks))
 
-    n_annotation_files = (
-        sum(1 for _ in pool_dir.glob("*_point_sat.json"))
-        + sum(1 for _ in pool_dir.glob("*_line_star.json"))
+    n_annotation_files = sum(1 for _ in pool_dir.glob("*_point_sat.json")) + sum(
+        1 for _ in pool_dir.glob("*_line_star.json")
     )
-    logger.info("Export done: %d ok, %d failed; %d annotation files in %s",
-                n_ok, n_fail, n_annotation_files, pool_dir)
+    logger.info("Export done: %d ok, %d failed; %d annotation files in %s", n_ok, n_fail, n_annotation_files, pool_dir)
 
     if n_annotation_files == 0:
         logger.warning(
@@ -775,12 +794,15 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
         logger.info(
             "Ready-data pool built at %s (export-only). Split later with: "
             "senpai-burr split-dataset %s -o <out> [--link] [--train-cap N]",
-            pool_dir, pool_dir,
+            pool_dir,
+            pool_dir,
         )
         return 0
 
     split = DatasetSplit(
-        train=args.splits[0], val=args.splits[1], test=args.splits[2],
+        train=args.splits[0],
+        val=args.splits[1],
+        test=args.splits[2],
     )
     splitter = DatasetSplitter(split, random_seed=args.seed)
     splitter.split_coco_dataset(
@@ -796,6 +818,7 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
         logger.info("Staging dir kept at %s", pool_dir)
     else:
         import shutil
+
         shutil.rmtree(pool_dir)
         logger.info("Removed staging dir")
 
@@ -803,23 +826,23 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
 
 
 def cmd_split_dataset(args: argparse.Namespace) -> int:
-    """Split a ready-data pool (``build-dataset --export-only``) into
-    train/val/test + annotations. Cheap and re-runnable: ``--link`` symlinks the
-    images back into the pool, so the same pool can be re-split many times (e.g.
-    data-scaling ablations via ``--train-cap``) in seconds and ~0 extra disk.
+    """Split a ready-data pool (``build-dataset --export-only``) into train/val/test + annotations.
 
-    val/test are pinned to the end of the global temporal order (the held-out
-    "future"); ``--train-cap N`` varies only the train size, leaving the val/test
-    boundary fixed."""
-    from senpai.export.dataset_split import DatasetSplit, DatasetSplitter
-
+    Cheap and re-runnable: ``--link`` symlinks the images back into the pool, so the same pool
+    can be re-split many times (e.g. data-scaling ablations via ``--train-cap``) in seconds and
+    ~0 extra disk. val/test are pinned to the end of the global temporal order (the held-out
+    "future"); ``--train-cap N`` varies only the train size, leaving the val/test boundary
+    fixed.
+    """
     pool_dir = Path(args.pool_dir)
     if not pool_dir.is_dir():
         raise SystemExit(f"pool dir not found: {pool_dir}")
     output_dir = ensure_output_dir(Path(args.output_dir), default_stem="burr_split")
 
     split = DatasetSplit(
-        train=args.splits[0], val=args.splits[1], test=args.splits[2],
+        train=args.splits[0],
+        val=args.splits[1],
+        test=args.splits[2],
     )
     splitter = DatasetSplitter(split, random_seed=args.seed)
     result = splitter.split_coco_dataset(
@@ -832,8 +855,7 @@ def cmd_split_dataset(args: argparse.Namespace) -> int:
     )
     for name, ids in result.items():
         logger.info("  %s: %d images", name, len(ids))
-    logger.info("Split written to %s (link=%s, train_cap=%s)",
-                output_dir, args.link, args.train_cap or "all")
+    logger.info("Split written to %s (link=%s, train_cap=%s)", output_dir, args.link, args.train_cap or "all")
     return 0
 
 
@@ -842,20 +864,21 @@ def cmd_split_dataset(args: argparse.Namespace) -> int:
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
-        "-o", "--output_dir",
+        "-o",
+        "--output_dir",
         default="burr_runs",
-        help="Root output directory (default: burr_runs/). Each night lands in "
-             "<output_dir>/<night_id>/.",
+        help="Root output directory (default: burr_runs/). Each night lands in <output_dir>/<night_id>/.",
     )
     p.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         default=str(BURR_DEFAULT_CONFIG),
-        help=f"Senpai config file (default: {BURR_DEFAULT_CONFIG} — overlay "
-             f"tuned to burr's FITS header conventions).",
+        help=f"Senpai config file (default: {BURR_DEFAULT_CONFIG} — overlay tuned to burr's FITS header conventions).",
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser, with one subcommand per night-processing stage."""
     parser = argparse.ArgumentParser(
         prog="senpai-burr",
         description="Drive senpai against burr-collected nights.",
@@ -881,31 +904,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto-nights",
         action="store_true",
         help="Split a flat multi-night --data-dir into one night per observing "
-             "session (gaps > --gap-hours), each written to its own "
-             "<output>/<sensor>_<YYYYMMDD>/. Reuses the run_state for site "
-             "config only; its command log / lighting window are ignored.",
+        "session (gaps > --gap-hours), each written to its own "
+        "<output>/<sensor>_<YYYYMMDD>/. Reuses the run_state for site "
+        "config only; its command log / lighting window are ignored.",
     )
     p_night.add_argument(
         "--gap-hours",
         type=float,
         default=3.0,
-        help="With --auto-nights, the inter-frame gap (hours) that separates "
-             "observing nights (default 3.0).",
+        help="With --auto-nights, the inter-frame gap (hours) that separates observing nights (default 3.0).",
     )
     p_night.add_argument(
         "--night",
         default=None,
         help="With --auto-nights, only process detected nights whose id "
-             "contains this string (e.g. 20260529). Useful for reprocessing a "
-             "single night from a multi-night dump.",
+        "contains this string (e.g. 20260529). Useful for reprocessing a "
+        "single night from a multi-night dump.",
     )
     p_night.add_argument(
         "--seq-key",
         default=None,
         help="FITS header keyword that marks one logical collection set (e.g. "
-             "BURRSEQ). When set, frames are batched by this header id — the "
-             "authoritative split for rate-sidereal work (sidereal anchor + its "
-             "rate sub-frames per set) — instead of filename/command heuristics.",
+        "BURRSEQ). When set, frames are batched by this header id — the "
+        "authoritative split for rate-sidereal work (sidereal anchor + its "
+        "rate sub-frames per set) — instead of filename/command heuristics.",
     )
     p_night.add_argument(
         "--task",
@@ -914,59 +936,71 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only process batches with this task (repeatable).",
     )
     p_night.add_argument(
-        "--limit", type=int, default=None,
+        "--limit",
+        type=int,
+        default=None,
         help="Stop after N batches (useful for development iteration).",
     )
     p_night.add_argument(
-        "--max-frames", type=int, default=None,
+        "--max-frames",
+        type=int,
+        default=None,
         help="Stop once cumulative frame count would exceed this. Whole "
-             "batches are kept intact, so the actual frame count can land "
-             "slightly under the cap (or at the first batch size if a single "
-             "batch exceeds the cap on its own).",
+        "batches are kept intact, so the actual frame count can land "
+        "slightly under the cap (or at the first batch size if a single "
+        "batch exceeds the cap on its own).",
     )
     p_night.add_argument(
-        "--no-processed-fits", action="store_true",
+        "--no-processed-fits",
+        action="store_true",
         help="Don't write per-frame *_processed.fits (~260 MB/frame on 8k "
-             "sensors, ~94%% of a night's output). Calibration/results JSONs "
-             "are unaffected; decoupled replotting needs the FITS and won't "
-             "work for runs produced with this flag.",
+        "sensors, ~94%% of a night's output). Calibration/results JSONs "
+        "are unaffected; decoupled replotting needs the FITS and won't "
+        "work for runs produced with this flag.",
     )
     p_night.add_argument(
-        "--skip-existing", action="store_true",
+        "--skip-existing",
+        action="store_true",
         help="Skip batches whose SenpaiRun JSON already exists. Resumable.",
     )
     p_night.add_argument(
-        "-j", "--jobs", type=int, default=1,
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
         help="Process this many batches in parallel (default 1 = serial). "
-             "Batches are independent (own dirs, own astrometry --rm containers, "
-             "own Gaia queries), so this scales near-linearly on beefy machines. "
-             "Each worker is pinned to 1 BLAS thread to avoid oversubscription; "
-             "rule of thumb: -j ~= cores/2 (astrometry + photometry both use CPU). "
-             "Note each 66 MP frame is ~260 MB, so watch RAM at high -j.",
+        "Batches are independent (own dirs, own astrometry --rm containers, "
+        "own Gaia queries), so this scales near-linearly on beefy machines. "
+        "Each worker is pinned to 1 BLAS thread to avoid oversubscription; "
+        "rule of thumb: -j ~= cores/2 (astrometry + photometry both use CPU). "
+        "Note each 66 MP frame is ~260 MB, so watch RAM at high -j.",
     )
     p_night.add_argument(
-        "-D", "--detect", action="store_true",
-        help="Enable streak / non-star detection (default off; needed for the "
-             "starcsp dataset build).",
+        "-D",
+        "--detect",
+        action="store_true",
+        help="Enable streak / non-star detection (default off; needed for the starcsp dataset build).",
     )
     p_night.add_argument(
-        "--no-streaks", action="store_true",
+        "--no-streaks",
+        action="store_true",
         help="With -D, run point-source detection only and SKIP streak "
-             "detection (detect=True, detect_streaks=False). For calsats the "
-             "satellite is a point source in rate frames, so this avoids the "
-             "slow sidereal streak detector — ~10x faster per calsat batch.",
+        "detection (detect=True, detect_streaks=False). For calsats the "
+        "satellite is a point source in rate frames, so this avoids the "
+        "slow sidereal streak detector — ~10x faster per calsat batch.",
     )
     p_night.add_argument(
-        "--dry-run", action="store_true",
-        help="List the batches that would be processed and exit (no FITS loaded, "
-             "no senpai config required).",
+        "--dry-run",
+        action="store_true",
+        help="List the batches that would be processed and exit (no FITS loaded, no senpai config required).",
     )
     p_night.add_argument(
-        "--debug-plots", action="store_true",
+        "--debug-plots",
+        action="store_true",
         help="Override config to enable senpai's per-frame debug + review "
-             "plots (final_<idx>.png, raw_<idx>.png, per-step intermediates, "
-             "sequence GIFs). Useful when diagnosing WCS/aperture issues; "
-             "slower and produces more output.",
+        "plots (final_<idx>.png, raw_<idx>.png, per-step intermediates, "
+        "sequence GIFs). Useful when diagnosing WCS/aperture issues; "
+        "slower and produces more output.",
     )
     _add_common_args(p_night)
     p_night.set_defaults(func=cmd_night)
@@ -979,61 +1013,74 @@ def build_parser() -> argparse.ArgumentParser:
         "night_dir",
         help="Path to /burr/burr/<Sensor>_<YYYYMMDD> (the metadata-sidecar dir).",
     )
-    p_flats.add_argument("--burr-root", default=None,
-                         help="Burr tree root (default: parent of the metadata sidecar's parent).")
-    p_flats.add_argument("--data-dir", default=None,
-                         help="Override sensor data dir (default: <burr_root>/<sensor>/).")
-    p_flats.add_argument("--auto-nights", action="store_true",
-                         help="Split a flat multi-night --data-dir into per-session nights "
-                              "(same semantics as `night --auto-nights`).")
-    p_flats.add_argument("--gap-hours", type=float, default=3.0,
-                         help="With --auto-nights, inter-frame gap (hours) separating nights.")
-    p_flats.add_argument("--night", default=None,
-                         help="With --auto-nights, only nights whose id contains this string.")
     p_flats.add_argument(
-        "-o", "--output-dir", required=True,
-        help="Directory for <night_id>_master_flat.fits — point "
-             "app.calibrations.master_flats_dir here to enable apply.",
+        "--burr-root", default=None, help="Burr tree root (default: parent of the metadata sidecar's parent)."
     )
-    p_flats.add_argument("--min-frames", type=int, default=10,
-                         help="Minimum accepted twilight frames to build (default 10).")
-    p_flats.add_argument("--min-median", type=float, default=20000.0,
-                         help="Reject frames with median below this (under-exposed probes).")
-    p_flats.add_argument("--max-median", type=float, default=60000.0,
-                         help="Reject frames with median above this (nonlinear/saturating).")
-    p_flats.add_argument("--max-counts", type=float, default=65000.0,
-                         help="Reject frames whose 99.9th percentile reaches this (saturated regions).")
+    p_flats.add_argument("--data-dir", default=None, help="Override sensor data dir (default: <burr_root>/<sensor>/).")
+    p_flats.add_argument(
+        "--auto-nights",
+        action="store_true",
+        help="Split a flat multi-night --data-dir into per-session nights (same semantics as `night --auto-nights`).",
+    )
+    p_flats.add_argument(
+        "--gap-hours", type=float, default=3.0, help="With --auto-nights, inter-frame gap (hours) separating nights."
+    )
+    p_flats.add_argument("--night", default=None, help="With --auto-nights, only nights whose id contains this string.")
+    p_flats.add_argument(
+        "-o",
+        "--output-dir",
+        required=True,
+        help="Directory for <night_id>_master_flat.fits — point "
+        "app.calibrations.master_flats_dir here to enable apply.",
+    )
+    p_flats.add_argument(
+        "--min-frames", type=int, default=10, help="Minimum accepted twilight frames to build (default 10)."
+    )
+    p_flats.add_argument(
+        "--min-median", type=float, default=20000.0, help="Reject frames with median below this (under-exposed probes)."
+    )
+    p_flats.add_argument(
+        "--max-median", type=float, default=60000.0, help="Reject frames with median above this (nonlinear/saturating)."
+    )
+    p_flats.add_argument(
+        "--max-counts",
+        type=float,
+        default=65000.0,
+        help="Reject frames whose 99.9th percentile reaches this (saturated regions).",
+    )
     p_flats.set_defaults(func=cmd_flats)
 
     p_cal = sub.add_parser(
-        "calibrate", help="Build per-night photometric calibration from processed batches.",
+        "calibrate",
+        help="Build per-night photometric calibration from processed batches.",
     )
     p_cal.add_argument(
         "processed_night_dir",
         help="Output dir produced by `senpai-burr night` (must contain manifest.json).",
     )
     p_cal.add_argument(
-        "-o", "--output_dir", default=None,
+        "-o",
+        "--output_dir",
+        default=None,
         help="Output dir for calibration JSON + plots (default: <night_dir>/calibration/).",
     )
     p_cal.add_argument(
-        "--no-plots", action="store_true",
+        "--no-plots",
+        action="store_true",
         help="Skip plot rendering.",
     )
     p_cal.add_argument(
-        "--from-plot-data", action="store_true",
-        help="Skip reprocessing: render plots from an existing "
-             "<output>/plot_data.json instead of the batch JSONs.",
+        "--from-plot-data",
+        action="store_true",
+        help="Skip reprocessing: render plots from an existing <output>/plot_data.json instead of the batch JSONs.",
     )
     p_cal.set_defaults(func=cmd_calibrate)
 
-    p_ns = sub.add_parser(
-        "nights-summary",
-        help="Cross-night conditions table (PSF/sky/extinction vs Moon & weather).")
+    p_ns = sub.add_parser("nights-summary", help="Cross-night conditions table (PSF/sky/extinction vs Moon & weather).")
     p_ns.add_argument(
         "root",
-        help="Processed root containing <sensor>_<night>/calibration/"
-             "night_calibration.json dirs (e.g. .../_full8).")
+        help="Processed root containing <sensor>_<night>/calibration/night_calibration.json dirs (e.g. .../_full8).",
+    )
     p_ns.add_argument("--csv", default=None, help="Also write the table as CSV.")
     p_ns.set_defaults(func=cmd_nights_summary)
 
@@ -1048,104 +1095,128 @@ def build_parser() -> argparse.ArgumentParser:
         help="Regenerate diagnostic plots from processed batch dirs (FITS+JSON).",
     )
     p_plots.add_argument(
-        "paths", nargs="+",
-        help="Batch dirs, night dirs, or any parent — every directory holding a "
-             "senpai_*.json result is replotted.",
+        "paths",
+        nargs="+",
+        help="Batch dirs, night dirs, or any parent — every directory holding a senpai_*.json result is replotted.",
     )
     p_plots.add_argument(
-        "--kind", action="append", default=None,
+        "--kind",
+        action="append",
+        default=None,
         choices=["all", "review", "photometry", "aperture", "psf"],
         help="Plot kind(s); repeatable. 'review' = final_/raw_ overlays + GIFs, "
-             "'photometry' = completeness + limiting-mag curves, 'aperture' = "
-             "per-star aperture overlay (re-runs cheap photometry), 'psf' = "
-             "per-frame empirical PSF panel (stacked stars / streak). "
-             "Default: review + photometry (skips the heavy aperture overlay).",
+        "'photometry' = completeness + limiting-mag curves, 'aperture' = "
+        "per-star aperture overlay (re-runs cheap photometry), 'psf' = "
+        "per-frame empirical PSF panel (stacked stars / streak). "
+        "Default: review + photometry (skips the heavy aperture overlay).",
     )
     p_plots.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Overwrite existing plot files (default: skip ones already present).",
     )
     p_plots.add_argument(
-        "--no-gifs", action="store_true",
+        "--no-gifs",
+        action="store_true",
         help="Skip the per-batch review sequence GIFs.",
     )
     p_plots.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         default=str(BURR_DEFAULT_CONFIG),
         help=f"Senpai config file (default: {BURR_DEFAULT_CONFIG}).",
     )
     p_plots.set_defaults(func=cmd_plots)
 
     p_ds = sub.add_parser(
-        "build-dataset", help="Build a starcsp-ready COCO streak dataset.",
+        "build-dataset",
+        help="Build a starcsp-ready COCO streak dataset.",
     )
     p_ds.add_argument(
-        "night_dirs", nargs="+",
-        help="One or more processed-night dirs (output of `night`, each "
-             "containing manifest.json).",
+        "night_dirs",
+        nargs="+",
+        help="One or more processed-night dirs (output of `night`, each containing manifest.json).",
     )
     p_ds.add_argument(
-        "--splits", nargs=3, type=float, default=(0.7, 0.2, 0.1),
+        "--splits",
+        nargs=3,
+        type=float,
+        default=(0.7, 0.2, 0.1),
         metavar=("TRAIN", "VAL", "TEST"),
         help="Train/val/test fractions (default 0.7 0.2 0.1).",
     )
     p_ds.add_argument(
-        "--random-split", action="store_true",
+        "--random-split",
+        action="store_true",
         help="Random split instead of the default temporal split (later frames "
-             "→ test). Use temporal split when assessing generalization to "
-             "future data.",
+        "→ test). Use temporal split when assessing generalization to "
+        "future data.",
     )
     p_ds.add_argument(
-        "--seed", type=int, default=None,
+        "--seed",
+        type=int,
+        default=None,
         help="Random seed (for --random-split reproducibility).",
     )
     p_ds.add_argument(
-        "--snr-cut", type=float, default=3.0,
+        "--snr-cut",
+        type=float,
+        default=3.0,
         help="Minimum SNR for annotations (default 3.0).",
     )
     p_ds.add_argument(
-        "--max-streak-length", type=float, default=None,
+        "--max-streak-length",
+        type=float,
+        default=None,
         help="Drop frames whose streak length exceeds this (pixels).",
     )
     p_ds.add_argument(
-        "--include-sidereal", action="store_true",
-        help="Also process sidereal frames (default: rate-track only, which "
-             "is what starcsp needs).",
+        "--include-sidereal",
+        action="store_true",
+        help="Also process sidereal frames (default: rate-track only, which is what starcsp needs).",
     )
     p_ds.add_argument(
-        "--keep-staging", action="store_true",
-        help="Keep the intermediate _staging/ dir of per-frame COCO files for "
-             "debugging.",
+        "--keep-staging",
+        action="store_true",
+        help="Keep the intermediate _staging/ dir of per-frame COCO files for debugging.",
     )
     p_ds.add_argument(
-        "-j", "--jobs", type=int, default=1,
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
         help="Export this many batches in parallel (default 1). The per-batch "
-             "export (read processed FITS, project catalog annotations, write "
-             "FITS) is independent, so this scales well; rule of thumb ~cores/2 "
-             "(it's I/O-heavy). Each worker is pinned to 1 BLAS thread.",
+        "export (read processed FITS, project catalog annotations, write "
+        "FITS) is independent, so this scales well; rule of thumb ~cores/2 "
+        "(it's I/O-heavy). Each worker is pinned to 1 BLAS thread.",
     )
     p_ds.add_argument(
-        "--export-only", action="store_true",
+        "--export-only",
+        action="store_true",
         help="Build the 'ready data' pool (all FITS + per-frame JSONs) into -o "
-             "and STOP — no split. Split it later (repeatedly) with "
-             "`senpai-burr split-dataset`.",
+        "and STOP — no split. Split it later (repeatedly) with "
+        "`senpai-burr split-dataset`.",
     )
     p_ds.add_argument(
-        "--link-source", action="store_true",
+        "--link-source",
+        action="store_true",
         help="Symlink each frame's existing *_processed.fits into the pool "
-             "instead of rewriting the (identical) image — ~halves export I/O "
-             "and disk. The dataset then references the processed FITS, so those "
-             "must stay in place. No WCS 'answer' extension is added in this mode.",
+        "instead of rewriting the (identical) image — ~halves export I/O "
+        "and disk. The dataset then references the processed FITS, so those "
+        "must stay in place. No WCS 'answer' extension is added in this mode.",
     )
     p_ds.add_argument(
-        "--link", action="store_true",
+        "--link",
+        action="store_true",
         help="When splitting, symlink images into train/val/test instead of "
-             "copying (instant, ~0 extra disk; for re-splittable pools).",
+        "copying (instant, ~0 extra disk; for re-splittable pools).",
     )
     p_ds.add_argument(
-        "--train-cap", type=int, default=0,
+        "--train-cap",
+        type=int,
+        default=0,
         help="Cap train to the most-recent N frames before the held-out "
-             "val/test tail (0 = use all). Temporal split only.",
+        "val/test tail (0 = use all). Temporal split only.",
     )
     _add_common_args(p_ds)
     p_ds.set_defaults(func=cmd_build_dataset)
@@ -1153,40 +1224,52 @@ def build_parser() -> argparse.ArgumentParser:
     p_split = sub.add_parser(
         "split-dataset",
         help="Split a ready-data pool (build-dataset --export-only) into "
-             "train/val/test + annotations. Cheap + re-runnable for ablations.",
+        "train/val/test + annotations. Cheap + re-runnable for ablations.",
     )
     p_split.add_argument(
         "pool_dir",
         help="The ready-data pool dir (a build-dataset --export-only output: "
-             "flat dir of *.fits + *_point_sat.json + *_line_star.json).",
+        "flat dir of *.fits + *_point_sat.json + *_line_star.json).",
     )
     p_split.add_argument(
-        "-o", "--output_dir", default="burr_split",
+        "-o",
+        "--output_dir",
+        default="burr_split",
         help="Output dir for {train,val,test}/ + annotations/ (default burr_split/).",
     )
     p_split.add_argument(
-        "--splits", nargs=3, type=float, default=(0.7, 0.2, 0.1),
+        "--splits",
+        nargs=3,
+        type=float,
+        default=(0.7, 0.2, 0.1),
         metavar=("TRAIN", "VAL", "TEST"),
         help="Train/val/test fractions (default 0.7 0.2 0.1). val+test are taken "
-             "from the END of the global temporal order (the held-out future).",
+        "from the END of the global temporal order (the held-out future).",
     )
     p_split.add_argument(
-        "--random-split", action="store_true",
+        "--random-split",
+        action="store_true",
         help="Random split instead of the default temporal split.",
     )
     p_split.add_argument(
-        "--seed", type=int, default=None, help="Random seed (for --random-split).",
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (for --random-split).",
     )
     p_split.add_argument(
-        "--link", action="store_true",
+        "--link",
+        action="store_true",
         help="Symlink images into train/val/test instead of copying (instant, "
-             "~0 extra disk — re-split the same pool freely).",
+        "~0 extra disk — re-split the same pool freely).",
     )
     p_split.add_argument(
-        "--train-cap", type=int, default=0,
+        "--train-cap",
+        type=int,
+        default=0,
         help="Cap train to the most-recent N frames before the held-out val/test "
-             "tail (0 = use all). val/test boundary stays fixed as N varies — "
-             "for data-scaling ablations.",
+        "tail (0 = use all). val/test boundary stays fixed as N varies — "
+        "for data-scaling ablations.",
     )
     p_split.set_defaults(func=cmd_split_dataset)
 
@@ -1194,6 +1277,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to the selected subcommand."""
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)

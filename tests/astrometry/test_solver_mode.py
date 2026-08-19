@@ -7,6 +7,8 @@ exactly as before, and non-dotnet modes must be a clean opt-in.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -26,7 +28,7 @@ LEGACY_ASTROMETRY_BLOCK = {
 
 
 class TestSolverModeCompat:
-    def test_legacy_config_defaults_to_dotnet(self):
+    def test_legacy_config_defaults_to_dotnet(self) -> None:
         cfg = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK)
         assert cfg.solver_mode == "dotnet"
         assert cfg.fast_solve.mirror_dir is None
@@ -34,15 +36,15 @@ class TestSolverModeCompat:
         assert cfg.fast_solve.sensor_profile is None
 
     @pytest.mark.parametrize("mode", ["dotnet", "tetra3", "chain"])
-    def test_valid_modes_accepted(self, mode):
+    def test_valid_modes_accepted(self, mode) -> None:
         cfg = AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK, solver_mode=mode)
         assert cfg.solver_mode == mode
 
-    def test_unknown_mode_rejected(self):
+    def test_unknown_mode_rejected(self) -> None:
         with pytest.raises(ValidationError):
             AstrometryConfig(**LEGACY_ASTROMETRY_BLOCK, solver_mode="cascade")
 
-    def test_fast_solve_block_parses(self):
+    def test_fast_solve_block_parses(self) -> None:
         cfg = AstrometryConfig(
             **LEGACY_ASTROMETRY_BLOCK,
             solver_mode="chain",
@@ -53,7 +55,7 @@ class TestSolverModeCompat:
 
 
 @pytest.fixture
-def stub_config(monkeypatch):
+def stub_config(monkeypatch: pytest.MonkeyPatch):
     """Point the astrometry adapter at a config we control."""
     import senpai.astrometry as adapter
 
@@ -65,7 +67,7 @@ def stub_config(monkeypatch):
 
 
 class TestSolveFieldModeDispatch:
-    def test_dotnet_mode_reaches_original_path(self, stub_config, xyls_data):
+    def test_dotnet_mode_reaches_original_path(self, stub_config, xyls_data) -> None:
         """With the default mode, the dispatch is transparent: the original
         too-few-sources early return still triggers (no exception)."""
         from senpai.astrometry import solve_field
@@ -75,7 +77,7 @@ class TestSolveFieldModeDispatch:
         starfield = solve_field(xyls_data)
         assert starfield.wcs is None
 
-    def test_tetra3_mode_without_mirror_fails_gracefully(self, stub_config, xyls_data):
+    def test_tetra3_mode_without_mirror_fails_gracefully(self, stub_config, xyls_data) -> None:
         """tetra3 mode with no catalog configured: unfit StarField, no raise."""
         from senpai.astrometry import solve_field
 
@@ -92,7 +94,7 @@ class TestCascadeEndToEnd:
     RA0, DEC0, W, H, SCALE = 150.0, 30.0, 2048, 2048, 2.0  # arcsec/px
 
     @pytest.fixture
-    def synthetic(self, tmp_path):
+    def synthetic(self, tmp_path: Path):
         import json
         import math
 
@@ -124,27 +126,45 @@ class TestCascadeEndToEnd:
         mirror = tmp_path / "mirror"
         mirror.mkdir()
         arr.tofile(mirror / "tile.bin")
-        (mirror / "index.json").write_text(json.dumps({"tiles": {"t": {
-            "file": "tile.bin", "ra_min": float(ra.min()), "ra_max": float(ra.max()),
-            "dec_min": float(dec.min()), "dec_max": float(dec.max())}}}))
+        (mirror / "index.json").write_text(
+            json.dumps(
+                {
+                    "tiles": {
+                        "t": {
+                            "file": "tile.bin",
+                            "ra_min": float(ra.min()),
+                            "ra_max": float(ra.max()),
+                            "dec_min": float(dec.min()),
+                            "dec_max": float(dec.max()),
+                        }
+                    }
+                }
+            )
+        )
         load_mirror_index.cache_clear()
 
         px, py = truth.all_world2pix(ra, dec, 0)
         ok = (px > 10) & (px < self.W - 10) & (py > 10) & (py < self.H - 10) & (g < 14.0)
         sources = StarListImage(
             detections=[
-                StarInImage(x=float(x + rng.normal(0, 0.3)), y=float(y + rng.normal(0, 0.3)),
-                            counts=float(10 ** (-0.4 * (m - 20.0))))
+                StarInImage(
+                    x=float(x + rng.normal(0, 0.3)),
+                    y=float(y + rng.normal(0, 0.3)),
+                    counts=float(10 ** (-0.4 * (m - 20.0))),
+                )
                 for x, y, m in zip(px[ok], py[ok], g[ok], strict=True)
             ],
             image_metadata=ImageMetadata(
-                image_id="synthetic", width=self.W, height=self.H,
-                boresight_ra=self.RA0 + 0.05, boresight_dec=self.DEC0 - 0.04,
+                image_id="synthetic",
+                width=self.W,
+                height=self.H,
+                boresight_ra=self.RA0 + 0.05,
+                boresight_dec=self.DEC0 - 0.04,
             ),
         )
         return sources, str(mirror)
 
-    def test_tetra3_mode_solves_via_t0(self, stub_config, synthetic):
+    def test_tetra3_mode_solves_via_t0(self, stub_config, synthetic) -> None:
         """Boresight + scale bounds, no tetra3 DB: the cascade's T0
         constrained tier solves it natively — no astrometry.net, no Docker."""
         from senpai.astrometry import solve_field
@@ -152,10 +172,12 @@ class TestCascadeEndToEnd:
         sources, mirror = synthetic
         block = dict(
             LEGACY_ASTROMETRY_BLOCK,
-            min_width_degrees=1.0, max_width_degrees=1.3,  # truth fov ~1.14 deg
+            min_width_degrees=1.0,
+            max_width_degrees=1.3,  # truth fov ~1.14 deg
         )
         stub_config.astrometry = AstrometryConfig(
-            **block, solver_mode="tetra3",
+            **block,
+            solver_mode="tetra3",
             fast_solve={"mirror_dir": mirror},
         )
         starfield = solve_field(sources)
@@ -165,13 +187,16 @@ class TestCascadeEndToEnd:
         # WCS lands within arcseconds of the truth center.
         from astropy.wcs import WCS as AWCS
 
-        hdr = {k: v for k, v in starfield.wcs.model_dump().items()
-               if v is not None and k not in ("NAXIS1", "NAXIS2")}
+        hdr = {k: v for k, v in starfield.wcs.model_dump().items() if v is not None and k not in ("NAXIS1", "NAXIS2")}
         w = AWCS(hdr)
         ra_c, dec_c = w.all_pix2world(self.W / 2, self.H / 2, 0)
         import math
-        err_asec = math.hypot(
-            (float(ra_c) - self.RA0) * math.cos(math.radians(self.DEC0)),
-            float(dec_c) - self.DEC0,
-        ) * 3600
+
+        err_asec = (
+            math.hypot(
+                (float(ra_c) - self.RA0) * math.cos(math.radians(self.DEC0)),
+                float(dec_c) - self.DEC0,
+            )
+            * 3600
+        )
         assert err_asec < 5.0

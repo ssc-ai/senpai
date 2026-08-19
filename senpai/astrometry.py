@@ -5,15 +5,21 @@ test_astrometry_install, examine_indices, enforce_indices, require_astrometry_in
 while delegating all actual astrometry work to astroeasy.
 """
 
+import contextlib
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import astroeasy
-from astroeasy import AstrometryIndexSeries
+from astroeasy import AstrometryIndexSeries, cascade
+from astropy.io import fits as astropy_fits
 
 from senpai.core.config import get_or_initialize_config
 from senpai.engine.models.astrometry import ReturnAstrometryConfig, WCSModel, WCSStatus
 from senpai.engine.models.starfield import StarField, StarInSpace, StarListImage
+
+if TYPE_CHECKING:
+    from senpai.core.config import AstrometryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Config conversion
 # ---------------------------------------------------------------------------
+
 
 def _build_astroeasy_config() -> astroeasy.AstrometryConfig:
     """Convert senpai's AppConfig.astrometry to an astroeasy AstrometryConfig."""
@@ -42,12 +49,10 @@ def _build_astroeasy_config() -> astroeasy.AstrometryConfig:
 # Model conversion helpers
 # ---------------------------------------------------------------------------
 
+
 def _sources_to_detections(sources: StarListImage) -> tuple[list[astroeasy.Detection], astroeasy.ImageMetadata]:
     """Convert senpai StarListImage → astroeasy Detection list + ImageMetadata."""
-    detections = [
-        astroeasy.Detection(x=s.x, y=s.y, flux=s.counts)
-        for s in sources.detections
-    ]
+    detections = [astroeasy.Detection(x=s.x, y=s.y, flux=s.counts) for s in sources.detections]
     metadata = astroeasy.ImageMetadata(
         width=sources.image_metadata.width,
         height=sources.image_metadata.height,
@@ -59,8 +64,6 @@ def _sources_to_detections(sources: StarListImage) -> tuple[list[astroeasy.Detec
 
 def _wcsmodel_to_wcsresult(wcs: WCSModel) -> astroeasy.WCSResult:
     """Convert senpai WCSModel → astroeasy WCSResult via FITS header round-trip."""
-    from astropy.io import fits as astropy_fits
-
     header_dict = {k: v for k, v in wcs.model_dump().items() if v is not None}
     header_dict["IMAGEW"] = header_dict.pop("NAXIS1", wcs.NAXIS1)
     header_dict["IMAGEH"] = header_dict.pop("NAXIS2", wcs.NAXIS2)
@@ -75,10 +78,6 @@ def _wcsmodel_to_wcsresult(wcs: WCSModel) -> astroeasy.WCSResult:
 
 def _wcsresult_to_wcsmodel(wcs_result: astroeasy.WCSResult) -> WCSModel:
     """Convert astroeasy WCSResult → senpai WCSModel via raw FITS header."""
-    import contextlib
-
-    from astropy.io import fits as astropy_fits
-
     hdr = astropy_fits.Header()
     for key, value in wcs_result.raw_header.items():
         if key and not key.startswith("COMMENT") and not key.startswith("HISTORY"):
@@ -98,18 +97,22 @@ def _solve_result_to_starfield(
 
     fit_wcs = _wcsresult_to_wcsmodel(result.wcs) if result.wcs else None
 
-    astrometric_fit_stars = [
-        StarInSpace(
-            ra=m.ra,
-            dec=m.dec,
-            magnitude=m.magnitude,
-            catalog=m.catalog,
-            catalog_id=m.catalog_id,
-            x=m.x,
-            y=m.y,
-        )
-        for m in result.matched_stars
-    ] if result.matched_stars else []
+    astrometric_fit_stars = (
+        [
+            StarInSpace(
+                ra=m.ra,
+                dec=m.dec,
+                magnitude=m.magnitude,
+                catalog=m.catalog,
+                catalog_id=m.catalog_id,
+                x=m.x,
+                y=m.y,
+            )
+            for m in result.matched_stars
+        ]
+        if result.matched_stars
+        else []
+    )
 
     return StarField(
         astrometric_fit_stars=astrometric_fit_stars or None,
@@ -126,6 +129,7 @@ def _solve_result_to_starfield(
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarField:
     """Solve astrometry for detected sources.
 
@@ -135,6 +139,7 @@ def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarFiel
 
     Returns:
         StarField with WCS solution, matched stars, and fit status.
+
     """
     logger.info("attempting astrometric solution on %i sources", len(sources.detections))
     config = get_or_initialize_config()
@@ -164,15 +169,13 @@ def solve_field(sources: StarListImage, wcs: WCSModel | None = None) -> StarFiel
     return _solve_result_to_starfield(result, sources)
 
 
-def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -> StarField:
+def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config: "AstrometryConfig") -> StarField:
     """Run the astroeasy escalation cascade (solver_mode 'tetra3'/'chain').
 
     'tetra3' = native tiers only (T0 refine + T1 pattern match, no
     astrometry.net required); 'chain' = native tiers with the existing
     astrometry.net path as the T3 backstop.
     """
-    from astroeasy import cascade
-
     a = config.astrometry
     mode = a.solver_mode
     fast = a.fast_solve
@@ -188,7 +191,8 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
         logger.warning(
             "solver_mode=%s but no catalog mirror configured "
             "(astrometry.fast_solve.mirror_dir or star_catalog type gaia_local) — "
-            "native tiers will be skipped", mode,
+            "native tiers will be skipped",
+            mode,
         )
 
     if fast.sensor_profile:
@@ -209,12 +213,17 @@ def _solve_field_cascade(sources: StarListImage, wcs: WCSModel | None, config) -
     dotnet_config = _build_astroeasy_config() if mode == "chain" else None
 
     result = cascade.solve(
-        detections, metadata,
-        profile=profile, mirror_dir=mirror_dir,
-        dotnet_config=dotnet_config, prior_wcs=prior_wcs, tiers=tiers,
+        detections,
+        metadata,
+        profile=profile,
+        mirror_dir=mirror_dir,
+        dotnet_config=dotnet_config,
+        prior_wcs=prior_wcs,
+        tiers=tiers,
     )
     logger.info(
-        "cascade (%s): %s — attempts: %s", mode,
+        "cascade (%s): %s — attempts: %s",
+        mode,
         f"solved at {result.tier}" if result.tier else "all tiers failed",
         [(t.tier, t.status, f"{t.duration_ms:.0f}ms") for t in result.attempts],
     )
@@ -232,7 +241,7 @@ def test_astrometry_install() -> bool:
     return astroeasy.test_install(docker_image=config.astrometry.docker_image)
 
 
-def require_astrometry_install():
+def require_astrometry_install() -> None:
     """Raise if astrometry.net is not installed."""
     if not test_astrometry_install():
         raise ValueError("Astrometry.net is not installed or not in PATH")
@@ -247,10 +256,8 @@ def examine_indices() -> bool:
     )
 
 
-def enforce_indices():
+def enforce_indices() -> None:
     """Raise if configured index files are missing or incomplete."""
     config = get_or_initialize_config()
     if not examine_indices():
-        raise RuntimeError(
-            f"Astrometry indices for {config.astrometry.indices_series} are missing or incomplete"
-        )
+        raise RuntimeError(f"Astrometry indices for {config.astrometry.indices_series} are missing or incomplete")

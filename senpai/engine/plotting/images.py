@@ -1,5 +1,18 @@
+"""Render a frame with its catalog, detections and streak drawn over the pixels.
+
+These are diagnostic images, not data products: everything here is for a human deciding whether
+a solve looks right. The plots are what make a bad WCS obvious -- catalog crosses that sit
+beside the stars rather than on them, a streak box at the wrong angle, SIP arrows that fan out
+instead of staying small.
+
+Matplotlib is set to the non-interactive Svg backend at import, before pyplot is imported,
+because the workers that produce these have no display and pyplot binds its backend on first
+import.
+"""
+
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib
 from astropy.coordinates import SkyCoord
@@ -19,6 +32,9 @@ from senpai.engine.models.starfield import StarField, StarListImage
 from senpai.engine.plotting.axes import prep_axes
 from senpai.engine.plotting.normalization import zscale
 
+if TYPE_CHECKING:
+    from photutils.aperture import Aperture
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,24 +45,34 @@ def plot_overs(
     detections: StarListImage | None = None,
     streak: StreakMetadata | None = None,
     streak_candidates: list | None = None,
-    centercross=True,
-    marker="+",
-    markersize=5,
-    linewidth=1,
+    centercross: bool = True,
+    marker: str = "+",
+    markersize: float = 5,
+    linewidth: float = 1,
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
-):
+) -> None:
+    """Draw catalog stars, detections and any streak onto an existing axes.
+
+    Each overlay is optional, so a caller can show just the pieces the question needs -- the
+    catalog alone to judge a WCS, detections alone to judge the detector, both together to
+    judge the match between them.
+
+    ``n_brightest`` trims the catalog to its brightest members. A dense field plots thousands
+    of crosses that obscure the image they are drawn on, and a WCS error is easier to see in
+    twenty well-separated stars than in two thousand overlapping ones.
+
+    With ``show_undistorted_catalog`` the catalog is projected twice, once through the full
+    SIP solution and once through the linear terms only, which is what makes the distortion
+    itself visible as the offset between the two.
+    """
     centers = None
     if starfield is not None:
         # Get all catalog stars
         catalog_stars = starfield.catalog_stars
         if catalog_stars and n_brightest is not None:
             # Filter to N brightest stars based on magnitude
-            stars_with_mag = [
-                (star, star.magnitude)
-                for star in catalog_stars
-                if star.magnitude is not None
-            ]
+            stars_with_mag = [(star, star.magnitude) for star in catalog_stars if star.magnitude is not None]
             if stars_with_mag:
                 # Sort by magnitude (brightest = lowest magnitude)
                 stars_with_mag.sort(key=lambda x: x[1])
@@ -68,17 +94,11 @@ def plot_overs(
                     fwhm_stats=starfield.fwhm_stats,
                     scale_factor=starfield.scale_factor,
                 )
-                centers = temp_starfield.catalog_centers_xy(
-                    limiting_magnitude=starfield.limiting_magnitude
-                )
+                centers = temp_starfield.catalog_centers_xy(limiting_magnitude=starfield.limiting_magnitude)
             else:
-                centers = starfield.catalog_centers_xy(
-                    limiting_magnitude=starfield.limiting_magnitude
-                )
+                centers = starfield.catalog_centers_xy(limiting_magnitude=starfield.limiting_magnitude)
         else:
-            centers = starfield.catalog_centers_xy(
-                limiting_magnitude=starfield.limiting_magnitude
-            )
+            centers = starfield.catalog_centers_xy(limiting_magnitude=starfield.limiting_magnitude)
 
         # Plot undistorted catalog positions if requested and WCS has SIP
         if show_undistorted_catalog and starfield.wcs and catalog_stars:
@@ -98,15 +118,13 @@ def plot_overs(
                 sip_order == 0
                 and hasattr(wcs_with_sip, "sip")
                 and wcs_with_sip.sip is not None
+                and hasattr(wcs_with_sip.sip, "a_order")
             ):
-                if hasattr(wcs_with_sip.sip, "a_order"):
-                    sip_order = wcs_with_sip.sip.a_order
-                    logger.debug(f"Using SIP order from WCS object: {sip_order}")
+                sip_order = wcs_with_sip.sip.a_order
+                logger.debug(f"Using SIP order from WCS object: {sip_order}")
 
             if sip_order > 0:
-                logger.debug(
-                    f"Plotting undistorted catalog positions (SIP order={sip_order})"
-                )
+                logger.debug(f"Plotting undistorted catalog positions (SIP order={sip_order})")
                 # Create WCS without SIP
                 header_no_sip = header_with_sip.copy()
                 sip_keys_to_remove = []
@@ -124,13 +142,9 @@ def plot_overs(
                     del header_no_sip[key]
 
                 # Also remove -SIP suffix from CTYPE if present
-                if "CTYPE1" in header_no_sip and header_no_sip["CTYPE1"].endswith(
-                    "-SIP"
-                ):
+                if "CTYPE1" in header_no_sip and header_no_sip["CTYPE1"].endswith("-SIP"):
                     header_no_sip["CTYPE1"] = header_no_sip["CTYPE1"][:-4]
-                if "CTYPE2" in header_no_sip and header_no_sip["CTYPE2"].endswith(
-                    "-SIP"
-                ):
+                if "CTYPE2" in header_no_sip and header_no_sip["CTYPE2"].endswith("-SIP"):
                     header_no_sip["CTYPE2"] = header_no_sip["CTYPE2"][:-4]
 
                 try:
@@ -144,8 +158,8 @@ def plot_overs(
                     logger.debug(
                         f"WCS without SIP test: pixel ({centers[0][0] if len(centers) > 0 else 100}, {centers[0][1] if len(centers) > 0 else 100}) -> RA={test_ra:.6f}, Dec={test_dec:.6f}"
                     )
-                except Exception as e:
-                    logger.error(f"Failed to create WCS without SIP for plotting: {e}")
+                except Exception:
+                    logger.exception("Failed to create WCS without SIP for plotting")
                     wcs_no_sip = None
 
                 if wcs_no_sip is not None:
@@ -165,22 +179,16 @@ def plot_overs(
                                 pix_no_sip = wcs_no_sip.world_to_pixel(coords)
                                 x_undistorted = pix_no_sip[0] - 1  # Convert to 0-based
                                 y_undistorted = pix_no_sip[1] - 1
-                                undistorted_centers.append(
-                                    [x_undistorted, y_undistorted]
-                                )
+                                undistorted_centers.append([x_undistorted, y_undistorted])
 
                                 # Also get distorted position (with SIP) for comparison
                                 pix_with_sip = wcs_with_sip.world_to_pixel(coords)
                                 x_distorted = pix_with_sip[0] - 1
                                 y_distorted = pix_with_sip[1] - 1
-                                distorted_centers_sample.append(
-                                    [x_distorted, y_distorted]
-                                )
+                                distorted_centers_sample.append([x_distorted, y_distorted])
 
                             except Exception as e:
-                                logger.debug(
-                                    f"Failed to convert star RA/Dec to pixels: {e}"
-                                )
+                                logger.debug(f"Failed to convert star RA/Dec to pixels: {e}")
                                 continue
 
                     if undistorted_centers:
@@ -190,14 +198,8 @@ def plot_overs(
                         # Log a sample comparison
                         if len(undistorted_centers) > 0:
                             sample_idx = len(undistorted_centers) // 2
-                            dx = (
-                                distorted_centers_sample[sample_idx][0]
-                                - undistorted_centers[sample_idx][0]
-                            )
-                            dy = (
-                                distorted_centers_sample[sample_idx][1]
-                                - undistorted_centers[sample_idx][1]
-                            )
+                            dx = distorted_centers_sample[sample_idx][0] - undistorted_centers[sample_idx][0]
+                            dy = distorted_centers_sample[sample_idx][1] - undistorted_centers[sample_idx][1]
                             radial_diff = np.sqrt(dx**2 + dy**2)
                             logger.debug(
                                 f"Sample undistorted vs distorted difference: dx={dx:.2f}, dy={dy:.2f}, radial={radial_diff:.2f} px"
@@ -219,16 +221,11 @@ def plot_overs(
                     else:
                         logger.warning("No undistorted centers calculated")
                 else:
-                    logger.warning(
-                        "Could not create WCS without SIP, skipping undistorted catalog plot"
-                    )
+                    logger.warning("Could not create WCS without SIP, skipping undistorted catalog plot")
 
     if starlist is not None:
         stars = starlist.centers_xy()
-        if len(stars.shape) > 1:
-            centers = stars[:, :2]
-        else:
-            centers = None
+        centers = stars[:, :2] if len(stars.shape) > 1 else None
 
     if centers is not None and streak is not None:
         centercross = True
@@ -249,28 +246,27 @@ def plot_overs(
                 linewidth=linewidth,
             )
 
-    if centers is not None and marker is not None:
-        if centers.shape[0] > 0:
-            if centercross:
-                ax.scatter(
-                    centers[:, 0],
-                    centers[:, 1],
-                    marker=marker,
-                    color="red",
-                    s=markersize,
+    if centers is not None and marker is not None and centers.shape[0] > 0:
+        if centercross:
+            ax.scatter(
+                centers[:, 0],
+                centers[:, 1],
+                marker=marker,
+                color="red",
+                s=markersize,
+            )
+        else:
+            for center in centers:
+                rect = patches.Circle(
+                    center,
+                    radius=2 * markersize,
+                    linewidth=linewidth,
+                    linestyle="-",
+                    edgecolor="red",
+                    facecolor="none",
                 )
-            else:
-                for center in centers:
-                    rect = patches.Circle(
-                        center,
-                        radius=2 * markersize,
-                        linewidth=linewidth,
-                        linestyle="-",
-                        edgecolor="red",
-                        facecolor="none",
-                    )
 
-                    ax.add_patch(rect)
+                ax.add_patch(rect)
 
     # Collect streak-type detection indices so we don't double-render them
     _streak_det_indices: set[int] = set()
@@ -356,6 +352,11 @@ def plot_overs(
 
 
 def font_size(img: np.ndarray) -> float:
+    """Label size that stays legible at any frame size.
+
+    Scaled to the image's shorter side so a label occupies the same fraction of the plot
+    whether the frame is 512 or 4096 pixels, with a floor so it never vanishes entirely.
+    """
     return max(2, min(img.shape[1], img.shape[0]) * 0.01)
 
 
@@ -367,17 +368,29 @@ def plot_single_frame(
     streak: StreakMetadata | None = None,
     streak_candidates: list | None = None,
     output_file: str | Path | None = None,
-    scale=True,
-    marker="+",
-    centercross=False,
-    markersize=10,
+    scale: bool = True,
+    marker: str = "+",
+    centercross: bool = False,
+    markersize: float = 10,
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
     dpi: int | None = None,
-    format: str | None = None,
+    format: str | None = None,  # noqa: A002 - mirrors matplotlib's savefig(format=...)
     jpeg_quality: int = 95,
     png_compression: int = 6,
-):
+) -> tuple[plt.Figure, plt.Axes]:
+    """Render one frame with overlays, optionally writing it to disk.
+
+    ``scale`` applies a zscale stretch, which is what makes both a faint streak and a bright
+    star visible in the same 8-bit image; without it the linear range is dominated by the
+    brightest pixels.
+
+    DPI defaults by image size rather than to a constant: a full-frame 4096-square plot at
+    150 dpi is large enough that a night's worth becomes a real disk cost, so big images
+    render coarser.
+
+    Returns the figure and axes, so a caller can add to the plot before saving.
+    """
     logger.info(f"plotting frame {output_file if output_file else 'no output file'}")
 
     # Determine DPI - default to 150, but reduce for very large images to save space
@@ -386,28 +399,25 @@ def plot_single_frame(
         max_dimension = max(img.shape[0], img.shape[1])
         if max_dimension > 4000:
             dpi = 75  # Reduce DPI for very large images
-            logger.info(
-                f"Large image detected ({max_dimension}px), using reduced DPI={dpi} to save file size"
-            )
+            logger.info(f"Large image detected ({max_dimension}px), using reduced DPI={dpi} to save file size")
         else:
             dpi = 150  # Default DPI for smaller images
 
-    # Determine output format from file extension if not specified
-    if output_file and format is None:
+    # Determine output format from the file extension when the caller did not state one. Kept in
+    # a local rather than reassigning the parameter, so the caller's argument stays readable.
+    out_format = format
+    if output_file and out_format is None:
         output_path = Path(output_file)
         ext = output_path.suffix.lower()
         if ext in [".jpg", ".jpeg"]:
-            format = "jpeg"
+            out_format = "jpeg"
         elif ext == ".png":
-            format = "png"
+            out_format = "png"
         # If no extension or unknown, default to PNG
 
     if starfield is not None and starfield.fit:
         # Get markersize from detection_metadata if available, otherwise use streak FWHM or default
-        if (
-            starfield.detection_metadata is not None
-            and starfield.detection_metadata.pixel_fwhm is not None
-        ):
+        if starfield.detection_metadata is not None and starfield.detection_metadata.pixel_fwhm is not None:
             markersize = starfield.detection_metadata.pixel_fwhm
         elif streak is not None and streak.fwhm is not None:
             markersize = streak.fwhm
@@ -415,9 +425,7 @@ def plot_single_frame(
             markersize = 5.0  # Default fallback
         # Suppress FITSFixedWarning about WCS axes mismatch for wide-field images
         with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", message=".*WCS transformation has more axes.*"
-            )
+            warnings.filterwarnings("ignore", message=".*WCS transformation has more axes.*")
             wcs = starfield.wcs.to_astropy_wcs()
 
         # Get image dimensions
@@ -451,20 +459,14 @@ def plot_single_frame(
 
         # Handle RA wraparound using circular mean
         ra_rad = np.deg2rad(ra_all)
-        ra_center = np.rad2deg(
-            np.arctan2(np.mean(np.sin(ra_rad)), np.mean(np.cos(ra_rad)))
-        )
+        ra_center = np.rad2deg(np.arctan2(np.mean(np.sin(ra_rad)), np.mean(np.cos(ra_rad))))
         if ra_center < 0:
             ra_center += 360
 
         # Normalize all RAs around center
         ra_normalized = ra_all - ra_center
-        ra_normalized = np.where(
-            ra_normalized > 180, ra_normalized - 360, ra_normalized
-        )
-        ra_normalized = np.where(
-            ra_normalized < -180, ra_normalized + 360, ra_normalized
-        )
+        ra_normalized = np.where(ra_normalized > 180, ra_normalized - 360, ra_normalized)
+        ra_normalized = np.where(ra_normalized < -180, ra_normalized + 360, ra_normalized)
 
         # Find percentiles to divide pixels equally (3 lines = 4 bins = 25%, 50%, 75%)
         ra_percentiles = np.percentile(ra_normalized, [25, 50, 75])
@@ -487,7 +489,7 @@ def plot_single_frame(
         # (ra_ticks and dec_ticks are set based on equal pixel area division)
 
         # Function to place labels
-        def place_label(x, y, label_text, angle, on_x_axis=True):
+        def place_label(x: float, y: float, label_text: str, angle: float, on_x_axis: bool = True) -> None:
             if x >= 0 and x < width and y >= 0 and y < height:
                 fs = font_size(img)
                 if on_x_axis:
@@ -513,7 +515,7 @@ def plot_single_frame(
                 )
 
         # Helper function to normalize angle to [-90, 90] degrees
-        def normalize_angle(angle):
+        def normalize_angle(angle: float) -> float:
             if angle > 90:
                 angle -= 180
             elif angle < -90:
@@ -521,9 +523,7 @@ def plot_single_frame(
             return angle
 
         # Draw RA grid lines (sample many points for curved lines)
-        n_samples = (
-            200  # Increased samples for smoother curves and better boundary detection
-        )
+        n_samples = 200  # Increased samples for smoother curves and better boundary detection
         # Use the actual Dec range from our sampled data, but extend it significantly to ensure we cross boundaries
         dec_sampling_min = np.min(dec_all)
         dec_sampling_max = np.max(dec_all)
@@ -531,9 +531,7 @@ def plot_single_frame(
         # This is needed because curved grid lines may not reach edges with small extensions
         dec_range = dec_sampling_max - dec_sampling_min
         if dec_range > 0:
-            dec_sampling_min_extended = (
-                dec_sampling_min - dec_range
-            )  # Extend by full range
+            dec_sampling_min_extended = dec_sampling_min - dec_range  # Extend by full range
             dec_sampling_max_extended = dec_sampling_max + dec_range
         else:
             # If range is zero or very small, use a fixed extension
@@ -542,20 +540,14 @@ def plot_single_frame(
 
         for ra in ra_ticks:
             try:
-                dec_samples = np.linspace(
-                    dec_sampling_min_extended, dec_sampling_max_extended, n_samples
-                )
+                dec_samples = np.linspace(dec_sampling_min_extended, dec_sampling_max_extended, n_samples)
 
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*failed to converge.*")
-                    warnings.filterwarnings(
-                        "ignore", message=".*All-NaN slice encountered.*"
-                    )
+                    warnings.filterwarnings("ignore", message=".*All-NaN slice encountered.*")
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-                    coords = SkyCoord(
-                        ra=np.full(n_samples, ra) * u.deg, dec=dec_samples * u.deg
-                    )
+                    coords = SkyCoord(ra=np.full(n_samples, ra) * u.deg, dec=dec_samples * u.deg)
                     x_coords, y_coords = wcs.world_to_pixel(coords)
 
                 # Only filter out non-finite coordinates, let matplotlib clip to bounds
@@ -586,21 +578,12 @@ def plot_single_frame(
 
             ra_text = f"{SkyCoord(ra=ra * u.deg, dec=0 * u.deg).ra.to_string(unit=u.hour, sep=':', pad=True, format='hms', precision=1)}s".replace(
                 ":", "h", 1
-            ).replace(
-                ":", "m", 1
-            )
+            ).replace(":", "m", 1)
 
             # Find visible points
-            visible = (
-                (x_coords >= 0)
-                & (x_coords < width)
-                & (y_coords >= 0)
-                & (y_coords < height)
-            )
+            visible = (x_coords >= 0) & (x_coords < width) & (y_coords >= 0) & (y_coords < height)
             if np.sum(visible) < 2:
-                logger.debug(
-                    f"Skipping RA {ra:.2f}° label: only {np.sum(visible)} visible points"
-                )
+                logger.debug(f"Skipping RA {ra:.2f}° label: only {np.sum(visible)} visible points")
                 continue
 
             # For RA lines: check all 4 edges to find where this RA value appears
@@ -615,12 +598,8 @@ def plot_single_frame(
 
                     # Check bottom edge (y = height - 1)
                     bottom_x = np.arange(0, width)
-                    bottom_pixels = np.column_stack(
-                        [bottom_x, np.full(width, height - 1)]
-                    )
-                    bottom_world = wcs.pixel_to_world(
-                        bottom_pixels[:, 0], bottom_pixels[:, 1]
-                    )
+                    bottom_pixels = np.column_stack([bottom_x, np.full(width, height - 1)])
+                    bottom_world = wcs.pixel_to_world(bottom_pixels[:, 0], bottom_pixels[:, 1])
                     bottom_ra = bottom_world.ra.deg
                     ra_diffs = bottom_ra - ra
                     ra_diffs = np.where(ra_diffs > 180, ra_diffs - 360, ra_diffs)
@@ -648,9 +627,7 @@ def plot_single_frame(
                     # Check left edge (x = 0)
                     left_y = np.arange(0, height)
                     left_pixels = np.column_stack([np.zeros(height), left_y])
-                    left_world = wcs.pixel_to_world(
-                        left_pixels[:, 0], left_pixels[:, 1]
-                    )
+                    left_world = wcs.pixel_to_world(left_pixels[:, 0], left_pixels[:, 1])
                     left_ra = left_world.ra.deg
                     ra_diffs = left_ra - ra
                     ra_diffs = np.where(ra_diffs > 180, ra_diffs - 360, ra_diffs)
@@ -663,12 +640,8 @@ def plot_single_frame(
 
                     # Check right edge (x = width - 1)
                     right_y = np.arange(0, height)
-                    right_pixels = np.column_stack(
-                        [np.full(height, width - 1), right_y]
-                    )
-                    right_world = wcs.pixel_to_world(
-                        right_pixels[:, 0], right_pixels[:, 1]
-                    )
+                    right_pixels = np.column_stack([np.full(height, width - 1), right_y])
+                    right_world = wcs.pixel_to_world(right_pixels[:, 0], right_pixels[:, 1])
                     right_ra = right_world.ra.deg
                     ra_diffs = right_ra - ra
                     ra_diffs = np.where(ra_diffs > 180, ra_diffs - 360, ra_diffs)
@@ -681,9 +654,7 @@ def plot_single_frame(
 
                 if best_pos is not None:
                     x_at_bottom = best_pos[0]
-                    bottom_edge_y = best_pos[
-                        1
-                    ]  # Actually the y position on whichever edge
+                    bottom_edge_y = best_pos[1]  # Actually the y position on whichever edge
                 else:
                     x_at_bottom = width / 2
                     bottom_edge_y = height - 1
@@ -697,9 +668,7 @@ def plot_single_frame(
             # Use points near the intersection to calculate the grid line direction
             if len(x_coords) >= 2:
                 # Find the point closest to the intersection position
-                dists = np.sqrt(
-                    (x_coords - x_at_bottom) ** 2 + (y_coords - bottom_edge_y) ** 2
-                )
+                dists = np.sqrt((x_coords - x_at_bottom) ** 2 + (y_coords - bottom_edge_y) ** 2)
                 closest_idx = np.argmin(dists)
                 if closest_idx > 0 and closest_idx < len(x_coords) - 1:
                     # Use neighbors to get direction
@@ -741,9 +710,7 @@ def plot_single_frame(
                 bottom_pixels = np.column_stack([bottom_x, np.full(width, height - 1)])
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    bottom_world = wcs.pixel_to_world(
-                        bottom_pixels[:, 0], bottom_pixels[:, 1]
-                    )
+                    bottom_world = wcs.pixel_to_world(bottom_pixels[:, 0], bottom_pixels[:, 1])
                     bottom_ra = bottom_world.ra.deg
                     ra_diffs = bottom_ra - ra
                     ra_diffs = np.where(ra_diffs > 180, ra_diffs - 360, ra_diffs)
@@ -764,9 +731,7 @@ def plot_single_frame(
                 left_pixels = np.column_stack([np.zeros(height), left_y])
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    left_world = wcs.pixel_to_world(
-                        left_pixels[:, 0], left_pixels[:, 1]
-                    )
+                    left_world = wcs.pixel_to_world(left_pixels[:, 0], left_pixels[:, 1])
                     left_ra = left_world.ra.deg
                     ra_diffs = left_ra - ra
                     ra_diffs = np.where(ra_diffs > 180, ra_diffs - 360, ra_diffs)
@@ -786,16 +751,14 @@ def plot_single_frame(
                 va=va,
                 size=font_size(img),
                 rotation=angle,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="black",
-                    alpha=0.7,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "black",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
-            logger.debug(
-                f"RA {ra:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°"
-            )
+            logger.debug(f"RA {ra:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°")
 
         # Draw Dec grid lines
         # Use the actual RA range from our sampled data (in normalized space)
@@ -814,16 +777,12 @@ def plot_single_frame(
             ra_range_normalized = (ra_sampling_max - ra_sampling_min + 360) % 360
             if ra_range_normalized == 0:
                 ra_range_normalized = 360
-            ra_sampling_min_extended = (
-                ra_sampling_min - ra_range_normalized
-            ) % 360  # Extend by full range
+            ra_sampling_min_extended = (ra_sampling_min - ra_range_normalized) % 360  # Extend by full range
             ra_sampling_max_extended = (ra_sampling_max + ra_range_normalized) % 360
         else:
             ra_range = ra_sampling_max - ra_sampling_min
             if ra_range > 0:
-                ra_sampling_min_extended = (
-                    ra_sampling_min - ra_range
-                ) % 360  # Extend by full range
+                ra_sampling_min_extended = (ra_sampling_min - ra_range) % 360  # Extend by full range
                 ra_sampling_max_extended = (ra_sampling_max + ra_range) % 360
             else:
                 # If range is zero or very small, use a fixed extension
@@ -842,20 +801,14 @@ def plot_single_frame(
                     )
                     ra_samples = (ra_samples_normalized + ra_center) % 360
                 else:
-                    ra_samples = np.linspace(
-                        ra_sampling_min_extended, ra_sampling_max_extended, n_samples
-                    )
+                    ra_samples = np.linspace(ra_sampling_min_extended, ra_sampling_max_extended, n_samples)
 
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message=".*failed to converge.*")
-                    warnings.filterwarnings(
-                        "ignore", message=".*All-NaN slice encountered.*"
-                    )
+                    warnings.filterwarnings("ignore", message=".*All-NaN slice encountered.*")
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-                    coords = SkyCoord(
-                        ra=ra_samples * u.deg, dec=np.full(n_samples, dec) * u.deg
-                    )
+                    coords = SkyCoord(ra=ra_samples * u.deg, dec=np.full(n_samples, dec) * u.deg)
                     x_coords, y_coords = wcs.world_to_pixel(coords)
 
                 # Only filter out non-finite coordinates, let matplotlib clip to bounds
@@ -886,21 +839,12 @@ def plot_single_frame(
 
             dec_text = f"{SkyCoord(ra=0 * u.deg, dec=dec * u.deg).dec.to_string(unit=u.deg, sep=':', precision=1, alwayssign=True)}''".replace(
                 ":", "°", 1
-            ).replace(
-                ":", "'", 1
-            )
+            ).replace(":", "'", 1)
 
             # Find visible points
-            visible = (
-                (x_coords >= 0)
-                & (x_coords < width)
-                & (y_coords >= 0)
-                & (y_coords < height)
-            )
+            visible = (x_coords >= 0) & (x_coords < width) & (y_coords >= 0) & (y_coords < height)
             if np.sum(visible) < 2:
-                logger.debug(
-                    f"Skipping Dec {dec:.2f}° label: only {np.sum(visible)} visible points"
-                )
+                logger.debug(f"Skipping Dec {dec:.2f}° label: only {np.sum(visible)} visible points")
                 continue
 
             # For Dec lines: check all 4 edges to find where this Dec value appears
@@ -915,12 +859,8 @@ def plot_single_frame(
 
                     # Check bottom edge (y = height - 1)
                     bottom_x = np.arange(0, width)
-                    bottom_pixels = np.column_stack(
-                        [bottom_x, np.full(width, height - 1)]
-                    )
-                    bottom_world = wcs.pixel_to_world(
-                        bottom_pixels[:, 0], bottom_pixels[:, 1]
-                    )
+                    bottom_pixels = np.column_stack([bottom_x, np.full(width, height - 1)])
+                    bottom_world = wcs.pixel_to_world(bottom_pixels[:, 0], bottom_pixels[:, 1])
                     bottom_dec = bottom_world.dec.deg
                     dec_diffs = np.abs(bottom_dec - dec)
                     min_idx = np.argmin(dec_diffs)
@@ -944,9 +884,7 @@ def plot_single_frame(
                     # Check left edge (x = 0)
                     left_y = np.arange(0, height)
                     left_pixels = np.column_stack([np.zeros(height), left_y])
-                    left_world = wcs.pixel_to_world(
-                        left_pixels[:, 0], left_pixels[:, 1]
-                    )
+                    left_world = wcs.pixel_to_world(left_pixels[:, 0], left_pixels[:, 1])
                     left_dec = left_world.dec.deg
                     dec_diffs = np.abs(left_dec - dec)
                     min_idx = np.argmin(dec_diffs)
@@ -957,12 +895,8 @@ def plot_single_frame(
 
                     # Check right edge (x = width - 1)
                     right_y = np.arange(0, height)
-                    right_pixels = np.column_stack(
-                        [np.full(height, width - 1), right_y]
-                    )
-                    right_world = wcs.pixel_to_world(
-                        right_pixels[:, 0], right_pixels[:, 1]
-                    )
+                    right_pixels = np.column_stack([np.full(height, width - 1), right_y])
+                    right_world = wcs.pixel_to_world(right_pixels[:, 0], right_pixels[:, 1])
                     right_dec = right_world.dec.deg
                     dec_diffs = np.abs(right_dec - dec)
                     min_idx = np.argmin(dec_diffs)
@@ -972,9 +906,7 @@ def plot_single_frame(
                         best_edge = "right"
 
                 if best_pos is not None:
-                    left_edge_x = best_pos[
-                        0
-                    ]  # Actually the x position on whichever edge
+                    left_edge_x = best_pos[0]  # Actually the x position on whichever edge
                     y_at_left = best_pos[1]
                 else:
                     left_edge_x = 0
@@ -988,9 +920,7 @@ def plot_single_frame(
             # Use points near the intersection to calculate the grid line direction
             if len(x_coords) >= 2:
                 # Find the point closest to the intersection position
-                dists = np.sqrt(
-                    (x_coords - left_edge_x) ** 2 + (y_coords - y_at_left) ** 2
-                )
+                dists = np.sqrt((x_coords - left_edge_x) ** 2 + (y_coords - y_at_left) ** 2)
                 closest_idx = np.argmin(dists)
                 if closest_idx > 0 and closest_idx < len(x_coords) - 1:
                     # Use neighbors to get direction
@@ -1032,9 +962,7 @@ def plot_single_frame(
                 left_pixels = np.column_stack([np.zeros(height), left_y])
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    left_world = wcs.pixel_to_world(
-                        left_pixels[:, 0], left_pixels[:, 1]
-                    )
+                    left_world = wcs.pixel_to_world(left_pixels[:, 0], left_pixels[:, 1])
                     left_dec = left_world.dec.deg
                     dec_diffs = np.abs(left_dec - dec)
                     min_idx = np.argmin(dec_diffs)
@@ -1053,9 +981,7 @@ def plot_single_frame(
                 bottom_pixels = np.column_stack([bottom_x, np.full(width, height - 1)])
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    bottom_world = wcs.pixel_to_world(
-                        bottom_pixels[:, 0], bottom_pixels[:, 1]
-                    )
+                    bottom_world = wcs.pixel_to_world(bottom_pixels[:, 0], bottom_pixels[:, 1])
                     bottom_dec = bottom_world.dec.deg
                     dec_diffs = np.abs(bottom_dec - dec)
                     min_idx = np.argmin(dec_diffs)
@@ -1073,16 +999,14 @@ def plot_single_frame(
                 va=va,
                 size=font_size(img),
                 rotation=angle,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="black",
-                    alpha=0.7,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "black",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
-            logger.debug(
-                f"Dec {dec:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°"
-            )
+            logger.debug(f"Dec {dec:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°")
     else:
         wcs = None
         fig, ax = prep_axes(*img.shape)
@@ -1125,12 +1049,12 @@ def plot_single_frame(
     if output_file:
         # Prepare savefig kwargs based on format
         save_kwargs = {"dpi": dpi}
-        if format == "jpeg" or format == "jpg":
+        if out_format in ("jpeg", "jpg"):
             save_kwargs["format"] = "jpeg"
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["optimize"] = True
             logger.info(f"Saving as JPEG with quality={jpeg_quality}, DPI={dpi}")
-        elif format == "png":
+        elif out_format == "png":
             save_kwargs["format"] = "png"
             logger.info(f"Saving as PNG with DPI={dpi}")
         else:
@@ -1141,7 +1065,7 @@ def plot_single_frame(
 
         # For PNG files, try to optimize further using PIL if available
         output_path = Path(output_file)
-        if (format is None or format == "png") and output_path.suffix.lower() == ".png":
+        if (out_format is None or out_format == "png") and output_path.suffix.lower() == ".png":
             try:
                 from PIL import Image
 
@@ -1154,11 +1078,7 @@ def plot_single_frame(
                         img_pil = img_pil.convert("RGBA")
                     rgb_img.paste(
                         img_pil,
-                        mask=(
-                            img_pil.split()[-1]
-                            if img_pil.mode in ("RGBA", "LA")
-                            else None
-                        ),
+                        mask=(img_pil.split()[-1] if img_pil.mode in ("RGBA", "LA") else None),
                     )
                     img_pil = rgb_img
                 # Save with optimization
@@ -1168,9 +1088,7 @@ def plot_single_frame(
                     optimize=True,
                     compress_level=png_compression,
                 )
-                logger.debug(
-                    f"Optimized PNG file size with compression level={png_compression}"
-                )
+                logger.debug(f"Optimized PNG file size with compression level={png_compression}")
             except ImportError:
                 pass  # PIL not available, skip optimization
             except Exception as e:
@@ -1188,13 +1106,19 @@ def plot_single_frame(
 
 
 def plot_photometry_frame(
-    img,
-    apertures=None,
-    annuli=None,
-    output_file=None,
-    scale=True,
-):
-    fig, ax = prep_axes(*img.shape)
+    img: np.ndarray,
+    apertures: "Aperture | None" = None,
+    annuli: "Aperture | None" = None,
+    output_file: str | Path | None = None,
+    scale: bool = True,
+) -> None:
+    """Render a frame with photometry apertures and their background annuli drawn on it.
+
+    The annuli are the point of the plot: an aperture that looks well-placed can still measure
+    the wrong background if its annulus catches a neighbouring star, and that is visible here
+    and almost nowhere else.
+    """
+    _fig, ax = prep_axes(*img.shape)
 
     # minval = np.min(img.flatten())
     # maxval = (np.median(img.flatten()) - minval) * 4 + minval
@@ -1216,12 +1140,12 @@ def plot_photometry_frame(
 
 
 def plot_sip_distortions(
-    wcs,
+    wcs: WCS,
     grid_spacing: int = 50,
     plot_type: str = "arrows",
     output_file: str | None = None,
     figsize: tuple = (10, 8),
-    **kwargs,
+    **kwargs: float,
 ) -> tuple | None:
     """Plot SIP (Simple Imaging Polynomial) distortions across the field of view.
 
@@ -1236,8 +1160,8 @@ def plot_sip_distortions(
 
     Returns:
         tuple: (fig, ax) if output_file is None, None otherwise
-    """
 
+    """
     # Check if WCS has SIP distortions
     has_sip = False
     if (hasattr(wcs, "sip") and wcs.sip is not None) or wcs.sip is not None:
@@ -1259,9 +1183,7 @@ def plot_sip_distortions(
         else:
             # Default fallback
             height, width = 1024, 1024
-            logger.warning(
-                f"Could not determine image shape from WCS, using default {height}x{width}"
-            )
+            logger.warning(f"Could not determine image shape from WCS, using default {height}x{width}")
 
     # Create grid of pixel coordinates
     y_coords, x_coords = np.mgrid[0:height:grid_spacing, 0:width:grid_spacing]
@@ -1299,8 +1221,8 @@ def plot_sip_distortions(
 
     try:
         wcs_no_sip = WCS(header_no_sip, relax=True)
-    except Exception as e:
-        logger.error(f"Failed to create WCS without SIP: {e}")
+    except Exception:
+        logger.exception("Failed to create WCS without SIP")
         return None
 
     # Convert world coordinates back to pixel coordinates using linear WCS (no SIP)
@@ -1337,9 +1259,7 @@ def plot_sip_distortions(
         plt.colorbar(im2, ax=axes[1], label="dy (pixels)")
 
         # Plot distortion magnitude
-        im3 = axes[2].scatter(
-            y_flat, x_flat, c=distortion_magnitude, cmap="viridis", s=20, alpha=0.8
-        )
+        im3 = axes[2].scatter(y_flat, x_flat, c=distortion_magnitude, cmap="viridis", s=20, alpha=0.8)
         axes[2].set_title("Distortion Magnitude (pixels)")
         axes[2].set_xlabel("Y pixel")
         axes[2].set_ylabel("X pixel")
@@ -1386,9 +1306,7 @@ def plot_sip_distortions(
 
         # Create quiver plot showing distortion vectors
         # Filter out small distortions for clarity
-        significant = distortion_magnitude > np.percentile(
-            distortion_magnitude, 10
-        )  # Top 90%
+        significant = distortion_magnitude > np.percentile(distortion_magnitude, 10)  # Top 90%
 
         if np.any(significant):
             # Scale arrow lengths for visibility
@@ -1435,9 +1353,7 @@ def plot_sip_distortions(
         ax.legend()
 
     else:
-        raise ValueError(
-            f"Unknown plot_type: {plot_type}. Must be 'arrows', 'contours', or 'separate'"
-        )
+        raise ValueError(f"Unknown plot_type: {plot_type}. Must be 'arrows', 'contours', or 'separate'")
 
     plt.tight_layout()
 

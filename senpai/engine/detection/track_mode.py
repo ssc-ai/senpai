@@ -19,25 +19,36 @@ when a TRKMODE is present, so metadata-tagged frames pay nothing for it.
 
 from __future__ import annotations
 
+import argparse
+import glob
 import logging
 import math
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from astropy.io import fits
 from scipy import ndimage
 
+if TYPE_CHECKING:
+    from senpai.core.config import AppConfig
+
+from senpai.core.config import initialize_config, settings
+from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
 from senpai.engine.models.metadata import TrackMode
+from senpai.engine.utils.fits_io import extract_header_value, extract_track_rates_from_header
 
 logger = logging.getLogger(__name__)
 
 # --- pixel-test tuning --------------------------------------------------------
-_BRIGHT_SIGMA = 8.0        # sources are connected components above med + N*sigma
-_MIN_BLOB_PX = 6           # reject cosmic rays / hot pixels
-_MIN_SOURCES = 8           # too few measurable sources -> inconclusive
-_MAX_SOURCES = 60          # measure at most this many (brightest first)
-_ELONG_ROUND_MAX = 1.5     # median axis ratio <= this -> round -> sidereal
-_ELONG_STREAK_MIN = 1.8    # median axis ratio >= this (and aligned) -> rate
-_PA_ALIGN_MIN = 0.6        # axial concentration of streak position angles (0..1)
+_BRIGHT_SIGMA = 8.0  # sources are connected components above med + N*sigma
+_MIN_BLOB_PX = 6  # reject cosmic rays / hot pixels
+_MIN_SOURCES = 8  # too few measurable sources -> inconclusive
+_MAX_SOURCES = 60  # measure at most this many (brightest first)
+_ELONG_ROUND_MAX = 1.5  # median axis ratio <= this -> round -> sidereal
+_ELONG_STREAK_MIN = 1.8  # median axis ratio >= this (and aligned) -> rate
+_PA_ALIGN_MIN = 0.6  # axial concentration of streak position angles (0..1)
 # Calibrated on DAO-01 1s frames (median source axis ratio): sidereal ~1.08,
 # slow-rate coverage ~1.22 (apparent motion < a pixel -> reads round, fine to
 # treat as sidereal), moderate-rate coverage ~2.17, fast calsat streak ~20. The
@@ -62,13 +73,15 @@ class TrackModeDecision:
     """Final classification plus *which* tier decided it (for logging)."""
 
     mode: TrackMode
-    source: str   # "trkmode" | "rates" | "pixels" | "pixels>rates" | "unknown"
+    source: str  # "trkmode" | "rates" | "pixels" | "pixels>rates" | "unknown"
     detail: str = ""
 
 
 def _blob_elongation(stamp: np.ndarray) -> tuple[float, float] | None:
-    """Axis ratio (major/minor) and position angle (rad) from a blob's intensity
-    second moments. Returns None for a degenerate blob."""
+    """Axis ratio (major/minor) and position angle (rad) from a blob's intensity second moments.
+
+    Returns None for a degenerate blob.
+    """
     tot = float(stamp.sum())
     if tot <= 0:
         return None
@@ -91,13 +104,12 @@ def _blob_elongation(stamp: np.ndarray) -> tuple[float, float] | None:
     return elong, pa
 
 
-def infer_track_mode_from_image(
-    data: np.ndarray, max_sources: int = _MAX_SOURCES
-) -> ImageTrackVerdict:
+def infer_track_mode_from_image(data: np.ndarray, max_sources: int = _MAX_SOURCES) -> ImageTrackVerdict:
     """Round sources -> sidereal, mutually aligned streaks -> rate, else UNKNOWN.
 
     Rate-independent on purpose: it measures source *shape* directly, so it does
-    not inherit any error in the header tracking rates."""
+    not inherit any error in the header tracking rates.
+    """
     a = np.asarray(data, dtype=np.float32)
     if a.ndim != 2:
         return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, 0, float("nan"), float("nan"))
@@ -144,8 +156,7 @@ def infer_track_mode_from_image(
         angles.append(pa)
 
     if len(elongs) < _MIN_SOURCES:
-        return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, len(elongs),
-                                 float("nan"), float("nan"))
+        return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, len(elongs), float("nan"), float("nan"))
 
     med_elong = float(np.median(elongs))
     # Position angle is axial (mod pi): use the mean resultant length of 2*PA as
@@ -164,10 +175,8 @@ def infer_track_mode_from_image(
     return ImageTrackVerdict(TrackMode.UNKNOWN, 0.0, len(elongs), med_elong, pa_align)
 
 
-def _header_trkmode(header, mode_keys) -> TrackMode | None:
+def _header_trkmode(header: dict[str, Any], mode_keys: list[str]) -> TrackMode | None:
     """Explicit, unambiguous TRKMODE from the header, or None."""
-    from senpai.engine.utils.fits_io import extract_header_value
-
     for k in mode_keys:
         v = extract_header_value(header, k)
         if v is None:
@@ -183,16 +192,14 @@ def _header_trkmode(header, mode_keys) -> TrackMode | None:
     return None
 
 
-def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
-    """Classify a frame sidereal vs rate, cheapest evidence first (see module
-    docstring). ``data`` (the 2-D image) enables the pixel arbiter; omit it to
-    stay metadata-only."""
-    from senpai.engine.utils.fits_io import extract_track_rates_from_header
+def classify_track_mode(
+    header: dict[str, Any], data: np.ndarray | None = None, config: AppConfig | None = None
+) -> TrackModeDecision:
+    """Classify a frame sidereal vs rate, cheapest evidence first (see module docstring).
 
-    if config is None:
-        from senpai.core.config import get_config
-        config = get_config()
-    tcfg = config.headers.tracking
+    ``data`` (the 2-D image) enables the pixel arbiter; omit it to stay metadata-only.
+    """
+    tcfg = (config if config is not None else settings).headers.tracking
     mode_keys = tcfg.track_mode_keys or ["TRKMODE"]
 
     # Tier 1 — authoritative TRKMODE.
@@ -213,8 +220,7 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
     pix_detail = ""
     if tcfg.data_fallback_enabled and data is not None:
         v = infer_track_mode_from_image(data)
-        pix_detail = (f"elong={v.median_elongation:.2f} align={v.pa_alignment:.2f} "
-                      f"n={v.n_sources}")
+        pix_detail = f"elong={v.median_elongation:.2f} align={v.pa_alignment:.2f} n={v.n_sources}"
         if v.mode in (TrackMode.RATE, TrackMode.SIDEREAL):
             pix = v.mode
 
@@ -224,14 +230,15 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
         logger.warning(
             "track-mode disagreement: rates say %s but pixels say %s (%s) — trusting "
             "pixels; check the frame's RA/DEC_RATE metadata",
-            rate_guess.value, pix.value, pix_detail,
+            rate_guess.value,
+            pix.value,
+            pix_detail,
         )
         return TrackModeDecision(pix, "pixels>rates", pix_detail)
     if pix is not None:
         return TrackModeDecision(pix, "pixels", pix_detail)
     if rate_guess is not None:
-        return TrackModeDecision(rate_guess, "rates",
-                                 f"|rate|=({ra_rate:.2f},{dec_rate:.2f})\"/s")
+        return TrackModeDecision(rate_guess, "rates", f'|rate|=({ra_rate:.2f},{dec_rate:.2f})"/s')
     return TrackModeDecision(TrackMode.UNKNOWN, "unknown", pix_detail)
 
 
@@ -239,36 +246,32 @@ def classify_track_mode(header, data=None, config=None) -> TrackModeDecision:
 # CLI: classify a frame and show each tier's evidence
 #   python -m senpai.engine.detection.track_mode <fits...> [--from-data] [--raw]
 # --------------------------------------------------------------------------
-def _main(argv=None) -> int:
-    import argparse
-    import glob
-    from pathlib import Path
-
-    from astropy.io import fits
-
-    from senpai.core.config import get_config, initialize_config
-    from senpai.core.constants import LOCAL_APP_CONFIG_OVERRIDE
-    from senpai.engine.utils.fits_io import extract_track_rates_from_header
+def _main(argv: list[str] | None = None) -> int:
 
     p = argparse.ArgumentParser(
         description="Classify a frame sidereal-vs-rate and show every tier's "
         "evidence: the TRKMODE header, the RA/DEC rates, and the from-data pixel "
-        "measurement (source elongation + alignment).")
+        "measurement (source elongation + alignment)."
+    )
     p.add_argument("fits", nargs="+", help="FITS file(s) or glob(s).")
-    p.add_argument("-c", "--config", default=str(LOCAL_APP_CONFIG_OVERRIDE),
-                   help="Config YAML (header keys + thresholds).")
-    p.add_argument("--from-data", action="store_true",
-                   help="Force the decision from the pixel measurement, ignoring "
-                        "TRKMODE/rates (see what the data alone says).")
-    p.add_argument("--raw", action="store_true",
-                   help="Skip the row/column-median subtraction the pipeline applies "
-                        "before classifying (use the raw pixels).")
+    p.add_argument(
+        "-c", "--config", default=str(LOCAL_APP_CONFIG_OVERRIDE), help="Config YAML (header keys + thresholds)."
+    )
+    p.add_argument(
+        "--from-data",
+        action="store_true",
+        help="Force the decision from the pixel measurement, ignoring TRKMODE/rates (see what the data alone says).",
+    )
+    p.add_argument(
+        "--raw",
+        action="store_true",
+        help="Skip the row/column-median subtraction the pipeline applies before classifying (use the raw pixels).",
+    )
     args = p.parse_args(argv)
 
     initialize_config(Path(args.config))
-    config = get_config()
-    mode_keys = config.headers.tracking.track_mode_keys or ["TRKMODE"]
-    thr = config.headers.tracking.sidereal_rate_threshold_arcsec_per_second
+    mode_keys = settings.headers.tracking.track_mode_keys or ["TRKMODE"]
+    thr = settings.headers.tracking.sidereal_rate_threshold_arcsec_per_second
 
     paths: list[str] = []
     for f in args.fits:
@@ -289,25 +292,27 @@ def _main(argv=None) -> int:
         verdict = infer_track_mode_from_image(data)
 
         print(f"\n{Path(path).name}")
-        print(f"  TRKMODE header : {str(header.get('TRKMODE')):>10}  -> "
-              f"{trk.value if trk else '(unusable)'}")
+        print(f"  TRKMODE header : {header.get('TRKMODE')!s:>10}  -> {trk.value if trk else '(unusable)'}")
         if ra is not None and dec is not None:
             mag = math.hypot(ra, dec)
-            print(f"  RA/DEC rates   : ({ra:7.2f},{dec:7.2f})\"/s |rate|={mag:6.1f}  -> "
-                  f"{'rate' if mag > thr else 'sidereal'}")
+            print(
+                f'  RA/DEC rates   : ({ra:7.2f},{dec:7.2f})"/s |rate|={mag:6.1f}  -> '
+                f"{'rate' if mag > thr else 'sidereal'}"
+            )
         else:
             print("  RA/DEC rates   :   (absent)")
-        print(f"  pixel measure  : {verdict.mode.value:>10}  elong={verdict.median_elongation:.2f} "
-              f"align={verdict.pa_alignment:.2f} n={verdict.n_sources}")
+        print(
+            f"  pixel measure  : {verdict.mode.value:>10}  elong={verdict.median_elongation:.2f} "
+            f"align={verdict.pa_alignment:.2f} n={verdict.n_sources}"
+        )
 
         if args.from_data:
             mode = verdict.mode if verdict.mode != TrackMode.UNKNOWN else TrackMode.SIDEREAL
             note = "" if verdict.mode != TrackMode.UNKNOWN else " (inconclusive->sidereal default)"
             print(f"  => DECISION    : {mode.value}  [forced from data]{note}")
         else:
-            d = classify_track_mode(header, data, config)
-            print(f"  => DECISION    : {d.mode.value}  via {d.source}"
-                  + (f"  [{d.detail}]" if d.detail else ""))
+            d = classify_track_mode(header, data)
+            print(f"  => DECISION    : {d.mode.value}  via {d.source}" + (f"  [{d.detail}]" if d.detail else ""))
     return 0
 
 

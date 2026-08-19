@@ -1,13 +1,18 @@
 """Detection, matching, fitting, and shared helpers for WCS refinement."""
 
 import logging
+from typing import TYPE_CHECKING
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
+from astropy.wcs.utils import fit_wcs_from_points
+from photutils.aperture import RectangularAnnulus, RectangularAperture, aperture_photometry
 from scipy.ndimage import maximum_filter
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import ConvexHull
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.astrometry import WCSMetadata, WCSModel
 from senpai.engine.models.metadata import StreakMetadata
 from senpai.engine.models.starfield import StarInImage, StarInSpace
@@ -21,6 +26,9 @@ from senpai.engine.utils.wcs_ops import (
     filter_catalog_stars_by_radius,
 )
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,12 +37,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _local_maxima_above_floor(image, half, floor):
-    """(ys, xs, values) of pixels above ``floor`` that equal the maximum of
-    their (2*half+1)^2 window, matching ``maximum_filter(mode='constant')``
-    semantics for positive floors (out-of-bounds zeros never beat an
-    above-floor pixel). Offsets run nearest-first so almost every
-    non-maximum dies on an immediate neighbor before the wide scans."""
+def _local_maxima_above_floor(image: np.ndarray, half: int, floor: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Find pixels above `floor` that dominate their own window.
+
+    Matches ``maximum_filter(mode='constant')`` semantics for positive floors, since
+    out-of-bounds zeros can never beat an above-floor pixel. Offsets are tested
+    nearest-first, so almost every non-maximum is eliminated by an immediate neighbour
+    before the wider scans run.
+
+    Args:
+        image: 2D image to scan.
+        half: Half-width of the window; it spans (2*half+1) pixels.
+        floor: Intensity a pixel must exceed to be considered.
+
+    Returns:
+        ``(ys, xs, values)`` for the surviving maxima.
+
+    """
     ys, xs = np.nonzero(image > floor)
     vals = image[ys, xs]
     h, w = image.shape
@@ -56,9 +75,13 @@ def _local_maxima_above_floor(image, half, floor):
     return ys, xs, vals
 
 
-def find_local_maxima(image, min_distance=30, threshold=None, max_detections=None):
-    """
-    Find local maxima in an image with minimum separation distance.
+def find_local_maxima(
+    image: np.ndarray,
+    min_distance: int = 30,
+    threshold: float | None = None,
+    max_detections: int | None = None,
+) -> np.ndarray:
+    """Find local maxima in an image with minimum separation distance.
 
     Args:
         image: 2D numpy array
@@ -68,6 +91,7 @@ def find_local_maxima(image, min_distance=30, threshold=None, max_detections=Non
 
     Returns:
         Array of (y, x) coordinates of maxima
+
     """
     size = 2 * min_distance + 1
     floor_base = max(0.0, float(threshold) if threshold is not None else 0.0)
@@ -132,9 +156,8 @@ def match_stars_to_detections(
     stars: list[StarInImage],
     detected_points: list[tuple[float, float]],
     max_distance: float = 20,
-):
-    """
-    Match catalog stars to detected points using bipartite matching.
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """Match catalog stars to detected points using bipartite matching.
 
     Args:
         stars: List of StarInImage objects
@@ -145,6 +168,7 @@ def match_stars_to_detections(
         matched_pairs: List of (star_idx, detection_idx) pairs
         unmatched_stars: List of star indices with no match
         unmatched_detections: List of detection indices with no match
+
     """
     if not stars or len(detected_points) == 0:
         return [], list(range(len(stars))), list(range(len(detected_points)))
@@ -155,9 +179,7 @@ def match_stars_to_detections(
     star_x = np.array([s.x if s is not None else np.nan for s in stars], dtype=float)
     star_y = np.array([s.y if s is not None else np.nan for s in stars], dtype=float)
     det = np.asarray(detected_points, dtype=float)  # rows are (y, x)
-    cost_matrix = np.hypot(
-        star_x[:, None] - det[None, :, 1], star_y[:, None] - det[None, :, 0]
-    )
+    cost_matrix = np.hypot(star_x[:, None] - det[None, :, 1], star_y[:, None] - det[None, :, 0])
     cost_matrix[~np.isfinite(cost_matrix)] = np.inf
 
     # If all costs are infinite, return empty matches
@@ -190,10 +212,13 @@ def match_stars_to_detections(
 
 
 def extract_counts_with_rectangular_aperture(
-    image, x, y, streak: StreakMetadata, background_annulus=True
-):
-    """
-    Extract counts from an image using a rectangular aperture aligned with a streak.
+    image: np.ndarray,
+    x: float,
+    y: float,
+    streak: StreakMetadata,
+    background_annulus: bool = True,
+) -> tuple[float, float]:
+    """Extract counts from an image using a rectangular aperture aligned with a streak.
 
     Args:
         image: 2D numpy array containing the image data
@@ -205,9 +230,8 @@ def extract_counts_with_rectangular_aperture(
     Returns:
         counts: Background-subtracted counts within the aperture
         background: Local background level (per pixel)
-    """
-    from photutils.aperture import RectangularAnnulus, RectangularAperture
 
+    """
     # Create rectangular aperture aligned with the streak
     width = streak.fwhm * 4
     length = streak.pixel_length + streak.fwhm * 2
@@ -229,7 +253,6 @@ def extract_counts_with_rectangular_aperture(
         )
 
     # Perform photometry
-    from photutils.aperture import aperture_photometry
 
     phot_table = aperture_photometry(image, aperture)
     aperture_sum = float(phot_table["aperture_sum"][0])
@@ -258,7 +281,7 @@ def extract_counts_with_rectangular_aperture(
 # ---------------------------------------------------------------------------
 
 
-def calculate_spatial_coverage(positions, image_shape):
+def calculate_spatial_coverage(positions: np.ndarray, image_shape: tuple[int, int]) -> dict:
     """Calculate metrics for spatial coverage of reference stars.
 
     Args:
@@ -267,6 +290,7 @@ def calculate_spatial_coverage(positions, image_shape):
 
     Returns:
         Dictionary of coverage metrics
+
     """
     height, width = image_shape
     metrics = {}
@@ -329,17 +353,22 @@ def calculate_spatial_coverage(positions, image_shape):
 
 
 def determine_optimal_sip_order(
-    world_coords, pixel_coords, image_shape, max_order: int = 3
-):
+    world_coords: list[tuple[float, float]],
+    pixel_coords: list[tuple[float, float]],
+    image_shape: tuple[int, int],
+    max_order: int = 3,
+) -> int:
     """Determine optimal SIP order based on spatial coverage and number of reference stars.
 
     Args:
         world_coords: List of (ra, dec) pairs
         pixel_coords: List of (x, y) pairs
+        max_order: Highest SIP order to allow, whatever the coverage supports
         image_shape: (height, width) of image
 
     Returns:
         int: Optimal SIP order (1-5)
+
     """
     n_stars = len(world_coords)
 
@@ -364,10 +393,7 @@ def determine_optimal_sip_order(
     coverage_metrics = calculate_spatial_coverage(pixel_coords, image_shape)
 
     # If poor coverage, reduce order to avoid overfitting
-    if (
-        coverage_metrics["quadrant_coverage"] < 3
-        or coverage_metrics["convex_hull_area_ratio"] < 0.2
-    ):
+    if coverage_metrics["quadrant_coverage"] < 3 or coverage_metrics["convex_hull_area_ratio"] < 0.2:
         sip_order = max(1, sip_order - 1)
 
     return min(sip_order, max_order)
@@ -379,7 +405,7 @@ def determine_optimal_sip_order(
 
 
 def compute_snr_and_filter_stars(
-    frame,
+    frame: "SiderealFrame | RateTrackFrame",
     catalog_stars: list[StarInSpace],
     min_snr: float = 8.0,
     min_stars_to_preserve: int = 6,
@@ -403,6 +429,7 @@ def compute_snr_and_filter_stars(
     Returns:
         (filtered_stars, limiting_magnitude) where *filtered_stars* are the
         stars that passed SNR + magnitude gating.
+
     """
     stars_for_photometry = catalog_stars
 
@@ -410,9 +437,7 @@ def compute_snr_and_filter_stars(
     if conservative_mag_cutoff is not None:
         initial_count = len(stars_for_photometry)
         stars_for_photometry = [
-            star
-            for star in stars_for_photometry
-            if star.magnitude is None or star.magnitude <= conservative_mag_cutoff
+            star for star in stars_for_photometry if star.magnitude is None or star.magnitude <= conservative_mag_cutoff
         ]
         if initial_count > len(stars_for_photometry):
             logger.info(
@@ -432,9 +457,7 @@ def compute_snr_and_filter_stars(
         )
 
     # Calculate proper SNRs using aperture photometry
-    star_snr_results = calculate_star_snrs_with_aperture_photometry(
-        frame, stars_for_photometry
-    )
+    star_snr_results = calculate_star_snrs_with_aperture_photometry(frame, stars_for_photometry)
 
     # Store SNR with each star for later use
     for star, snr, counts in star_snr_results:
@@ -442,20 +465,13 @@ def compute_snr_and_filter_stars(
         star.counts = counts
 
     # Filter stars by SNR
-    filtered_catalog_stars = [
-        star for star, snr, _ in star_snr_results if snr >= min_snr
-    ]
+    filtered_catalog_stars = [star for star, snr, _ in star_snr_results if snr >= min_snr]
 
     # Estimate limiting magnitude using shared photometry utility (3-sigma by default)
-    limiting_magnitude = estimate_limiting_magnitude_from_photometry(
-        frame, star_snr_results, min_snr=3.0
-    )
+    limiting_magnitude = estimate_limiting_magnitude_from_photometry(frame, star_snr_results, min_snr=3.0)
 
     # Store the limiting magnitude in the starfield
-    if (
-        hasattr(frame.starfield, "limiting_magnitude")
-        and limiting_magnitude is not None
-    ):
+    if hasattr(frame.starfield, "limiting_magnitude") and limiting_magnitude is not None:
         frame.starfield.limiting_magnitude = limiting_magnitude
 
     # Filter out stars that are too dim (beyond the limiting magnitude)
@@ -471,11 +487,7 @@ def compute_snr_and_filter_stars(
         brightest_stars = sorted_by_mag[:min_stars_to_preserve]
         other_stars = sorted_by_mag[min_stars_to_preserve:]
 
-        filtered_other_stars = [
-            star
-            for star in other_stars
-            if star.magnitude is None or star.magnitude <= cutoff_mag
-        ]
+        filtered_other_stars = [star for star in other_stars if star.magnitude is None or star.magnitude <= cutoff_mag]
 
         filtered_catalog_stars = brightest_stars + filtered_other_stars
         after_count = len(filtered_catalog_stars)
@@ -514,6 +526,7 @@ def reject_outlier_shifts_by_mad(
 
     Returns:
         (world_coords, pixel_coords) lists for inlier shifts.
+
     """
     world_coords: list[tuple] = []
     pixel_coords: list[tuple] = []
@@ -577,11 +590,8 @@ def fit_and_validate_wcs(
         (wcs_model, refit_stats): the refined WCSModel plus a dict with the
         fit's residual statistics (rms_px, rms_arcsec, n_stars), or
         (*fallback_wcs*, None) if validation fails.
-    """
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-    from astropy.wcs.utils import fit_wcs_from_points
 
+    """
     ra_values = [wc[0] for wc in world_coords]
     dec_values = [wc[1] for wc in world_coords]
     sky_coords = SkyCoord(ra_values, dec_values, unit=u.deg)
@@ -616,14 +626,10 @@ def fit_and_validate_wcs(
             (x_values, y_values), sky_coords, proj_point="center", sip_degree=sip_degree
         )
     except ValueError as e:
-        logger.warning(
-            "WCS refinement failed (fit_wcs_from_points: %s); using the fallback WCS.", e
-        )
+        logger.warning("WCS refinement failed (fit_wcs_from_points: %s); using the fallback WCS.", e)
         return fallback_wcs, None
 
-    new_wcs_model = WCSModel.from_astropy_wcs(
-        refined_astropy_wcs, image_shape=image_shape
-    )
+    new_wcs_model = WCSModel.from_astropy_wcs(refined_astropy_wcs, image_shape=image_shape)
 
     # Consistency check: compare corners and center between fallback and refined WCS
     original_wcs = fallback_wcs.to_astropy_wcs()
@@ -650,8 +656,7 @@ def fit_and_validate_wcs(
 
     if max_shift > max_acceptable_shift:
         logger.warning(
-            "Refined WCS differs too much from fallback WCS (max shift: %.1f pixels). "
-            "Using fallback WCS.",
+            "Refined WCS differs too much from fallback WCS (max shift: %.1f pixels). Using fallback WCS.",
             max_shift,
         )
         return fallback_wcs, None
@@ -661,13 +666,9 @@ def fit_and_validate_wcs(
     # fit_wcs_from_points), so origin=0 is consistent here.
     refit_stats = None
     try:
-        fit_x, fit_y = refined_astropy_wcs.all_world2pix(
-            ra_values, dec_values, 0, quiet=True
-        )
+        fit_x, fit_y = refined_astropy_wcs.all_world2pix(ra_values, dec_values, 0, quiet=True)
         residuals_px = np.hypot(fit_x - x_values, fit_y - y_values)
-        scale_arcsec = (
-            np.sqrt(np.abs(np.linalg.det(refined_astropy_wcs.pixel_scale_matrix))) * 3600.0
-        )
+        scale_arcsec = np.sqrt(np.abs(np.linalg.det(refined_astropy_wcs.pixel_scale_matrix))) * 3600.0
         rms_px = float(np.sqrt(np.mean(residuals_px**2)))
         refit_stats = {
             "rms_px": rms_px,
@@ -675,7 +676,7 @@ def fit_and_validate_wcs(
             "n_stars": len(world_coords),
         }
         logger.info(
-            "WCS refit residuals: rms=%.2fpx (%.2f\") over %d stars",
+            'WCS refit residuals: rms=%.2fpx (%.2f") over %d stars',
             rms_px,
             refit_stats["rms_arcsec"],
             len(world_coords),
@@ -683,14 +684,12 @@ def fit_and_validate_wcs(
     except Exception as e:
         logger.warning("Could not compute WCS refit residuals: %s", e)
 
-    logger.info(
-        "Successfully refined WCS using %d catalog stars", len(world_coords)
-    )
+    logger.info("Successfully refined WCS using %d catalog stars", len(world_coords))
     return new_wcs_model, refit_stats
 
 
 def update_starfield_wcs(
-    frame,
+    frame: "SiderealFrame | RateTrackFrame",
     new_wcs: WCSModel,
     limiting_magnitude: float | None = None,
 ) -> None:
@@ -703,34 +702,29 @@ def update_starfield_wcs(
         frame: SiderealFrame or RateTrackFrame.
         new_wcs: The new WCS model to apply.
         limiting_magnitude: Optional limiting magnitude for catalog query.
-    """
-    config = get_config()
 
+    """
     frame.starfield.wcs = new_wcs
     frame.starfield.wcs_metadata = WCSMetadata.from_wcsmodel(new_wcs)
 
     # Update astrometric fit star positions
-    frame.starfield.astrometric_fit_stars = existing_stars_from_wcs(
-        new_wcs, frame.starfield.astrometric_fit_stars
-    )
+    frame.starfield.astrometric_fit_stars = existing_stars_from_wcs(new_wcs, frame.starfield.astrometric_fit_stars)
 
     # Query/refresh catalog stars
     catalog_stars = catalog_stars_from_wcs(new_wcs, limiting_magnitude=limiting_magnitude)
 
     # Apply radius filtering if configured
-    if config.astrometry.reduce_field_by_radius is not None:
+    if settings.astrometry.reduce_field_by_radius is not None:
         catalog_stars = filter_catalog_stars_by_radius(
             catalog_stars,
             frame.frame.metadata,
-            config.astrometry.reduce_field_by_radius,
+            settings.astrometry.reduce_field_by_radius,
         )
         logger.info(
             "Filtered catalog stars to %i stars within %.2f%% of image circle",
             len(catalog_stars.stars),
-            config.astrometry.reduce_field_by_radius * 100,
+            settings.astrometry.reduce_field_by_radius * 100,
         )
 
     # CRITICAL: Update pixel coordinates using full WCS with SIP distortion
-    frame.starfield.catalog_stars = existing_stars_from_wcs(
-        new_wcs, catalog_stars.stars
-    )
+    frame.starfield.catalog_stars = existing_stars_from_wcs(new_wcs, catalog_stars.stars)

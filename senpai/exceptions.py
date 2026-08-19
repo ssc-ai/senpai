@@ -13,6 +13,7 @@ class SenpaiError(Exception):
 
     Attributes:
         status_code: HTTP status the API boundary maps this failure to.
+
     """
 
     status_code: int = 500

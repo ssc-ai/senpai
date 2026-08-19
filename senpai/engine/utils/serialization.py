@@ -1,13 +1,17 @@
 """JSON serialization helpers for scientific/FITS data types."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from astropy.io import fits
 
 logger = logging.getLogger(__name__)
 
 
-def jsonable(value):
+def jsonable(value: object) -> object:
     """Best-effort conversion of common scientific/Python types to JSON-safe primitives."""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -34,7 +38,7 @@ def jsonable(value):
     return str(value)
 
 
-def fits_header_to_jsonable(header) -> dict | None:
+def fits_header_to_jsonable(header: "fits.Header | None") -> dict | None:
     """Convert an astropy FITS Header into a JSON-serializable plain dict."""
     if header is None:
         return None

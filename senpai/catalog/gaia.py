@@ -1,3 +1,5 @@
+"""Query Gaia for the catalog stars in a field, over the network."""
+
 import logging
 from typing import Any
 
@@ -11,8 +13,8 @@ def query_by_ra_dec_bounds(
     max_ra: float,
     min_dec: float,
     max_dec: float,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     primary_filter: str = "G",
 ) -> list[dict[str, Any]]:
     """Query Gaia catalog using explicit RA/DEC bounds.
@@ -28,6 +30,7 @@ def query_by_ra_dec_bounds(
 
     Returns:
         A `list`, stars within the bounds of input parameters
+
     """
     from astroquery.gaia import Gaia
 
@@ -97,10 +100,7 @@ def query_by_ra_dec_bounds(
             if result2 is not None and len(result2) > 0:
                 results_to_combine.append(result2)
 
-            if len(results_to_combine) > 0:
-                result = vstack(results_to_combine)
-            else:
-                result = None
+            result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
         else:
             # Field doesn't cross boundary - simple case
             logger.info(
@@ -198,11 +198,8 @@ def query_by_ra_dec_bounds(
             }
             stars.append(star)
 
-        return stars
-
-    except Exception as e:
-        logger.error(f"Gaia query failed: {e}")
-        import traceback
-
-        traceback.print_exc()
+    except Exception:
+        logger.exception("Gaia query failed")
         return []
+    else:
+        return stars

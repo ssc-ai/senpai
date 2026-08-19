@@ -1,3 +1,15 @@
+"""The configuration schema, and the single instance the whole process reads.
+
+Every knob the engine takes is declared here as a typed field with a default, which is what
+makes a config file checkable rather than a bag of strings: a mistyped key or an out-of-range
+value fails at load with the field named, not silently at the point of use.
+
+Read configuration through the ``settings`` singleton rather than calling ``get_config()`` at
+each use. ``initialize_config`` replaces the instance, so a caller that needs a different
+config -- a test, or a CLI given ``--config`` -- sets it once at the top rather than threading
+an AppConfig through every signature.
+"""
+
 import logging
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -18,13 +30,13 @@ def load_yaml(path: Path) -> dict:
         with path.open() as f:
             data = yaml.safe_load(f)
             return data.get("app", {})
-    except Exception as e:
-        logger.error(f"Failed to load config from {path}: {e}")
+    except Exception:
+        logger.exception("Failed to load config from")
         return {}
 
 
 class LoggingConfig(BaseModel):
-    """Logging configuration"""
+    """Logging configuration."""
 
     level: str = "INFO"
 
@@ -32,7 +44,7 @@ class LoggingConfig(BaseModel):
 
 
 class PlottingConfig(BaseModel):
-    """Plotting configuration"""
+    """Plotting configuration."""
 
     debug: bool = Field(description="Debug Plots")
     review: bool = Field(description="Review Plots")
@@ -73,7 +85,7 @@ class FastSolveConfig(BaseModel):
 
 
 class AstrometryConfig(BaseModel):
-    """Astrometry(.net) configuration"""
+    """Astrometry(.net) configuration."""
 
     pipeline_mode: Literal["full", "detect_solve", "detect"] = Field(
         default="full",
@@ -142,10 +154,10 @@ class AstrometryConfig(BaseModel):
 
 
 class StarCatalogConfig(BaseModel):
-    """Star catalog configuration"""
+    """Star catalog configuration."""
 
     type: str = Field(description="Star catalog type")
-    path: Optional[str] = Field(
+    path: str | None = Field(
         default=None,
         description="Star catalog path (required for local catalogs like SSTRC7, not needed for online catalogs like SDSS)",
     )
@@ -174,7 +186,7 @@ class StarCatalogConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_catalog_config(self):
+    def validate_catalog_config(self) -> "StarCatalogConfig":
         """Validate that path is provided for local catalogs but not required for online catalogs."""
         # Online catalogs don't need a path
         if self.type in ["sdss", "gaia"]:
@@ -188,7 +200,7 @@ class StarCatalogConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    """CLI runtime configuration"""
+    """CLI runtime configuration."""
 
     run_id: str = Field(default="senpai", description="Run identifier")
     output_dir: str = Field(default=".", description="Output directory")
@@ -204,7 +216,7 @@ class RuntimeConfig(BaseModel):
 
 
 class DetectionConfig(BaseModel):
-    """Detection configuration"""
+    """Detection configuration."""
 
     detect: bool = Field(default=False, description="Detect point sources")
     require_wcs_refinement: bool = Field(
@@ -317,18 +329,16 @@ class StreakDetectionConfig(BaseModel):
     )
     reconcile_length_tolerance: float = Field(
         default=0.5,
-        description="Fractional disagreement with rate x exposure beyond which "
-        "the extracted streak length is replaced",
+        description="Fractional disagreement with rate x exposure beyond which the extracted streak length is replaced",
     )
     reconcile_angle_tolerance_deg: float = Field(
         default=25.0,
-        description="Misalignment between streak axis and drift axis beyond "
-        "which the extracted angle is replaced",
+        description="Misalignment between streak axis and drift axis beyond which the extracted angle is replaced",
     )
 
 
 class ValidationConfig(BaseModel):
-    """Configuration for box-based shift validation in rate tracking"""
+    """Configuration for box-based shift validation in rate tracking."""
 
     box_size: int = Field(
         default=11,
@@ -408,12 +418,8 @@ class WCSValidationConfig(BaseModel):
         default=0.10,
         description="Pass additionally requires frac_significant >= control fraction + this margin",
     )
-    control_offset_px: int = Field(
-        default=300, description="Pixel offset applied to predictions for the control grid"
-    )
-    background_block_px: int = Field(
-        default=32, description="Block size for the coarse median background model"
-    )
+    control_offset_px: int = Field(default=300, description="Pixel offset applied to predictions for the control grid")
+    background_block_px: int = Field(default=32, description="Block size for the coarse median background model")
 
 
 class ChainGateConfig(BaseModel):
@@ -427,9 +433,7 @@ class ChainGateConfig(BaseModel):
     """
 
     enable: bool = Field(default=True, description="Enable the shift-chain consistency gate")
-    min_history_hops: int = Field(
-        default=2, description="Accepted rate-rate hops required before the gate activates"
-    )
+    min_history_hops: int = Field(default=2, description="Accepted rate-rate hops required before the gate activates")
     max_rate_deviation_fraction: float = Field(
         default=0.5,
         description="Reject a hop whose drift rate deviates from the chain median by more than "
@@ -441,13 +445,13 @@ class ChainGateConfig(BaseModel):
 
 
 class ExposureTimeConfig(BaseModel):
-    """Configuration for exposure time header keys"""
+    """Configuration for exposure time header keys."""
 
     exposure_time_keys: list[str] = Field(default_factory=list, description="FITS header keys for exposure time")
 
 
 class ObservationTimeConfig(BaseModel):
-    """Configuration for observation time header keys"""
+    """Configuration for observation time header keys."""
 
     observation_time_keys: list[str] = Field(default_factory=list, description="FITS header keys for observation time")
     format: str = Field(
@@ -457,7 +461,7 @@ class ObservationTimeConfig(BaseModel):
 
 
 class SiteConfig(BaseModel):
-    """Configuration for observatory site header keys"""
+    """Configuration for observatory site header keys."""
 
     site_latitude_keys: list[str] = Field(default_factory=list, description="FITS header keys for site latitude")
     site_longitude_keys: list[str] = Field(default_factory=list, description="FITS header keys for site longitude")
@@ -471,7 +475,7 @@ class SiteConfig(BaseModel):
 
 
 class PointingConfig(BaseModel):
-    """Configuration for telescope pointing header keys"""
+    """Configuration for telescope pointing header keys."""
 
     boresight_azimuth_keys: list[str] = Field(
         default_factory=list, description="FITS header keys for boresight azimuth"
@@ -490,7 +494,7 @@ class PointingConfig(BaseModel):
 
 
 class TrackingConfig(BaseModel):
-    """Configuration for telescope tracking header keys"""
+    """Configuration for telescope tracking header keys."""
 
     track_ra_rate_keys: list[str] = Field(default_factory=list, description="FITS header keys for RA tracking rate")
     track_dec_rate_keys: list[str] = Field(default_factory=list, description="FITS header keys for DEC tracking rate")
@@ -512,7 +516,7 @@ class TrackingConfig(BaseModel):
 
 
 class HeadersConfig(BaseModel):
-    """Configuration for FITS header mappings"""
+    """Configuration for FITS header mappings."""
 
     exposure_time: ExposureTimeConfig = Field(
         default_factory=ExposureTimeConfig,
@@ -629,7 +633,7 @@ class PhotometryConfig(BaseModel):
 
 
 class CalibrationsConfig(BaseModel):
-    """Configuration for calibration frames (flats, darks, etc.)"""
+    """Configuration for calibration frames (flats, darks, etc.)."""
 
     master_flats_dir: str | None = Field(default=None, description="Directory containing master flat files")
     master_darks_dir: str | None = Field(default=None, description="Directory containing master dark files")
@@ -777,6 +781,8 @@ class _SettingsProxy:
     module already holding this import sees.
     """
 
+    # Any is accurate rather than a placeholder: the proxy forwards config fields of every
+    # type, so there is no narrower annotation to give.
     def __getattr__(self, name: str) -> Any:
         """Return `name` from the initialized config.
 
@@ -788,6 +794,7 @@ class _SettingsProxy:
 
         Raises:
             RuntimeError: If the global config has not been initialized.
+
         """
         if _config_instance is None:
             raise RuntimeError("Config not initialized")
@@ -806,6 +813,7 @@ class _SettingsProxy:
 
         Raises:
             RuntimeError: If the global config has not been initialized.
+
         """
         if _config_instance is None:
             raise RuntimeError("Config not initialized")
@@ -822,12 +830,24 @@ class _SettingsProxy:
 settings = _SettingsProxy()
 
 
+def config_if_initialized() -> AppConfig | None:
+    """Return the loaded config, or None when none has been initialized.
+
+    For the callers whose contract is to degrade rather than fail -- preprocessing steps that skip
+    calibration when there is no config to read. They previously expressed this as a try/except
+    around ``get_config()``; asking directly says what is meant and cannot be confused with an
+    unrelated RuntimeError raised from deeper in the call.
+    """
+    return _config_instance
+
+
 def get_config() -> AppConfig:
     """Get the global config instance.
 
     Returns:
         AppConfig: The global configuration instance. If not initialized,
         loads the default development configuration.
+
     """
     global _config_instance
 
@@ -845,6 +865,7 @@ def initialize_config(config_path: Path) -> AppConfig:
 
     Returns:
         AppConfig: Configuration instance
+
     """
     global _config_instance
 
@@ -855,8 +876,8 @@ def initialize_config(config_path: Path) -> AppConfig:
     # Create and validate config
     try:
         config = AppConfig(**config_data)
-    except Exception as e:
-        logger.error(f"Configuration validation failed: {e}")
+    except Exception:
+        logger.exception("Configuration validation failed")
         raise
 
     # Set the singleton instance
@@ -865,17 +886,18 @@ def initialize_config(config_path: Path) -> AppConfig:
 
 
 def get_or_initialize_config(config_path: Path | None = None) -> AppConfig:
-    """Get a loaded config, if none, load config_path or LOCAL_OVERRIDE
+    """Get a loaded config, loading config_path or LOCAL_OVERRIDE if there is none.
 
     Args:
-        AppConfig: Configuration instance
+        config_path: YAML to load when no config has been initialized yet. Falls back to
+            the local override path when omitted.
 
     Returns:
         AppConfig: Configuration instance
+
     """
-    try:
-        config = get_config()
-    except RuntimeError:
+    config = config_if_initialized()
+    if config is None:
         if config_path:
             config = initialize_config(config_path)
         else:

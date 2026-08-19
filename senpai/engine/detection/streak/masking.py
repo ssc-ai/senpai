@@ -1,3 +1,12 @@
+"""Masking streaks and clusters out of a frame, so the next measurement is not fooled.
+
+A bright streak or a saturated cluster distorts whatever is measured next -- a
+cross-correlation locks onto it, a background estimate rises around it, a FWHM fit follows
+its wing. These helpers find such a feature by flood-filling from a seed and replace it with
+a fill value, and the bounded variants cap the fill so a runaway region cannot consume the
+frame.
+"""
+
 import numpy as np
 from scipy.ndimage import (
     binary_dilation,
@@ -7,13 +16,15 @@ from scipy.ndimage import (
 )
 
 
-def percent_difference(a, b):
+def percent_difference(a: float, b: float) -> float:
+    """Difference between two values as a percentage of their mean; 0 when both are 0."""
     if a == 0 and b == 0:
         return 0.0
     return abs(a - b) / ((a + b) / 2) * 100
 
 
-def mask_tol(img, center, pixel_tol=30):
+def mask_tol(img: np.ndarray, center: tuple[float, float], pixel_tol: int = 30) -> np.ndarray:
+    """Build a circular mask of radius `pixel_tol` around `center`."""
     mask = np.zeros(shape=img.shape)
     radius = pixel_tol
 
@@ -29,15 +40,18 @@ def mask_tol(img, center, pixel_tol=30):
     return mask
 
 
-def map_cluster(image, start_point, flux_threshold, pad_size=0):
+def map_cluster(
+    image: np.ndarray,
+    start_point: tuple[int, int],
+    flux_threshold: float,
+    pad_size: int = 0,
+) -> np.ndarray:
     """Map a cluster starting from a given point until a specified flux threshold is met."""
     # Create a binary mask where true values are below the flux threshold
     threshold_mask = image <= flux_threshold
 
     # Define a connectivity structure that considers neighbors in all directions
-    struct = generate_binary_structure(
-        2, 2
-    )  # 2D connectivity, diagonal neighbors included
+    struct = generate_binary_structure(2, 2)  # 2D connectivity, diagonal neighbors included
 
     # Create an array of zeros
     visited = np.zeros_like(image, dtype=bool)
@@ -68,10 +82,14 @@ def map_cluster(image, start_point, flux_threshold, pad_size=0):
 
 
 def map_cluster_bounded(
-    image, start_point, flux_threshold, max_radius=500, max_pixels=10000, pad_size=0
-):
-    """
-    Map a cluster with hard limits on radius and pixel count to prevent runaway flood fills.
+    image: np.ndarray,
+    start_point: tuple[int, int],
+    flux_threshold: float,
+    max_radius: int = 500,
+    max_pixels: int = 10000,
+    pad_size: int = 0,
+) -> np.ndarray:
+    """Map a cluster with hard limits on radius and pixel count to prevent runaway flood fills.
 
     Args:
         image: The image data
@@ -83,14 +101,13 @@ def map_cluster_bounded(
 
     Returns:
         Boolean mask of the cluster
+
     """
     # Create a binary mask where true values are below the flux threshold
     threshold_mask = image <= flux_threshold
 
     # Define a connectivity structure that considers neighbors in all directions
-    struct = generate_binary_structure(
-        2, 2
-    )  # 2D connectivity, diagonal neighbors included
+    struct = generate_binary_structure(2, 2)  # 2D connectivity, diagonal neighbors included
 
     # Create an array of zeros
     visited = np.zeros_like(image, dtype=bool)
@@ -129,9 +146,8 @@ def map_cluster_bounded(
                 if dy == 0 and dx == 0:
                     continue
                 ny, nx = y + dy, x + dx
-                if 0 <= ny < image.shape[0] and 0 <= nx < image.shape[1]:
-                    if not visited[ny, nx]:
-                        stack.append((ny, nx))
+                if 0 <= ny < image.shape[0] and 0 <= nx < image.shape[1] and not visited[ny, nx]:
+                    stack.append((ny, nx))
 
     if pad_size == 0:
         return visited
@@ -145,10 +161,9 @@ def analyze_source_shape_fwhm(
     image: np.ndarray,
     y_coords: np.ndarray,
     x_coords: np.ndarray,
-    weights: np.ndarray = None,
+    weights: np.ndarray | None = None,
 ) -> dict:
-    """
-    Analyze the shape of a source using FWHM-based thresholding for robust measurements.
+    """Analyze the shape of a source using FWHM-based thresholding for robust measurements.
 
     Args:
         image: The image data
@@ -166,8 +181,8 @@ def analyze_source_shape_fwhm(
             - fwhm_threshold: Threshold used for FWHM calculation
             - fwhm_pixels: Number of pixels used in FWHM analysis
             - total_pixels: Total number of input pixels
-    """
 
+    """
     if len(y_coords) == 0:
         return {
             "center": (0, 0),
@@ -200,10 +215,7 @@ def analyze_source_shape_fwhm(
     # Estimate background within the mapped region
     # Use values below 50th percentile as background estimate
     background_values = mapped_values[mapped_values <= np.percentile(mapped_values, 50)]
-    if len(background_values) > 0:
-        background_level = np.median(background_values)
-    else:
-        background_level = np.min(mapped_values)
+    background_level = np.median(background_values) if len(background_values) > 0 else np.min(mapped_values)
 
     # Calculate FWHM threshold: halfway between background and peak
     fwhm_threshold = background_level + 0.5 * (peak_value - background_level)
@@ -224,12 +236,8 @@ def analyze_source_shape_fwhm(
         # Recalculate centroid using FWHM-thresholded points
         total_fwhm_weight = np.sum(analysis_weights)
         if total_fwhm_weight > 0:
-            centroid_y = (
-                np.sum(analysis_y_coords * analysis_weights) / total_fwhm_weight
-            )
-            centroid_x = (
-                np.sum(analysis_x_coords * analysis_weights) / total_fwhm_weight
-            )
+            centroid_y = np.sum(analysis_y_coords * analysis_weights) / total_fwhm_weight
+            centroid_x = np.sum(analysis_x_coords * analysis_weights) / total_fwhm_weight
             centroid = (centroid_y, centroid_x)
     else:
         # Fall back to using all points if FWHM thresholding leaves too few points
@@ -267,16 +275,8 @@ def analyze_source_shape_fwhm(
         # Calculate FWHM (Full Width at Half Maximum) using FWHM-thresholded points
         # For a Gaussian distribution, FWHM = 2.355 * sigma
         # Where sigma is the standard deviation (sqrt of eigenvalue)
-        fwhm_major = (
-            2.355 * np.sqrt(np.max(evals))
-            if len(evals) > 0 and np.max(evals) > 0
-            else 0
-        )
-        fwhm_minor = (
-            2.355 * np.sqrt(np.min(evals))
-            if len(evals) > 0 and np.min(evals) > 0
-            else 0
-        )
+        fwhm_major = 2.355 * np.sqrt(np.max(evals)) if len(evals) > 0 and np.max(evals) > 0 else 0
+        fwhm_minor = 2.355 * np.sqrt(np.min(evals)) if len(evals) > 0 and np.min(evals) > 0 else 0
 
         # For length measurement, use ALL pixels (not just FWHM-thresholded ones)
         # Project all pixels onto the principal axis and measure the full extent
@@ -295,18 +295,13 @@ def analyze_source_shape_fwhm(
             projections = x_centered * major_evec[0] + y_centered * major_evec[1]
 
             # Length is the full extent along the principal axis
-            length = (
-                np.max(projections) - np.min(projections) if len(projections) > 0 else 0
-            )
+            length = np.max(projections) - np.min(projections) if len(projections) > 0 else 0
         else:
             length = 0
 
     except (np.linalg.LinAlgError, ValueError):
         # If eigenvalue decomposition fails, use simple estimates with ALL pixels
-        length = np.sqrt(
-            (np.max(x_coords) - np.min(x_coords)) ** 2
-            + (np.max(y_coords) - np.min(y_coords)) ** 2
-        )
+        length = np.sqrt((np.max(x_coords) - np.min(x_coords)) ** 2 + (np.max(y_coords) - np.min(y_coords)) ** 2)
         fwhm_major = length / 4.0
         fwhm_minor = fwhm_major / 2.0
 
@@ -327,12 +322,11 @@ def remove_streak_at_point_robust(
     start_point: tuple[int, int],
     box_size: int,
     fill_mode: np.ufunc = np.mean,
-    thresholds: list[float] = None,
+    thresholds: list[float] | None = None,
     pad_size: int = 2,
-    logger=None,
+    logger: object | None = None,
 ) -> tuple[np.ndarray, dict]:
-    """
-    Remove a streak using robust connected component analysis.
+    """Remove a streak using robust connected component analysis.
 
     This approach is more robust than threshold-based flood fill when dealing with
     high signal or high variance regions, as it:
@@ -353,6 +347,7 @@ def remove_streak_at_point_robust(
 
     Returns:
         tuple: (modified image, info dict with removal statistics)
+
     """
     if thresholds is None:
         thresholds = [
@@ -396,16 +391,9 @@ def remove_streak_at_point_robust(
     local_x = x_center - x_min
 
     # Ensure center point is within bounds
-    if (
-        local_y < 0
-        or local_y >= local_region.shape[0]
-        or local_x < 0
-        or local_x >= local_region.shape[1]
-    ):
+    if local_y < 0 or local_y >= local_region.shape[0] or local_x < 0 or local_x >= local_region.shape[1]:
         if logger:
-            logger.warning(
-                f"Center point ({local_y}, {local_x}) outside local region bounds"
-            )
+            logger.warning(f"Center point ({local_y}, {local_x}) outside local region bounds")
         return image, {"num_pixels": 0, "thresholds_tried": 0}
 
     # Accumulate mask across all thresholds
@@ -450,9 +438,7 @@ def remove_streak_at_point_robust(
     # Dilate the mask to ensure complete removal of streak edges
     if pad_size > 0 and np.any(combined_mask):
         struct = generate_binary_structure(2, 2)  # 8-connectivity
-        combined_mask = binary_dilation(
-            combined_mask, structure=struct, iterations=pad_size
-        )
+        combined_mask = binary_dilation(combined_mask, structure=struct, iterations=pad_size)
 
     # Map the local mask back to the full image coordinates
     full_mask = np.zeros_like(image, dtype=bool)
@@ -496,9 +482,10 @@ def remove_streak_at_point_enriched(
     start_point: tuple[int, int],
     fill_min: float,
     fill_mode: np.ufunc = np.mean,
-    max_radius: int = None,
-    max_pixels: int = None,
+    max_radius: int | None = None,
+    max_pixels: int | None = None,
 ) -> tuple[np.ndarray, dict]:
+    """Remove a streak at a point, also returning the shape it measured."""
     # Always bound the flood fill. An unbounded fill runs away across the whole
     # frame whenever a bright feature connects large regions above the threshold
     # — e.g. a dead row/column, or overlapping streaks in a crowded field — and
@@ -535,9 +522,7 @@ def remove_streak_at_point_enriched(
         "fwhm_major": analysis_result["fwhm_major"],
         "fwhm_minor": analysis_result["fwhm_minor"],
         "fwhm_threshold": analysis_result["fwhm_threshold"],  # Store for debugging
-        "fwhm_pixels": analysis_result[
-            "fwhm_pixels"
-        ],  # Number of pixels used for length calc
+        "fwhm_pixels": analysis_result["fwhm_pixels"],  # Number of pixels used for length calc
     }
 
     return image, streak_info
@@ -548,27 +533,29 @@ def remove_streak_at_point(
     start_point: tuple[int, int],
     fill_min: float,
     fill_mode: np.ufunc = np.mean,
-    max_radius: int = None,
-    max_pixels: int = None,
+    max_radius: int | None = None,
+    max_pixels: int | None = None,
 ) -> np.ndarray:
-    image, _ = remove_streak_at_point_enriched(
-        image, start_point, fill_min, fill_mode, max_radius, max_pixels
-    )
+    """Remove the streak found at `start_point`, filling it from its surroundings."""
+    image, _ = remove_streak_at_point_enriched(image, start_point, fill_min, fill_mode, max_radius, max_pixels)
     return image
 
 
 def remove_brightest_streak(image: np.ndarray, fill_min: float) -> np.ndarray:
+    """Remove the single brightest streak in the frame."""
     start_point = np.unravel_index(np.argmax(image), image.shape)
     return remove_streak_at_point(image, start_point, fill_min)
 
 
 def mask_all_but_border(image: np.ndarray, n_pixels: int = 1) -> np.ndarray:
+    """Zero everything except an `n_pixels`-wide border."""
     border_pixels = image.copy()
     border_pixels[n_pixels:-n_pixels, n_pixels:-n_pixels] = 0.0
     return border_pixels
 
 
 def mask_border(image: np.ndarray, n_pixels: int = 1) -> np.ndarray:
+    """Zero an `n_pixels`-wide border, leaving the interior intact."""
     pixels = image.copy()
     pixels[0:n_pixels, :] = 0.0
     pixels[-n_pixels:, :] = 0.0
@@ -578,6 +565,7 @@ def mask_border(image: np.ndarray, n_pixels: int = 1) -> np.ndarray:
 
 
 def remove_n_brightest_streaks(image: np.ndarray, n: int) -> tuple[np.ndarray, int]:
+    """Remove the `n` brightest streaks, returning the frame and how many were removed."""
     removed_streaks = 0
     fill_min = np.median(image) + 0.5 * np.std(image)
 
@@ -588,11 +576,8 @@ def remove_n_brightest_streaks(image: np.ndarray, n: int) -> tuple[np.ndarray, i
     return image, removed_streaks
 
 
-def remove_near_saturation_streaks(
-    image: np.ndarray, data_type: str
-) -> tuple[np.ndarray, int]:
-    """
-    Remove streaks near saturation.
+def remove_near_saturation_streaks(image: np.ndarray, data_type: str) -> tuple[np.ndarray, int]:
+    """Remove streaks near saturation.
 
     Vectorized: label every connected blob above ``fill_min`` once, then fill
     the blobs that contain a near-saturated pixel — all in a single pass. The
@@ -605,6 +590,7 @@ def remove_near_saturation_streaks(
     Returns:
         image: The image with streaks removed.
         removed_streak: The number of streaks removed.
+
     """
     # Use rate_frame's data type instead of hardcoded uint16
     max_val = 2 ** (np.dtype(data_type).itemsize * 8) - 1
@@ -658,6 +644,7 @@ def _border_crossing_mask(image: np.ndarray) -> np.ndarray | None:
 
 
 def remove_border_crossing_streaks(image: np.ndarray) -> np.ndarray:
+    """Remove streaks touching the frame edge, whose length cannot be measured."""
     # Remove edge targets (streaks crossing the frame border).
     mask = _border_crossing_mask(image)
     if mask is not None:
@@ -704,16 +691,17 @@ def remove_border_crossing_streaks_pairwise(
     broken pair.
 
     Args:
-        image_a, image_b: The two frames (modified in place, same shape).
-        drift_dx, drift_dy: Expected inter-frame drift vector (sign-agnostic).
+        image_a: First frame of the pair (modified in place).
+        image_b: Second frame of the pair, same shape (modified in place).
+        drift_dx: Expected inter-frame x drift, in pixels (sign-agnostic).
+        drift_dy: Expected inter-frame y drift, in pixels (sign-agnostic).
         pad_px: Isotropic dilation of the counterpart fills, absorbing drift
             estimate error.
 
     Returns:
         (image_a, image_b, filled_px_a, filled_px_b)
-    """
-    from scipy.ndimage import binary_dilation
 
+    """
     mask_a = _border_crossing_mask(image_a)
     mask_b = _border_crossing_mask(image_b)
 
@@ -740,14 +728,18 @@ def remove_border_crossing_streaks_pairwise(
 
 
 def map_cluster_with_peaks(
-    image, start_point, flux_threshold, pad_size=0, min_separation=5
-):
-    """
-    Map a cluster and identify multiple peaks within it.
+    image: np.ndarray,
+    start_point: tuple[int, int],
+    flux_threshold: float,
+    pad_size: int = 0,
+    min_separation: int = 5,
+) -> tuple[np.ndarray, list]:
+    """Map a cluster and identify multiple peaks within it.
 
     Returns:
         cluster_mask: Boolean mask of the cluster
         peaks: List of (y, x) coordinates of peaks within the cluster
+
     """
     # First map the cluster as before
     cluster_mask = map_cluster(image, start_point, flux_threshold, pad_size)
@@ -769,8 +761,6 @@ def map_cluster_with_peaks(
     peak_coords = np.argwhere(maxima)
 
     # Sort by intensity (brightest first)
-    peak_coords = sorted(
-        peak_coords, key=lambda p: masked_image[p[0], p[1]], reverse=True
-    )
+    peak_coords = sorted(peak_coords, key=lambda p: masked_image[p[0], p[1]], reverse=True)
 
     return cluster_mask, peak_coords

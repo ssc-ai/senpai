@@ -1,8 +1,16 @@
+"""Drive one frame-to-frame WCS shift, and keep the chain of them self-consistent.
+
+Registration is pairwise, but the frames form a chain: each solved frame becomes the anchor for
+the next. That makes a single bad hop expensive, because everything after it inherits the error,
+which is why ``enforce_chain_consistency`` exists -- it checks a new hop against the rate the
+chain has been moving at rather than judging it alone.
+"""
+
 import logging
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.streak.rate_rate import solve_rate_from_rate
 from senpai.engine.detection.streak.rate_sidereal import solve_rate_from_sidereal
 from senpai.engine.detection.streak.sidereal_sidereal import solve_sidereal_from_sidereal
@@ -14,12 +22,22 @@ logger = logging.getLogger(__name__)
 
 
 def preprocess_for_shift(frame: ProcessedFitsImage) -> None:
+    """Retained as a no-op: preprocessing now happens at frame load time.
+
+    Kept so existing callers and any out-of-tree code keep working.
+    """
     # Preprocessing should already be applied at frame load time
     # This function is kept for backward compatibility but should be a no-op
     logger.debug("Preprocessing already applied at frame load time")
 
 
 def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
+    """Solve one hop in the shift chain, dispatching on the two frames' track modes.
+
+    Sidereal-to-sidereal, rate-to-sidereal and rate-to-rate are three different problems --
+    what the stars look like differs in each -- so each has its own solver. Mutates
+    ``frame_shift`` in place.
+    """
     frame_source = senpai_run.get_frame_by_index(frame_shift.source_index)
     frame_target = senpai_run.get_frame_by_index(frame_shift.target_index)
 
@@ -43,7 +61,7 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
         solve_type = "rate to sidereal"
 
     else:
-        raise ValueError(f"Invalid frame types: {type(frame_source)} and {type(frame_target)}")
+        raise TypeError(f"Invalid frame types: {type(frame_source)} and {type(frame_target)}")
 
     logger.info(f"Solving shift from {frame_source.index} to {frame_target.index} ({solve_type})")
 
@@ -51,9 +69,11 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
 
 
 def _hop_rate(senpai_run: SenpaiRun, shift: FrameShift) -> tuple[float, float] | None:
-    """Star-drift rate (px/s) implied by a solved hop, normalized by the
-    *signed* time gap so hops solved in either temporal direction are
-    comparable."""
+    """Star-drift rate in px/s implied by a solved hop.
+
+    Normalized by the *signed* time gap, so hops solved in either temporal direction are
+    directly comparable.
+    """
     if shift.x_shift is None or shift.y_shift is None:
         return None
     source = senpai_run.get_frame_by_index(shift.source_index)
@@ -77,7 +97,7 @@ def enforce_chain_consistency(senpai_run: SenpaiRun, frame_shift: FrameShift) ->
     and before WCS propagation; a rejected hop leaves its target frame
     without a WCS, which is strictly better than a confidently wrong one.
     """
-    gate = get_config().chain_gate
+    gate = settings.chain_gate
     if not gate.enable or not (frame_shift.is_valid and frame_shift.processed):
         return
 

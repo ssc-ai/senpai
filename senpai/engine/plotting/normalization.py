@@ -1,3 +1,10 @@
+"""Stretch a frame's values into a range an 8-bit display can show.
+
+An astronomical frame spans a dynamic range no screen has: a bright star can be thousands of
+times the sky level. Shown linearly, everything except the brightest sources is black, so a
+stretch is what makes a faint streak and a bright star visible in the same image.
+"""
+
 import matplotlib
 from astropy.visualization import ZScaleInterval
 
@@ -6,8 +13,7 @@ import numpy as np
 
 
 def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
-    """
-    Apply an astronomical zscale stretch.
+    """Apply an astronomical zscale stretch.
 
     Notes:
         This function is used for *plotting*. Real-world FITS processing often
@@ -18,6 +24,7 @@ def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
 
         To avoid plot artifacts, we replace non-finite values with the median of
         the finite pixels before applying zscale.
+
     """
     arr = np.asarray(data, dtype=np.float32)
     finite = np.isfinite(arr)
@@ -46,6 +53,12 @@ def zscale(data: np.ndarray, contrast: float = 0.2) -> np.ndarray:
 
 
 def histogram_equalization(img_in: np.ndarray, img_dtype: np.dtype = np.uint16) -> np.ndarray:
+    """Flatten a frame's intensity histogram, spreading contrast across the whole range.
+
+    More aggressive than a zscale stretch: it maximizes local contrast everywhere at the
+    cost of any consistent relationship between pixel value and flux, so it is for looking
+    rather than measuring.
+    """
     cast_img = img_in.astype(img_dtype)
 
     # Get bit depth from dtype

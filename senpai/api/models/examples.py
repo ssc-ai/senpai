@@ -1,4 +1,10 @@
-from typing import Any, Dict
+"""Example payloads, so the generated API documentation shows real shapes.
+
+A schema tells a reader which fields exist; an example tells them what a plausible value looks
+like, which is the part that makes an endpoint usable without reading the engine.
+"""
+
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -26,17 +32,21 @@ _EXAMPLE_DETECTIONS: list[tuple[float, float, float]] = [
 
 
 class StarListImageExample(BaseModel):
-    def __init__(self):
+    """A worked StarListImage, for the endpoint documentation to show."""
+
+    def __init__(self) -> None:
+        """Build the example lazily -- the value is constructed on first access."""
         super().__init__()
         self._value: StarListImage | None = None
 
     @property
     def summary(self) -> str:
+        """One-line description, shown beside the example in the docs."""
         return "A list of stars in an image with image metadata"
 
     @property
     def value(self) -> StarListImage:
-        """Get example StarListImage value"""
+        """Get example StarListImage value."""
         if self._value is None:
             self._value = StarListImage(
                 detections=[StarInImage(x=x, y=y, counts=counts) for x, y, counts in _EXAMPLE_DETECTIONS],
@@ -46,6 +56,6 @@ class StarListImageExample(BaseModel):
             )
         return self._value
 
-    def get_openapi_examples(self) -> Dict[str, Dict[str, Any]]:
-        """Convert to OpenAPI examples format"""
+    def get_openapi_examples(self) -> dict[str, dict[str, Any]]:
+        """Convert to OpenAPI examples format."""
         return [self.value]

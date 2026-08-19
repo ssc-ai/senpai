@@ -16,6 +16,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from senpai.engine.models.metadata import FWHMMetadata
+
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 import numpy as np
@@ -48,7 +50,7 @@ DETECTION_FWHM = 4.75
 # --------------------------------------------------------------------------
 
 
-def _use_pipeline_mode(monkeypatch, mode: str):
+def _use_pipeline_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     """Point the process-wide config singleton at a copy with ``pipeline_mode=mode``.
 
     AppConfig is frozen, so this copies rather than mutates; monkeypatch restores
@@ -56,12 +58,11 @@ def _use_pipeline_mode(monkeypatch, mode: str):
     """
     base = get_or_initialize_config(CONFIG_DIR / "local.yaml")
     astrometry = base.astrometry.model_copy(update={"pipeline_mode": mode})
-    monkeypatch.setattr(
-        cfg_mod, "_config_instance", base.model_copy(update={"astrometry": astrometry})
-    )
+    monkeypatch.setattr(cfg_mod, "_config_instance", base.model_copy(update={"astrometry": astrometry}))
 
 
 def _fake_image(width: int = 64, height: int = 64) -> ProcessedFitsImage:
+    """Build a small blank frame, since these tests stub detection rather than run it."""
     data = np.zeros((height, width), dtype=np.float32)
     return ProcessedFitsImage(
         data=data,
@@ -72,6 +73,7 @@ def _fake_image(width: int = 64, height: int = 64) -> ProcessedFitsImage:
 
 
 def _fake_sources(width: int = 64, height: int = 64) -> StarListImage:
+    """Build a source list with a couple of detections at known positions."""
     return StarListImage(
         detections=[
             StarInImage(x=10.0, y=10.0, counts=1000.0),
@@ -83,7 +85,7 @@ def _fake_sources(width: int = 64, height: int = 64) -> StarListImage:
 
 
 def _fake_wcs() -> WCSModel:
-    """A minimal, valid tangent-plane WCS — 1 arcsec/pixel."""
+    """Build a minimal, valid tangent-plane WCS at 1 arcsec per pixel."""
     return WCSModel(
         WCSAXES=2,
         NAXIS1=64,
@@ -106,7 +108,7 @@ def _fake_wcs() -> WCSModel:
 
 
 @pytest.fixture
-def stubbed_stages(monkeypatch):
+def stubbed_stages(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     """Stub every stage of the sidereal pipeline and record which ones ran."""
     calls: dict[str, int] = {
         "extract": 0,
@@ -116,11 +118,13 @@ def stubbed_stages(monkeypatch):
         "catalog_fwhm": 0,
     }
 
-    def fake_extract(fits_image, max_detections=None):
+    def fake_extract(fits_image: ProcessedFitsImage, max_detections: int | None = None) -> tuple[StarListImage, float]:
+        """Count the call and return canned sources."""
         calls["extract"] += 1
         return _fake_sources(), DETECTION_FWHM
 
-    def fake_solve(sources, wcs=None):
+    def fake_solve(sources: StarListImage, wcs: WCSModel | None = None) -> StarField:
+        """Count the call and return a solved starfield."""
         calls["solve"] += 1
         return StarField(
             wcs=_fake_wcs(),
@@ -129,19 +133,19 @@ def stubbed_stages(monkeypatch):
             image_metadata=sources.image_metadata,
         )
 
-    def fake_refine(sidereal_frame):
+    def fake_refine(sidereal_frame: SiderealFrame) -> SiderealFrame:
+        """Count the call and hand the frame back unchanged."""
         calls["refine"] += 1
         return sidereal_frame
 
-    def fake_catalog(wcs, max_stars=None, **kwargs):
+    def fake_catalog(wcs: WCSModel, max_stars: int | None = None, **kwargs: object) -> StarListSpace:
+        """Count the call and return an empty catalog."""
         calls["catalog"] += 1
-        return StarListSpace(
-            stars=[], image_metadata=ImageMetadata(width=64, height=64)
-        )
+        return StarListSpace(stars=[], image_metadata=ImageMetadata(width=64, height=64))
 
-    def fake_catalog_fwhm(*args, **kwargs):
+    def fake_catalog_fwhm(*args: object, **kwargs: object) -> FWHMMetadata:
+        """Count the call and return a FWHM deliberately unlike the detection one."""
         calls["catalog_fwhm"] += 1
-        from senpai.engine.models.metadata import FWHMMetadata
 
         return FWHMMetadata(
             n_measurements=25,
@@ -159,12 +163,8 @@ def stubbed_stages(monkeypatch):
     monkeypatch.setattr(sidereal_mod, "solve_field", fake_solve)
     monkeypatch.setattr(sidereal_mod, "refine_sidereal_frame", fake_refine)
     monkeypatch.setattr(sidereal_mod, "query_catalog", fake_catalog)
-    monkeypatch.setattr(
-        sidereal_mod, "measure_fwhm_from_catalog_stars", fake_catalog_fwhm
-    )
-    monkeypatch.setattr(
-        sidereal_mod, "extract_boresight_from_header", lambda header: (None, None)
-    )
+    monkeypatch.setattr(sidereal_mod, "measure_fwhm_from_catalog_stars", fake_catalog_fwhm)
+    monkeypatch.setattr(sidereal_mod, "extract_boresight_from_header", lambda header: (None, None))
     return calls
 
 
@@ -173,7 +173,8 @@ def stubbed_stages(monkeypatch):
 # --------------------------------------------------------------------------
 
 
-def _min_astrometry(**overrides) -> dict:
+def _min_astrometry(**overrides: object) -> dict:
+    """Build the minimal astrometry config block, overridable per test."""
     data = {
         "indices_series": "5200_LITE",
         "indices_path": "/nonexistent/idx",
@@ -188,21 +189,24 @@ def _min_astrometry(**overrides) -> dict:
     return data
 
 
-def test_pipeline_mode_defaults_to_full():
+def test_pipeline_mode_defaults_to_full() -> None:
+    """The pipeline mode defaults to full, so nothing is skipped unless asked."""
     assert AstrometryConfig(**_min_astrometry()).pipeline_mode == "full"
 
 
 @pytest.mark.parametrize("mode", ["full", "detect_solve", "detect"])
-def test_pipeline_mode_accepts_known_modes(mode):
+def test_pipeline_mode_accepts_known_modes(mode: str) -> None:
+    """Each documented pipeline mode is accepted by the config."""
     assert AstrometryConfig(**_min_astrometry(pipeline_mode=mode)).pipeline_mode == mode
 
 
-def test_pipeline_mode_rejects_unknown_mode():
+def test_pipeline_mode_rejects_unknown_mode() -> None:
+    """An unknown pipeline mode is rejected at load rather than silently ignored."""
     with pytest.raises(ValidationError):
         AstrometryConfig(**_min_astrometry(pipeline_mode="detect_only"))
 
 
-def test_shipped_configs_default_to_full():
+def test_shipped_configs_default_to_full() -> None:
     """No shipped config silently opts into a reduced mode."""
     for path in sorted(CONFIG_DIR.glob("*.yaml")):
         cfg_data = cfg_mod.load_yaml(path)
@@ -216,7 +220,14 @@ def test_shipped_configs_default_to_full():
 # --------------------------------------------------------------------------
 
 
-def test_detect_mode_skips_solve_and_everything_after(monkeypatch, stubbed_stages):
+def test_detect_mode_skips_solve_and_everything_after(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int]
+) -> None:
+    """Detect mode runs detection and nothing after it.
+
+    The stages past the solve are stubbed with counters, so the test proves they were not
+    called rather than merely that the output looks detection-only.
+    """
     _use_pipeline_mode(monkeypatch, "detect")
 
     starfield = sidereal_mod.process_astrometry_fits_sidereal(_fake_image())
@@ -236,7 +247,10 @@ def test_detect_mode_skips_solve_and_everything_after(monkeypatch, stubbed_stage
     assert starfield.fwhm_stats.n_measurements == 1
 
 
-def test_detect_solve_mode_keeps_wcs_and_plate_scale(monkeypatch, stubbed_stages):
+def test_detect_solve_mode_keeps_wcs_and_plate_scale(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int]
+) -> None:
+    """Detect-solve mode keeps the WCS and plate scale but stops before the catalog work."""
     _use_pipeline_mode(monkeypatch, "detect_solve")
 
     starfield = sidereal_mod.process_astrometry_fits_sidereal(_fake_image())
@@ -258,7 +272,9 @@ def test_detect_solve_mode_keeps_wcs_and_plate_scale(monkeypatch, stubbed_stages
     assert starfield.fwhm_stats.median_fwhm == DETECTION_FWHM
 
 
-def test_full_mode_still_runs_the_whole_pipeline(monkeypatch, stubbed_stages):
+def test_full_mode_still_runs_the_whole_pipeline(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int]
+) -> None:
     """Regression guard: the default mode is untouched by this change."""
     _use_pipeline_mode(monkeypatch, "full")
 
@@ -282,44 +298,41 @@ def test_full_mode_still_runs_the_whole_pipeline(monkeypatch, stubbed_stages):
 
 
 @pytest.fixture
-def stubbed_collect(monkeypatch):
+def stubbed_collect(monkeypatch: pytest.MonkeyPatch) -> None:
     """Neutralize preprocessing and frame organization for collect-level tests."""
     monkeypatch.setattr(
-        "senpai.engine.utils.preprocessing.preprocess_image",
-        lambda frame, config, store_intermediates=False: frame,
+        collect_mod,
+        "preprocess_image",
+        lambda frame, config=None, store_intermediates=False: frame,
     )
 
-    def fake_organize(cls, frames, id="", force_track_mode=None):  # noqa: A002 - matches the real signature
+    def fake_organize(cls: type, frames: list, id: str = "", force_track_mode: str | None = None) -> SenpaiRun:  # noqa: A002 - matches the real signature
+        """Organize every frame as sidereal, bypassing track-mode classification."""
         return SenpaiRun(
             id=id,
             num_frames=len(frames),
             collect_metadata=CollectionMetadata(),
-            sidereal_frames=[
-                SiderealFrame(frame=frame, index=i) for i, frame in enumerate(frames)
-            ],
+            sidereal_frames=[SiderealFrame(frame=frame, index=i) for i, frame in enumerate(frames)],
         )
 
-    monkeypatch.setattr(
-        SenpaiRun, "organize_senpai_frames", classmethod(fake_organize)
-    )
+    monkeypatch.setattr(SenpaiRun, "organize_senpai_frames", classmethod(fake_organize))
 
 
 def test_collect_detect_mode_completes_without_a_wcs(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int], stubbed_collect: None
+) -> None:
     """fit=False must not land the run in the 'No valid WCS solution found' state."""
     _use_pipeline_mode(monkeypatch, "detect")
 
     # Anything past the sidereal loop needs a WCS chain and must not be reached.
-    def _unreachable(*args, **kwargs):  # pragma: no cover - the assertion is the point
+    def _unreachable(*args: object, **kwargs: object) -> None:  # pragma: no cover - the assertion is the point
+        """Fail if a post-solve stage runs, which detect mode must not reach."""
         raise AssertionError("post-solve stage ran in detect mode")
 
     monkeypatch.setattr(collect_mod, "solve_shift", _unreachable)
     monkeypatch.setattr(collect_mod, "refine_sidereal_frame", _unreachable)
 
-    senpai_run = collect_mod.process_senpai_collect(
-        [_fake_image(), _fake_image()], id="focus-sweep"
-    )
+    senpai_run = collect_mod.process_senpai_collect([_fake_image(), _fake_image()], id="focus-sweep")
 
     assert senpai_run.completed is True
     assert senpai_run.error_message is None
@@ -344,8 +357,9 @@ def test_collect_detect_mode_completes_without_a_wcs(
 
 
 def test_collect_detect_solve_mode_completes_with_a_wcs(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int], stubbed_collect: None
+) -> None:
+    """A collect in detect-solve mode completes and carries a WCS."""
     _use_pipeline_mode(monkeypatch, "detect_solve")
 
     senpai_run = collect_mod.process_senpai_collect([_fake_image()], id="focus-sweep")
@@ -362,12 +376,13 @@ def test_collect_detect_solve_mode_completes_with_a_wcs(
 
 
 def test_collect_full_mode_unsolved_frame_still_errors(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int], stubbed_collect: None
+) -> None:
     """Regression guard: a genuine solve failure in full mode is still an error."""
     _use_pipeline_mode(monkeypatch, "full")
 
-    def failed_solve(sources, wcs=None):
+    def failed_solve(sources: StarListImage, wcs: WCSModel | None = None) -> StarField:
+        """Return an unsolved starfield, as a genuine solve failure would."""
         stubbed_stages["solve"] += 1
         return StarField(
             wcs=None,
@@ -397,20 +412,22 @@ def test_collect_full_mode_unsolved_frame_still_errors(
 # --------------------------------------------------------------------------
 
 
-def test_sidereal_override_beats_configured_full(monkeypatch, stubbed_stages):
+def test_sidereal_override_beats_configured_full(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int]
+) -> None:
     """config=full, call=detect -> no solve for that call."""
     _use_pipeline_mode(monkeypatch, "full")
 
-    starfield = sidereal_mod.process_astrometry_fits_sidereal(
-        _fake_image(), pipeline_mode="detect"
-    )
+    starfield = sidereal_mod.process_astrometry_fits_sidereal(_fake_image(), pipeline_mode="detect")
 
     assert stubbed_stages["solve"] == 0
     assert starfield.fit is False
     assert starfield.detection_metadata.pixel_fwhm == DETECTION_FWHM
 
 
-def test_sidereal_override_beats_configured_detect(monkeypatch, stubbed_stages):
+def test_sidereal_override_beats_configured_detect(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int]
+) -> None:
     """The override works in both directions: config=detect, call=full -> full pipeline."""
     _use_pipeline_mode(monkeypatch, "detect")
 
@@ -420,7 +437,9 @@ def test_sidereal_override_beats_configured_detect(monkeypatch, stubbed_stages):
     assert stubbed_stages["catalog"] == 1
 
 
-def test_omitting_the_override_uses_configured_mode(monkeypatch, stubbed_stages):
+def test_omitting_the_override_uses_configured_mode(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int]
+) -> None:
     """Byte-identical to the pre-override behaviour for every existing caller."""
     _use_pipeline_mode(monkeypatch, "detect")
 
@@ -430,12 +449,13 @@ def test_omitting_the_override_uses_configured_mode(monkeypatch, stubbed_stages)
 
 
 def test_collect_override_runs_a_sweep_while_config_stays_full(
-    monkeypatch, stubbed_stages, stubbed_collect
-):
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int], stubbed_collect: None
+) -> None:
     """The autofocus case end-to-end: science config untouched, sweep batch reduced."""
     _use_pipeline_mode(monkeypatch, "full")
 
-    def _unreachable(*args, **kwargs):  # pragma: no cover - the assertion is the point
+    def _unreachable(*args: object, **kwargs: object) -> None:  # pragma: no cover - the assertion is the point
+        """Fail if a post-solve stage runs, which the override must not reach."""
         raise AssertionError("post-solve stage ran for an overridden detect batch")
 
     monkeypatch.setattr(collect_mod, "solve_shift", _unreachable)
@@ -453,13 +473,13 @@ def test_collect_override_runs_a_sweep_while_config_stays_full(
         assert frame.starfield.fwhm_stats.median_fwhm == DETECTION_FWHM
 
 
-def test_override_does_not_leak_into_config(monkeypatch, stubbed_stages, stubbed_collect):
+def test_override_does_not_leak_into_config(
+    monkeypatch: pytest.MonkeyPatch, stubbed_stages: dict[str, int], stubbed_collect: None
+) -> None:
     """A reduced-mode batch must not degrade the science batch that follows it."""
     _use_pipeline_mode(monkeypatch, "full")
 
-    collect_mod.process_senpai_collect(
-        [_fake_image()], id="focus-sweep", pipeline_mode="detect"
-    )
+    collect_mod.process_senpai_collect([_fake_image()], id="focus-sweep", pipeline_mode="detect")
     assert stubbed_stages["solve"] == 0
     assert get_or_initialize_config().astrometry.pipeline_mode == "full"
 

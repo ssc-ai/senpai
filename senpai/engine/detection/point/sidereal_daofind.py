@@ -64,6 +64,7 @@ def estimate_fwhm(
     Returns:
         float | None: The estimated FWHM in pixels, or None if the cutout is too
             small or the fit fails to converge.
+
     """
     # Extract a small box around the star
     x0, y0 = int(x_centroid), int(y_centroid)
@@ -142,6 +143,7 @@ def _detect_sources_daofind(
     Returns:
         Table: The detected sources sorted by descending flux, truncated to
             ``max_sources``; empty if none are found.
+
     """
     # Estimate background statistics
     _, median, std = sigma_clipped_stats(image, sigma=3.0)
@@ -190,6 +192,7 @@ def extract_point_sources_daofind(
     Returns:
         tuple[StarListImage, float, StarListImage]: The accepted sources, the
             median FWHM in pixels used for extraction, and the rejected sources.
+
     """
     logger.info("Extracting point sources from image %s", image.metadata.image_id)
 

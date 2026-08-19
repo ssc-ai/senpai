@@ -1,18 +1,39 @@
 """Shared CLI utilities for command/config saving, profiling, and serialization."""
 
+import cProfile
+import io
 import json
 import logging
+import pstats
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from pstats import SortKey
+from typing import TYPE_CHECKING, TypeVar
+
+import yaml
+
+from senpai.core.config import AppConfig, settings
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from senpai.engine.models.senpai import SenpaiRunSummary
+    from senpai.engine.photometry.utils import SimplePhotometryResult, SimplePhotometrySummary
 
 logger = logging.getLogger(__name__)
 
+#: A profiled call returns exactly what the wrapped callable returned, so the wrapper is
+#: generic in that type rather than typed Any.
+T = TypeVar("T")
 
-def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
-    """Save command.txt and config.yaml to output_dir for reproducibility."""
-    import yaml
 
+def save_run_metadata(output_dir: Path, module_name: str, config: AppConfig | None = None) -> None:
+    """Save command.txt and config.yaml to output_dir for reproducibility.
+
+    Reads the process-wide settings unless a caller passes a different config explicitly.
+    """
+    cfg = config if config is not None else settings
     output_dir = Path(output_dir)
 
     # command.txt: sys.argv with module_name replacing argv[0]
@@ -25,25 +46,27 @@ def save_run_metadata(output_dir: Path, module_name: str, config) -> None:
 
     # config.yaml: wrap under "app" key to match the format expected by load_yaml
     with open(output_dir / "config.yaml", "w") as f:
-        yaml.safe_dump({"app": config.model_dump(mode="json")}, f, default_flow_style=False)
+        yaml.safe_dump({"app": cfg.model_dump(mode="json")}, f, default_flow_style=False)
     logger.info("Config saved to: %s", output_dir / "config.yaml")
 
 
 # Per-star / completeness arrays are dropped from the per-frame quick-look
 # files; they stay in the run summary and full result JSONs. The quick-look is
 # for eyeballing detections + WCS, not photometric analysis.
-_QUICKLOOK_PHOTOMETRY_DROP = frozenset({
-    "stars_mag",
-    "stars_snr",
-    "stars_zp_offset",
-    "stars_isolated",
-    "stars_catalog_id",
-    "completeness_mag",
-    "completeness_pct",
-})
+_QUICKLOOK_PHOTOMETRY_DROP = frozenset(
+    {
+        "stars_mag",
+        "stars_snr",
+        "stars_zp_offset",
+        "stars_isolated",
+        "stars_catalog_id",
+        "completeness_mag",
+        "completeness_pct",
+    }
+)
 
 
-def write_frame_quicklooks(summary, output_dir: Path) -> None:
+def write_frame_quicklooks(summary: "SenpaiRunSummary", output_dir: Path) -> None:
     """Write compact per-frame quick-look JSONs (frame_{index}_{mode}.json).
 
     Takes a SenpaiRunSummary: each frame gets its FrameSummary (detections,
@@ -53,25 +76,19 @@ def write_frame_quicklooks(summary, output_dir: Path) -> None:
         data = fs.model_dump(mode="json")
         ps = data.get("photometry_summary")
         if ps:
-            data["photometry_summary"] = {
-                k: v for k, v in ps.items() if k not in _QUICKLOOK_PHOTOMETRY_DROP
-            }
+            data["photometry_summary"] = {k: v for k, v in ps.items() if k not in _QUICKLOOK_PHOTOMETRY_DROP}
         mode = fs.track_mode or "frame"
         with open(Path(output_dir) / f"frame_{fs.index}_{mode}.json", "w") as f:
             json.dump(data, f)
     logger.info("Wrote %d per-frame quick-look JSONs", len(summary.frames))
 
 
-def profile_run(func, *args, run_id: str = "profile", **kwargs):
-    """Generic profiling wrapper. Runs func(*args, **kwargs) under cProfile,
-    saves top-30 stats to output_dir/profile_{run_id}.txt, returns func's result."""
-    import cProfile
-    import io
-    import pstats
-    from pstats import SortKey
+def profile_run(func: "Callable[..., T]", *args: object, run_id: str = "profile", **kwargs: object) -> T:
+    """Run a callable under cProfile and write its top-30 cumulative stats beside the output.
 
-    from senpai.core.config import get_config
-
+    Returns whatever the callable returned, so wrapping a call in this changes nothing but
+    the presence of a profile_{run_id}.txt afterwards.
+    """
     pr = cProfile.Profile()
     pr.enable()
 
@@ -83,8 +100,7 @@ def profile_run(func, *args, run_id: str = "profile", **kwargs):
     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
     ps.print_stats(30)
 
-    config = get_config()
-    with open(config.runtime.output_dir / f"profile_{run_id}.txt", "w") as f:
+    with open(settings.runtime.output_dir / f"profile_{run_id}.txt", "w") as f:
         f.write(s.getvalue())
 
     logger.info("Profile results saved to profile_%s.txt", run_id)
@@ -92,7 +108,9 @@ def profile_run(func, *args, run_id: str = "profile", **kwargs):
     return result
 
 
-def serialize_photometry_to_json(results, summary, output_path: Path) -> None:
+def serialize_photometry_to_json(
+    results: "list[SimplePhotometryResult]", summary: "SimplePhotometrySummary", output_path: Path
+) -> None:
     """Serialize photometry results + summary to JSON.
 
     Uses dataclasses.asdict for summary, result.star.model_dump() for Pydantic models.

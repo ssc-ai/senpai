@@ -381,9 +381,7 @@ def test_fit_and_validate_wcs_falls_back_on_degenerate_geometry() -> None:
     """
     fallback = _identity_fallback_wcs()
     rng = np.random.default_rng(0)
-    world_coords = [
-        (10.0 + rng.uniform(-0.1, 0.1), 20.0 + rng.uniform(-0.1, 0.1)) for _ in range(8)
-    ]
+    world_coords = [(10.0 + rng.uniform(-0.1, 0.1), 20.0 + rng.uniform(-0.1, 0.1)) for _ in range(8)]
     pixel_coords = [(100.0, 100.0) for _ in range(8)]  # collapsed to a single point
 
     result_wcs, refit_stats = fit_and_validate_wcs(
@@ -479,9 +477,7 @@ def test_reclaim_process_memory_noop_without_malloc_trim(
     ("length", "width", "angle_deg"),
     [(50.0, 4, 30.0), (80.0, 6, 15.0), (120.0, 8, 70.0)],
 )
-def test_rectangle_pyramoid_sums_to_rectangle_area(
-    length: float, width: int, angle_deg: float
-) -> None:
+def test_rectangle_pyramoid_sums_to_rectangle_area(length: float, width: int, angle_deg: float) -> None:
     """The kernel's total coverage equals the rotated rectangle's area (length x width).
 
     The rewritten builder evaluates exact per-pixel area coverage, so summing every pixel must
@@ -558,7 +554,7 @@ def test_analyze_source_shape_fwhm_returns_real_geometry() -> None:
     for t in np.linspace(-15.0, 15.0, 120):
         y = 32.0 + t * np.sin(np.deg2rad(angle_deg))
         x = 32.0 + t * np.cos(np.deg2rad(angle_deg))
-        image[int(round(y)) - 1 : int(round(y)) + 2, int(round(x)) - 1 : int(round(x)) + 2] = 100.0
+        image[round(y) - 1 : round(y) + 2, round(x) - 1 : round(x) + 2] = 100.0
 
     y_coords, x_coords = np.where(image > 0)
     result = analyze_source_shape_fwhm(image, y_coords, x_coords)

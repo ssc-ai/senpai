@@ -1,3 +1,14 @@
+"""The run model: frames, the shifts that register them, and the result that is persisted.
+
+A collect is a set of frames -- sidereal ones that can be plate-solved directly, and
+rate-tracked ones that cannot. Registration proceeds as a chain of `FrameShift`s carrying the
+solved WCS from a sidereal anchor into the rate frames, so most of this module concerns
+building that chain, walking it, and reporting what it achieved.
+
+Each model has a `*Serializable` counterpart where the persisted shape differs from the
+working one -- the working frame holds pixel data, the serializable one must not.
+"""
+
 import json
 import logging
 import os
@@ -33,18 +44,22 @@ MAX_SERIALIZED_CATALOG_STARS = 500
 
 
 def _starfield_for_output(sf: StarField | None) -> StarField | None:
-    """Copy a StarField with catalog_stars trimmed to the brightest
-    MAX_SERIALIZED_CATALOG_STARS for serialization; the live frame keeps the
-    full list."""
+    """Copy a StarField with its catalog stars trimmed for serialization.
+
+    Only the brightest MAX_SERIALIZED_CATALOG_STARS are kept; the live frame keeps the full
+    list, since downstream photometry and FWHM measurement need all of them.
+    """
     if sf is None or not sf.catalog_stars or len(sf.catalog_stars) <= MAX_SERIALIZED_CATALOG_STARS:
         return sf
-    brightest = sorted(
-        sf.catalog_stars, key=lambda s: (s.magnitude is None, s.magnitude or 0.0)
-    )[:MAX_SERIALIZED_CATALOG_STARS]
+    brightest = sorted(sf.catalog_stars, key=lambda s: (s.magnitude is None, s.magnitude or 0.0))[
+        :MAX_SERIALIZED_CATALOG_STARS
+    ]
     return sf.model_copy(update={"catalog_stars": brightest})
 
 
 class SiderealFrameSerializable(BaseModel):
+    """A sidereal frame as persisted: metadata and results, without the pixels."""
+
     starfield: StarField | None = None
     seeing: SeeingModel | None = None
     hardware: TelescopeMetadata | None = None
@@ -62,6 +77,8 @@ class SiderealFrameSerializable(BaseModel):
 
 
 class SiderealFrame(BaseModel):
+    """A sidereal frame in flight, carrying its image data and solved starfield."""
+
     starfield: StarField | None = None
     seeing: SeeingModel | None = None
     hardware: TelescopeMetadata | None = None
@@ -75,6 +92,8 @@ class SiderealFrame(BaseModel):
 
 
 class RateTrackFrameSerializable(BaseModel):
+    """A rate-tracked frame as persisted: metadata and results, without the pixels."""
+
     starfield: StarField | None = None
     streak: StreakMetadata | None = None
     seeing: SeeingModel | None = None
@@ -94,10 +113,13 @@ class RateTrackFrameSerializable(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round a track rate for output, preserving None."""
         return round(v, 3) if v is not None else None
 
 
 class RateTrackFrame(BaseModel):
+    """A rate-tracked frame in flight, carrying its image data and streak geometry."""
+
     starfield: StarField | None = None
     streak: StreakMetadata | None = None
     seeing: SeeingModel | None = None
@@ -113,10 +135,13 @@ class RateTrackFrame(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round a track rate for output, preserving None."""
         return round(v, 3) if v is not None else None
 
 
 class FrameShift(BaseModel):
+    """One registration step: the pixel shift carrying a WCS from one frame to another."""
+
     source_index: int
     target_index: int
     x_shift: float | None = None  # source to target
@@ -169,6 +194,7 @@ class FrameSummary(BaseModel):
 
     @field_serializer("pixel_track_rate_per_second")
     def serialize_rate(self, v: float | None) -> float | None:
+        """Round a track rate for output, preserving None."""
         return round(v, 3) if v is not None else None
 
 
@@ -200,9 +226,14 @@ class CorrelatedStreak(BaseModel):
         return round(v, 2)
 
     @field_serializer(
-        "direction_deg", "rate_pixels_per_sec", "rate_arcsec_per_sec",
-        "rate_ra_arcsec_per_sec", "rate_dec_arcsec_per_sec",
-        "length_pixels", "best_snr", "best_flux",
+        "direction_deg",
+        "rate_pixels_per_sec",
+        "rate_arcsec_per_sec",
+        "rate_ra_arcsec_per_sec",
+        "rate_dec_arcsec_per_sec",
+        "length_pixels",
+        "best_snr",
+        "best_flux",
     )
     def _round_optional(self, v: float | None) -> float | None:
         return round(v, 3) if v is not None else None
@@ -223,12 +254,14 @@ class SenpaiRunSummary(BaseModel):
     frames: list[FrameSummary] = []
     correlated_streaks: list[CorrelatedStreak] = []
 
-    def model_dump(self, **kwargs):
-        """Override model_dump to ensure datetime fields are serialized as ISO format strings."""
+    def model_dump(self, **kwargs: object) -> dict:
+        """Dump with datetime fields rendered as ISO-format strings."""
         return super().model_dump(mode="json", **kwargs)
 
 
 class SenpaiRunResult(BaseModel):
+    """The persisted outcome of a collect: every frame, shift and correlated streak."""
+
     id: str
     num_frames: int
     collect_metadata: CollectionMetadata
@@ -249,12 +282,14 @@ class SenpaiRunResult(BaseModel):
     rate_track_frames: list[RateTrackFrameSerializable] = []
     correlated_streaks: list[CorrelatedStreak] = []
 
-    def model_dump(self, **kwargs):
-        """Override model_dump to ensure datetime fields are serialized as ISO format strings."""
+    def model_dump(self, **kwargs: object) -> dict:
+        """Dump with datetime fields rendered as ISO-format strings."""
         return super().model_dump(mode="json", **kwargs)
 
 
 class SenpaiRun(BaseModel):
+    """A collect in flight: its frames, the registration chain, and the run's state."""
+
     id: str
     num_frames: int
     completed: bool = False
@@ -273,9 +308,21 @@ class SenpaiRun(BaseModel):
     def organize_senpai_frames(
         cls,
         frames: list[ProcessedFitsImage],
-        id: str = "",
+        id: str = "",  # noqa: A002 - `id` is the published parameter name
         force_track_mode: TrackMode | None = None,
     ) -> "SenpaiRun":
+        """Sort frames into sidereal and rate-tracked, and seed the registration chain.
+
+        Args:
+            frames: Every frame of the collect, in any order.
+            id: Identifier recorded on the run.
+            force_track_mode: Override the per-frame track-mode classification, for
+                imagery whose headers do not state it.
+
+        Returns:
+            A run with its frames classified and ordered.
+
+        """
         # Initialize empty lists and create a new SenpaiRun instancexxx
         sidereal_frames = []
         rate_track_frames = []
@@ -299,9 +346,9 @@ class SenpaiRun(BaseModel):
                 untimed.append(frame)
 
         timed.sort(key=lambda x: x[1])
-        ordered: list[tuple[ProcessedFitsImage, datetime | None]] = (
-            [(f, t) for f, t in timed] + [(f, None) for f in untimed]
-        )
+        ordered: list[tuple[ProcessedFitsImage, datetime | None]] = [(f, t) for f, t in timed] + [
+            (f, None) for f in untimed
+        ]
 
         # Process frames in time order and assign sequential indexes
         for index, (frame, timestamp) in enumerate(ordered):
@@ -314,20 +361,22 @@ class SenpaiRun(BaseModel):
             header_track_type = frame_metadata.track_mode
             fname = Path(frame.file_path).name if frame.file_path else "?"
             if force_track_mode is not None:
-                if (header_track_type not in (None, TrackMode.UNKNOWN)
-                        and header_track_type != force_track_mode):
+                if header_track_type not in (None, TrackMode.UNKNOWN) and header_track_type != force_track_mode:
                     logger.warning(
                         "Frame %d (%s): header reports %s but CLI forced %s — processing as %s",
-                        index, fname, header_track_type.value, force_track_mode.value, force_track_mode.value,
+                        index,
+                        fname,
+                        header_track_type.value,
+                        force_track_mode.value,
+                        force_track_mode.value,
                     )
                 track_type, src, detail = force_track_mode, "forced", ""
             else:
                 # Layered classification: authoritative TRKMODE first, then (only
                 # when the header can't decide) RA/DEC rates with a pixel arbiter.
-                from senpai.core.config import get_config
                 from senpai.engine.detection.track_mode import classify_track_mode
 
-                decision = classify_track_mode(frame.header, frame.data, get_config())
+                decision = classify_track_mode(frame.header, frame.data)
                 track_type, src, detail = decision.mode, decision.source, decision.detail
                 if track_type == TrackMode.UNKNOWN:
                     # No metadata and the pixels couldn't tell -> safe default.
@@ -337,9 +386,14 @@ class SenpaiRun(BaseModel):
             # Surface anything that didn't come straight from TRKMODE, so a
             # rate/pixel-derived routing is visible in the log.
             if src != "trkmode":
-                logger.info("Frame %d (%s): track mode -> %s via %s%s",
-                            index, fname, track_type.value, src,
-                            f" [{detail}]" if detail else "")
+                logger.info(
+                    "Frame %d (%s): track mode -> %s via %s%s",
+                    index,
+                    fname,
+                    track_type.value,
+                    src,
+                    f" [{detail}]" if detail else "",
+                )
 
             if track_type == TrackMode.RATE:
                 model = RateTrackFrame
@@ -370,12 +424,19 @@ class SenpaiRun(BaseModel):
             rate_ra = rf.frame_metadata.track_rate_ra_arcsec_per_second if rf.frame_metadata else None
             rate_dec = rf.frame_metadata.track_rate_dec_arcsec_per_second if rf.frame_metadata else None
             logger.info(
-                "Frame %d: RATE      %s  exp=%.1fs  time=%s  rate=(%.1f,%.1f)\"/s",
-                rf.index, fname, exp or 0, ts, rate_ra or 0, rate_dec or 0,
+                'Frame %d: RATE      %s  exp=%.1fs  time=%s  rate=(%.1f,%.1f)"/s',
+                rf.index,
+                fname,
+                exp or 0,
+                ts,
+                rate_ra or 0,
+                rate_dec or 0,
             )
         logger.info(
             "Organized %d frames: %d sidereal + %d rate",
-            len(frames), len(sidereal_frames), len(rate_track_frames),
+            len(frames),
+            len(sidereal_frames),
+            len(rate_track_frames),
         )
 
         return cls(
@@ -451,7 +512,7 @@ class SenpaiRun(BaseModel):
             before_frames = [f for f in all_frames if f.index < start_index]
             before_frames.sort(key=lambda x: x.index, reverse=True)
 
-            ordered_frames = [start_frame] + after_frames
+            ordered_frames = [start_frame, *after_frames]
 
         # Create shifts between consecutive frames in our ordered path
         for i in range(len(ordered_frames) - 1):
@@ -485,10 +546,9 @@ class SenpaiRun(BaseModel):
         self.log_analysis_chain()
 
     def log_analysis_chain(self) -> None:
-        """Log the analysis chain path with status indicators:
-        ✅ - processed and valid
-        ❓ - not processed yet
-        ❌ - processed but failed
+        """Log the analysis chain with a status marker per shift.
+
+        ✅ processed and valid, ❓ not processed yet, ❌ processed but failed.
         """
         if not self.frame_shifts and not self.frame_shifts_failed:
             logger.info("No analysis chain to log (no frame shifts)")
@@ -519,7 +579,7 @@ class SenpaiRun(BaseModel):
         return None
 
     def update_valid_path(self) -> list[FrameShift]:
-        """Update a valid path through all frames"""
+        """Update a valid path through all frames."""
         logger = logging.getLogger(__name__)
 
         # Get all failed shifts that have been processed
@@ -807,9 +867,9 @@ class SenpaiRun(BaseModel):
             f.photometry_summary for f in self.rate_track_frames
         ):
             try:
-                from senpai.core.config import get_config
+                from senpai.core.config import settings
 
-                pcfg = get_config().photometry
+                pcfg = settings.photometry
                 photometry_block = {
                     "aperture_radius_factor": pcfg.aperture_radius_factor,
                     "bg_inner_factor": pcfg.bg_inner_factor,

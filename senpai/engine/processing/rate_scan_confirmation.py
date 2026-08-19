@@ -11,17 +11,23 @@ approaches, which fail for faint streaks because:
 - Rate errors from single-frame trace length compound across frames
 - Direction ambiguity can't be resolved from noisy profiles
 
-The rate scan is computationally trivial: ~200 trial rates × 2 directions
-× N_frames pixel lookups per candidate.  The DE maps are already computed
+The rate scan is computationally trivial: ~200 trial rates x 2 directions
+x N_frames pixel lookups per candidate.  The DE maps are already computed
 during per-frame detection.
 """
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
+from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
+
+if TYPE_CHECKING:
+    from senpai.engine.detection.streak.sidereal_streak import StreakCandidate
+    from senpai.engine.models.senpai import SiderealFrame
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +37,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _accumulate_shift(
-    senpai_run: SenpaiRun, from_idx: int, to_idx: int
-) -> tuple[float, float] | None:
+def _accumulate_shift(senpai_run: SenpaiRun, from_idx: int, to_idx: int) -> tuple[float, float] | None:
     """Accumulate pixel shifts from from_idx to to_idx via BFS."""
     if from_idx == to_idx:
         return 0.0, 0.0
@@ -41,12 +45,8 @@ def _accumulate_shift(
     adj: dict[int, list[tuple[int, float, float]]] = {}
     for shift in senpai_run.frame_shifts:
         if shift.is_valid and shift.processed and shift.x_shift is not None:
-            adj.setdefault(shift.source_index, []).append(
-                (shift.target_index, shift.x_shift, shift.y_shift)
-            )
-            adj.setdefault(shift.target_index, []).append(
-                (shift.source_index, -shift.x_shift, -shift.y_shift)
-            )
+            adj.setdefault(shift.source_index, []).append((shift.target_index, shift.x_shift, shift.y_shift))
+            adj.setdefault(shift.target_index, []).append((shift.source_index, -shift.x_shift, -shift.y_shift))
 
     visited = {from_idx: (0.0, 0.0)}
     queue = [from_idx]
@@ -82,9 +82,7 @@ def confirm_streaks_via_rate_scan(
 
     Returns confirmed CorrelatedStreak objects.
     """
-    all_frames = [
-        f for f in senpai_run.sidereal_frames if f.starfield is not None
-    ]
+    all_frames = [f for f in senpai_run.sidereal_frames if f.starfield is not None]
     all_frames.sort(key=lambda f: f.index)
 
     frames_with_candidates = [f for f in all_frames if f.streak_candidates]
@@ -142,23 +140,25 @@ def confirm_streaks_via_rate_scan(
                 oh, ow = other_de.shape
                 for s in f.starfield.catalog_stars:
                     if s.x is not None and s.y is not None:
-                        ix, iy = int(round(s.x)), int(round(s.y))
+                        ix, iy = round(s.x), round(s.y)
                         y_lo = max(0, iy - star_mask_r)
                         y_hi = min(oh, iy + star_mask_r + 1)
                         x_lo = max(0, ix - star_mask_r)
                         x_hi = min(ow, ix + star_mask_r + 1)
                         yy, xx = np.ogrid[y_lo:y_hi, x_lo:x_hi]
-                        dist_sq = (xx - s.x)**2 + (yy - s.y)**2
+                        dist_sq = (xx - s.x) ** 2 + (yy - s.y) ** 2
                         star_mask[y_lo:y_hi, x_lo:x_hi] |= dist_sq <= star_mask_r**2
-            other_frames.append({
-                "frame": f,
-                "de": other_de,
-                "noise": other_noise,
-                "best_angle_deg": other_ba,
-                "shift": shift,
-                "dt": dt,
-                "star_mask": star_mask,
-            })
+            other_frames.append(
+                {
+                    "frame": f,
+                    "de": other_de,
+                    "noise": other_noise,
+                    "best_angle_deg": other_ba,
+                    "shift": shift,
+                    "dt": dt,
+                    "star_mask": star_mask,
+                }
+            )
 
         if not other_frames:
             continue
@@ -196,16 +196,17 @@ def confirm_streaks_via_rate_scan(
     logger.info(
         "Rate scan confirmation: %d confirmed (%d deduped), %d rejected",
         sum(1 for c in deduped if c.confirmed),
-        n_deduped, n_rejected,
+        n_deduped,
+        n_rejected,
     )
     return deduped
 
 
 def _rate_scan_candidate(
-    candidate,
+    candidate: "StreakCandidate",
     ref_de: np.ndarray,
     ref_noise: float,
-    ref_frame,
+    ref_frame: "SiderealFrame",
     other_frames: list[dict],
     trial_rates: np.ndarray,
     fwhm: float,
@@ -226,7 +227,7 @@ def _rate_scan_candidate(
     # Reference frame DE at candidate position
     ref_val = _sample_de(ref_de, cx, cy)
     if ref_val < 5 * ref_noise:
-        logger.debug("Rejected (%.0f,%.0f): ref DE %.2f < 5*noise %.2f", cx, cy, ref_val, 5*ref_noise)
+        logger.debug("Rejected (%.0f,%.0f): ref DE %.2f < 5*noise %.2f", cx, cy, ref_val, 5 * ref_noise)
         return None  # Not significant in reference frame
 
     n_other = len(other_frames)
@@ -239,11 +240,14 @@ def _rate_scan_candidate(
     # from row median subtraction) systematically win.
     cand_angle = candidate.angle_deg
     angle_tolerance = 15.0  # degrees
-    trial_angles = np.arange(
-        cand_angle - angle_tolerance,
-        cand_angle + angle_tolerance + 2.5,
-        5.0,
-    ) % 180
+    trial_angles = (
+        np.arange(
+            cand_angle - angle_tolerance,
+            cand_angle + angle_tolerance + 2.5,
+            5.0,
+        )
+        % 180
+    )
 
     # Vectorized rate scan: compute all (angle, rate, direction) at once
     # for each other frame, then sum across frames.
@@ -270,12 +274,8 @@ def _rate_scan_candidate(
 
         # Predicted positions: (n_angles, n_rates, n_dirs)
         # pred_x = cx + dx + dir * rate * dt * cos_a
-        pred_x = (cx + dx
-                   + directions[None, None, :] * trial_rates[None, :, None] * dt
-                   * cos_angles[:, None, None])
-        pred_y = (cy + dy
-                   + directions[None, None, :] * trial_rates[None, :, None] * dt
-                   * sin_angles[:, None, None])
+        pred_x = cx + dx + directions[None, None, :] * trial_rates[None, :, None] * dt * cos_angles[:, None, None]
+        pred_y = cy + dy + directions[None, None, :] * trial_rates[None, :, None] * dt * sin_angles[:, None, None]
 
         # Bounds check
         oob = (pred_x < 0) | (pred_x >= ow) | (pred_y < 0) | (pred_y >= oh)
@@ -293,10 +293,12 @@ def _rate_scan_candidate(
         fx = px_clipped - x0
         fy = py_clipped - y0
 
-        vals = (de_map[y0, x0] * (1 - fx) * (1 - fy)
-                + de_map[y0, x1] * fx * (1 - fy)
-                + de_map[y1, x0] * (1 - fx) * fy
-                + de_map[y1, x1] * fx * fy)
+        vals = (
+            de_map[y0, x0] * (1 - fx) * (1 - fy)
+            + de_map[y0, x1] * fx * (1 - fy)
+            + de_map[y1, x0] * (1 - fx) * fy
+            + de_map[y1, x1] * fx * fy
+        )
 
         # Zero out OOB positions
         vals[oob] = 0.0
@@ -322,8 +324,7 @@ def _rate_scan_candidate(
     best_rate = float(trial_rates[best_ri])
     best_dir = int(directions[best_di])
     best_angle = float(trial_angles[best_ai])
-    best_other_vals = [float(per_frame_de[fi, best_ai, best_ri, best_di])
-                       for fi in range(len(other_frames))]
+    best_other_vals = [float(per_frame_de[fi, best_ai, best_ri, best_di]) for fi in range(len(other_frames))]
 
     angle_deg = best_angle
 
@@ -333,11 +334,8 @@ def _rate_scan_candidate(
     stacked_snr = best_sum / noise_combined
 
     # 2. Other frames must contribute real signal (not just reference)
-    #    Require at least 1 other frame with DE > 3σ
-    n_other_with_signal = sum(
-        1 for v, ofd in zip(best_other_vals, other_frames)
-        if v > 3 * ofd["noise"]
-    )
+    #    Require at least 1 other frame with DE > 3 sigma
+    n_other_with_signal = sum(1 for v, ofd in zip(best_other_vals, other_frames, strict=True) if v > 3 * ofd["noise"])
 
     # 3. The best rate must beat a "no motion" baseline
     #    (catches static artifacts that have signal at the same position in all frames)
@@ -350,19 +348,28 @@ def _rate_scan_candidate(
 
     motion_boost = best_sum - static_sum
 
-    # With constrained angle search (~7 angles × 120 rates × 2 dirs ≈ 1680 trials),
+    # With constrained angle search (~7 angles x 120 rates x 2 dirs ≈ 1680 trials),
     # the expected max under null is moderate.  Require stacked SNR > 12
-    # for detection.  A real streak with 3 frames at ~10σ each gives
+    # for detection.  A real streak with 3 frames at ~10 sigma each gives
     # stacked_snr ≈ 17.
-    all_vals = [ref_val] + best_other_vals
+    all_vals = [ref_val, *best_other_vals]
 
     if stacked_snr < 12.0:
-        logger.debug("Rejected (%.0f,%.0f): stacked_snr %.1f < 12 vals=%s", cx, cy, stacked_snr, [f"{v:.1f}" for v in all_vals])
+        logger.debug(
+            "Rejected (%.0f,%.0f): stacked_snr %.1f < 12 vals=%s", cx, cy, stacked_snr, [f"{v:.1f}" for v in all_vals]
+        )
         return None
 
     # Must have signal in at least half the other frames
     if n_other_with_signal < max(1, n_other // 2):
-        logger.debug("Rejected (%.0f,%.0f): n_other_signal=%d < %d vals=%s", cx, cy, n_other_with_signal, max(1, n_other // 2), [f"{v:.1f}" for v in all_vals])
+        logger.debug(
+            "Rejected (%.0f,%.0f): n_other_signal=%d < %d vals=%s",
+            cx,
+            cy,
+            n_other_with_signal,
+            max(1, n_other // 2),
+            [f"{v:.1f}" for v in all_vals],
+        )
         return None
 
     # Multi-frame consistency: real streaks have similar DE in all frames.
@@ -375,7 +382,13 @@ def _rate_scan_candidate(
     min_positive = min(positive_vals)
     max_positive = max(positive_vals)
     if max_positive > 0 and min_positive / max_positive < 0.25:
-        logger.debug("Rejected (%.0f,%.0f): consistency ratio %.2f < 0.25 vals=%s", cx, cy, min_positive/max_positive, [f"{v:.1f}" for v in all_vals])
+        logger.debug(
+            "Rejected (%.0f,%.0f): consistency ratio %.2f < 0.25 vals=%s",
+            cx,
+            cy,
+            min_positive / max_positive,
+            [f"{v:.1f}" for v in all_vals],
+        )
         return None  # Too inconsistent — one frame dominates
 
     # 4. Angle validation: at predicted positions in other frames, check
@@ -387,8 +400,8 @@ def _rate_scan_candidate(
     best_cos_a = np.cos(np.radians(best_angle))
     best_sin_a = np.sin(np.radians(best_angle))
     n_angle_consistent = 0
-    r_search = max(1, int(round(fwhm)))  # Search along streak direction
-    for v, ofd in zip(best_other_vals, other_frames):
+    r_search = max(1, round(fwhm))  # Search along streak direction
+    for v, ofd in zip(best_other_vals, other_frames, strict=True):
         if v <= 3 * ofd["noise"]:
             continue
         dx, dy = ofd["shift"]
@@ -405,15 +418,14 @@ def _rate_scan_candidate(
             for offset in range(-r_search, r_search + 1):
                 sx = pred_x + offset * best_cos_a
                 sy = pred_y + offset * best_sin_a
-                six, siy = int(round(sx)), int(round(sy))
-                if 0 <= siy < oh and 0 <= six < ow:
-                    if de_map[siy, six] > 3 * ofd["noise"]:
-                        local_angle = float(ba_map[siy, six])
-                        adiff = abs(local_angle - best_angle) % 180
-                        adiff = min(adiff, 180 - adiff)
-                        if adiff < 25:
-                            angle_ok = True
-                            break
+                six, siy = round(sx), round(sy)
+                if 0 <= siy < oh and 0 <= six < ow and de_map[siy, six] > 3 * ofd["noise"]:
+                    local_angle = float(ba_map[siy, six])
+                    adiff = abs(local_angle - best_angle) % 180
+                    adiff = min(adiff, 180 - adiff)
+                    if adiff < 25:
+                        angle_ok = True
+                        break
             if angle_ok:
                 n_angle_consistent += 1
         else:
@@ -421,7 +433,15 @@ def _rate_scan_candidate(
 
     # Require angle consistency in at least 1 other frame with signal
     if n_other_with_signal > 0 and n_angle_consistent == 0:
-        logger.debug("Rejected (%.0f,%.0f): angle inconsistent (0/%d) at rate=%.1f angle=%.1f vals=%s", cx, cy, n_other_with_signal, best_rate, best_angle, [f"{v:.1f}" for v in all_vals])
+        logger.debug(
+            "Rejected (%.0f,%.0f): angle inconsistent (0/%d) at rate=%.1f angle=%.1f vals=%s",
+            cx,
+            cy,
+            n_other_with_signal,
+            best_rate,
+            best_angle,
+            [f"{v:.1f}" for v in all_vals],
+        )
         return None
 
     # 5. Perpendicular-angle check: a real streak at angle θ should NOT have
@@ -448,22 +468,39 @@ def _rate_scan_candidate(
 
     # If perpendicular gives ≥60% of the best angle's signal, reject
     if perp_best > 0 and best_sum > 0 and perp_best / best_sum > 0.6:
-        logger.debug("Rejected (%.0f,%.0f): perp ratio %.2f > 0.6 vals=%s", cx, cy, perp_best/best_sum, [f"{v:.1f}" for v in all_vals])
+        logger.debug(
+            "Rejected (%.0f,%.0f): perp ratio %.2f > 0.6 vals=%s",
+            cx,
+            cy,
+            perp_best / best_sum,
+            [f"{v:.1f}" for v in all_vals],
+        )
         return None
 
     min_positive = min(positive_vals) if positive_vals else 0
     logger.debug(
         "Candidate (%.0f,%.0f) rate=%.1f angle=%.1f: vals=%s ratio=%.2f stacked=%.1f angle_ok=%d/%d perp_ratio=%.2f",
-        cx, cy, best_rate, best_angle,
+        cx,
+        cy,
+        best_rate,
+        best_angle,
         [f"{v:.2f}" for v in all_vals],
         min_positive / max_positive if max_positive > 0 else 0,
-        stacked_snr, n_angle_consistent, n_other_with_signal,
+        stacked_snr,
+        n_angle_consistent,
+        n_other_with_signal,
         perp_best / best_sum if best_sum > 0 else 0,
     )
 
     # If static positions give similar or better signal, it's a static artifact
     if motion_boost < 2 * ref_noise and best_rate > 2.0:
-        logger.debug("Rejected (%.0f,%.0f): static artifact, motion_boost=%.2f < 2*noise=%.2f", cx, cy, motion_boost, 2*ref_noise)
+        logger.debug(
+            "Rejected (%.0f,%.0f): static artifact, motion_boost=%.2f < 2*noise=%.2f",
+            cx,
+            cy,
+            motion_boost,
+            2 * ref_noise,
+        )
         return None
 
     # --- Build the confirmed streak ---
@@ -471,14 +508,11 @@ def _rate_scan_candidate(
     if ref_frame.frame_metadata and ref_frame.frame_metadata.exposure_time_seconds:
         exposure_time = ref_frame.frame_metadata.exposure_time_seconds
 
-    # Streak length from rate × exposure
+    # Streak length from rate x exposure
     length = best_rate * exposure_time if exposure_time else best_rate
 
     # Direction in [0, 360)
-    if best_dir > 0:
-        direction_deg = float(angle_deg % 360)
-    else:
-        direction_deg = float((angle_deg + 180) % 360)
+    direction_deg = float(angle_deg % 360) if best_dir > 0 else float((angle_deg + 180) % 360)
 
     # Positions in each frame (use best_angle's cos/sin, not loop variable)
     frame_indices = [ref_frame.index]
@@ -505,7 +539,7 @@ def _rate_scan_candidate(
     rate_ra, rate_dec, rate_arcsec = None, None, None
 
     wcs_obj = None
-    for fi, px, py in zip(frame_indices, positions_x, positions_y):
+    for fi, px, py in zip(frame_indices, positions_x, positions_y, strict=True):
         f = next((f for f in all_frames if f.index == fi), None)
         if f and f.starfield and f.starfield.wcs:
             try:
@@ -514,7 +548,7 @@ def _rate_scan_candidate(
                 ra_list.append(float(sky.ra.deg))
                 dec_list.append(float(sky.dec.deg))
             except Exception:
-                pass
+                logger.debug("Could not convert a scan position to sky coordinates", exc_info=True)
 
     if len(ra_list) >= 2:
         try:
@@ -530,8 +564,9 @@ def _rate_scan_candidate(
 
                 # Refine pixel-space angle from RA/Dec velocity
                 if wcs_obj is not None:
-                    from astropy.coordinates import SkyCoord
                     import astropy.units as u
+                    from astropy.coordinates import SkyCoord
+
                     sky0 = wcs_obj.pixel_to_world(positions_x[0], positions_y[0])
                     sky1 = SkyCoord(
                         ra=sky0.ra + (rate_ra / 3600 / np.cos(np.radians(dec_list[0]))) * u.deg,
@@ -560,35 +595,45 @@ def _rate_scan_candidate(
         zp = ref_frame.photometry_summary.get("zero_point")
         zp_err = ref_frame.photometry_summary.get("zero_point_err")
         if zp is not None:
-            from senpai.core.config import get_config
+            from senpai.core.config import settings
             from senpai.engine.detection.streak.sidereal_streak import (
                 StreakCandidate,
                 measure_streak_candidate_photometry,
             )
-            config = get_config()
+
             obs_filter = ref_frame.frame_metadata.observation_filter if ref_frame.frame_metadata else None
             multiband = None
             multiband_raw = ref_frame.photometry_summary.get("multiband_calibration")
             if multiband_raw:
                 try:
                     from senpai.engine.photometry.color_terms import MultiBandCalibration
-                    multiband = MultiBandCalibration.model_validate(multiband_raw) if isinstance(multiband_raw, dict) else multiband_raw
+
+                    multiband = (
+                        MultiBandCalibration.model_validate(multiband_raw)
+                        if isinstance(multiband_raw, dict)
+                        else multiband_raw
+                    )
                 except Exception:
-                    pass
+                    logger.debug("Multiband calibration could not be deserialized", exc_info=True)
             phot_candidate = StreakCandidate(
-                x=float(cx), y=float(cy),
+                x=float(cx),
+                y=float(cy),
                 angle_deg=float(angle_deg),
                 length_pixels=float(length),
                 width_pixels=float(fwhm),
                 peak_snr=float(stacked_snr),
-                directional_excess=0.0, fractional_excess=0.0,
+                directional_excess=0.0,
+                fractional_excess=0.0,
             )
             try:
                 measure_streak_candidate_photometry(
-                    ref_frame.frame, [phot_candidate],
-                    zero_point=zp, zero_point_err=zp_err,
-                    exposure_time=exposure_time, fwhm=fwhm,
-                    gain=config.photometry.gain,
+                    ref_frame.frame,
+                    [phot_candidate],
+                    zero_point=zp,
+                    zero_point_err=zp_err,
+                    exposure_time=exposure_time,
+                    fwhm=fwhm,
+                    gain=settings.photometry.gain,
                     multiband_calibration=multiband,
                     observation_filter=obs_filter,
                 )
@@ -612,8 +657,13 @@ def _rate_scan_candidate(
     logger.info(
         "Rate scan confirmed streak at (%.0f,%.0f): rate=%.1f px/s, "
         "angle=%.1f°, dir=%.1f°, stacked_snr=%.1f, n_frames=%d",
-        cx, cy, best_rate, angle_deg, direction_deg,
-        stacked_snr, n_other_with_signal + 1,
+        cx,
+        cy,
+        best_rate,
+        angle_deg,
+        direction_deg,
+        stacked_snr,
+        n_other_with_signal + 1,
     )
 
     return CorrelatedStreak(
@@ -650,7 +700,7 @@ def _sample_de(de_map: np.ndarray, x: float, y: float) -> float:
     # Bilinear interpolation
     if x < 0 or x >= w - 1 or y < 0 or y >= h - 1:
         # Fall back to nearest-neighbor at boundaries
-        ix, iy = int(round(x)), int(round(y))
+        ix, iy = round(x), round(y)
         if 0 <= iy < h and 0 <= ix < w:
             return float(de_map[iy, ix])
         return 0.0
@@ -659,14 +709,16 @@ def _sample_de(de_map: np.ndarray, x: float, y: float) -> float:
     x1, y1 = x0 + 1, y0 + 1
     dx, dy = x - x0, y - y0
 
-    val = (de_map[y0, x0] * (1 - dx) * (1 - dy)
-           + de_map[y0, x1] * dx * (1 - dy)
-           + de_map[y1, x0] * (1 - dx) * dy
-           + de_map[y1, x1] * dx * dy)
+    val = (
+        de_map[y0, x0] * (1 - dx) * (1 - dy)
+        + de_map[y0, x1] * dx * (1 - dy)
+        + de_map[y1, x0] * (1 - dx) * dy
+        + de_map[y1, x1] * dx * dy
+    )
     return float(val)
 
 
-def _confirm_single_frame(frames_with_candidates) -> list[CorrelatedStreak]:
+def _confirm_single_frame(frames_with_candidates: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Confirm high-SNR candidates from single-frame scenarios.
 
     When only 1 frame is available, multi-frame confirmation is impossible.
@@ -687,26 +739,30 @@ def _confirm_single_frame(frames_with_candidates) -> list[CorrelatedStreak]:
             ra = [float(sc.ra)] if sc.ra is not None else []
             dec = [float(sc.dec)] if sc.dec is not None else []
             ts = [frame.timestamp.isoformat()] if frame.timestamp else []
-            result.append(CorrelatedStreak(
-                streak_id=str(uuid.uuid4())[:8],
-                frame_indices=[frame.index],
-                positions_x=[float(sc.x)],
-                positions_y=[float(sc.y)],
-                ra=ra, dec=dec, timestamps_iso=ts,
-                angle_deg=float(sc.angle_deg),
-                direction_deg=None,
-                rate_pixels_per_sec=sc.rate_pixels_per_sec,
-                rate_arcsec_per_sec=sc.rate_arcsec_per_sec,
-                confirmed=is_confirmed,
-                best_snr=float(sc.peak_snr),
-                best_flux=sc.flux,
-                best_calibrated_magnitudes=sc.calibrated_magnitudes,
-                best_magnitude_errs=sc.magnitude_errs,
-            ))
+            result.append(
+                CorrelatedStreak(
+                    streak_id=str(uuid.uuid4())[:8],
+                    frame_indices=[frame.index],
+                    positions_x=[float(sc.x)],
+                    positions_y=[float(sc.y)],
+                    ra=ra,
+                    dec=dec,
+                    timestamps_iso=ts,
+                    angle_deg=float(sc.angle_deg),
+                    direction_deg=None,
+                    rate_pixels_per_sec=sc.rate_pixels_per_sec,
+                    rate_arcsec_per_sec=sc.rate_arcsec_per_sec,
+                    confirmed=is_confirmed,
+                    best_snr=float(sc.peak_snr),
+                    best_flux=sc.flux,
+                    best_calibrated_magnitudes=sc.calibrated_magnitudes,
+                    best_magnitude_errs=sc.magnitude_errs,
+                )
+            )
     return result
 
 
-def _wrap_unconfirmed(frames_with_candidates) -> list[CorrelatedStreak]:
+def _wrap_unconfirmed(frames_with_candidates: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Wrap single-frame candidates as unconfirmed."""
     result = []
     for frame in frames_with_candidates:
@@ -714,28 +770,30 @@ def _wrap_unconfirmed(frames_with_candidates) -> list[CorrelatedStreak]:
             ra = [float(sc.ra)] if sc.ra is not None else []
             dec = [float(sc.dec)] if sc.dec is not None else []
             ts = [frame.timestamp.isoformat()] if frame.timestamp else []
-            result.append(CorrelatedStreak(
-                streak_id=str(uuid.uuid4())[:8],
-                frame_indices=[frame.index],
-                positions_x=[float(sc.x)],
-                positions_y=[float(sc.y)],
-                ra=ra, dec=dec, timestamps_iso=ts,
-                angle_deg=float(sc.angle_deg),
-                direction_deg=None,
-                rate_pixels_per_sec=sc.rate_pixels_per_sec,
-                rate_arcsec_per_sec=sc.rate_arcsec_per_sec,
-                confirmed=False,
-                best_snr=float(sc.peak_snr),
-                best_flux=sc.flux,
-                best_calibrated_magnitudes=sc.calibrated_magnitudes,
-                best_magnitude_errs=sc.magnitude_errs,
-            ))
+            result.append(
+                CorrelatedStreak(
+                    streak_id=str(uuid.uuid4())[:8],
+                    frame_indices=[frame.index],
+                    positions_x=[float(sc.x)],
+                    positions_y=[float(sc.y)],
+                    ra=ra,
+                    dec=dec,
+                    timestamps_iso=ts,
+                    angle_deg=float(sc.angle_deg),
+                    direction_deg=None,
+                    rate_pixels_per_sec=sc.rate_pixels_per_sec,
+                    rate_arcsec_per_sec=sc.rate_arcsec_per_sec,
+                    confirmed=False,
+                    best_snr=float(sc.peak_snr),
+                    best_flux=sc.flux,
+                    best_calibrated_magnitudes=sc.calibrated_magnitudes,
+                    best_magnitude_errs=sc.magnitude_errs,
+                )
+            )
     return result
 
 
-def _deduplicate(
-    streaks: list[CorrelatedStreak], fwhm: float
-) -> list[CorrelatedStreak]:
+def _deduplicate(streaks: list[CorrelatedStreak], fwhm: float) -> list[CorrelatedStreak]:
     """Remove duplicate detections of the same streak."""
     match_radius_sq = (3 * fwhm) ** 2
     streaks.sort(key=lambda c: c.best_snr, reverse=True)
@@ -744,9 +802,9 @@ def _deduplicate(
     for cs in streaks:
         is_dup = False
         for existing in kept:
-            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y):
+            for fi, px, py in zip(cs.frame_indices, cs.positions_x, cs.positions_y, strict=True):
                 for efi, epx, epy in zip(
-                    existing.frame_indices, existing.positions_x, existing.positions_y
+                    existing.frame_indices, existing.positions_x, existing.positions_y, strict=True
                 ):
                     if fi == efi:
                         dist_sq = (px - epx) ** 2 + (py - epy) ** 2
@@ -786,14 +844,9 @@ def _propagate_to_frames(
     if ref_frame is None:
         return
 
-    if direction is not None:
-        dir_rad = np.radians(direction)
-    else:
-        dir_rad = np.radians(angle)
+    dir_rad = np.radians(direction) if direction is not None else np.radians(angle)
     cos_d = np.cos(dir_rad)
     sin_d = np.sin(dir_rad)
-
-    from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
     for frame in all_frames:
         if frame.index == ref_fidx:
@@ -818,7 +871,7 @@ def _propagate_to_frames(
                 ra_val = float(sky.ra.deg)
                 dec_val = float(sky.dec.deg)
             except Exception:
-                pass
+                logger.debug("Could not convert a scan position to sky coordinates", exc_info=True)
 
         rate_arcsec = None
         if frame.starfield and frame.starfield.wcs_metadata:
@@ -846,6 +899,7 @@ def _propagate_to_frames(
             if img_meta is None:
                 continue
             frame.detections = SatelliteListImage(
-                detections=[], image_metadata=img_meta,
+                detections=[],
+                image_metadata=img_meta,
             )
         frame.detections.detections.append(detection)

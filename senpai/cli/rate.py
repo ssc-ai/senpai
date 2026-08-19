@@ -49,20 +49,22 @@ if __name__ == "__main__":
     from senpai.astrometry import enforce_indices, test_astrometry_install
     from senpai.catalog.runner import enforce_catalog
 
-    parser = argparse.ArgumentParser(
-        description="Process a single RATE-track frame (deprecated: use detect)"
-    )
+    parser = argparse.ArgumentParser(description="Process a single RATE-track frame (deprecated: use detect)")
     parser.add_argument("-f", "--fits", help="Path to input FITS/DNG/JPG file", type=str)
     parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         help=f"Config file, defaults to {LOCAL_APP_CONFIG_OVERRIDE}",
-        type=str, default=LOCAL_APP_CONFIG_OVERRIDE,
+        type=str,
+        default=LOCAL_APP_CONFIG_OVERRIDE,
     )
     parser.add_argument("-o", "--output_dir", help="Output directory", type=str, default=default_output_dir)
     parser.add_argument("--no_wcs", help="Disable WCS attempt", action="store_true", default=False)
     parser.add_argument("--max_sources", help="Max pseudo-sources for astrometry", type=int, default=200)
     parser.add_argument("--n_streaks", help="Max streak candidates", type=int, default=10)
-    parser.add_argument("-P", "--photometry", help="Perform photometry (default: True)", action="store_true", default=None)
+    parser.add_argument(
+        "-P", "--photometry", help="Perform photometry (default: True)", action="store_true", default=None
+    )
     parser.add_argument("-D", "--detect", help="Detect point sources", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -78,7 +80,7 @@ if __name__ == "__main__":
     cfg.runtime.run_id = Path(args.fits).stem
     cfg.detection.detect = args.detect
     set_log_level(cfg.logging.level)
-    save_run_metadata(output_dir, "senpai.cli.rate", cfg)
+    save_run_metadata(output_dir, "senpai.cli.rate")
 
     if not args.no_wcs:
         test_astrometry_install()
@@ -96,9 +98,7 @@ if __name__ == "__main__":
     from senpai.engine.models.metadata import TrackMode
     from senpai.engine.processing.collect import final_plots, process_senpai_collect
 
-    senpai_run = process_senpai_collect(
-        [image], id=cfg.runtime.run_id, force_track_mode=TrackMode.RATE
-    )
+    senpai_run = process_senpai_collect([image], id=cfg.runtime.run_id, force_track_mode=TrackMode.RATE)
 
     # Write results
     result = senpai_run.to_result()

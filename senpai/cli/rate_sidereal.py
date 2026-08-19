@@ -1,4 +1,10 @@
-# this is a CLI for the SENPAI algorithm for collecting stars from a series of images
+"""Run a collect made of both rate-tracked and sidereal frames, from the command line.
+
+The mixed case is the interesting one: the sidereal frames are what can be plate-solved, and the
+rate frames are where the satellites are, so the run only works if registration carries the
+solve from the former onto the latter.
+"""
+
 import json
 import logging
 import os
@@ -37,15 +43,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a single FITS or JSON file")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-i", "--id", help="ID of the imageset to process", type=str)
-    group.add_argument(
-        "-s", "--string_match", help="Regex to match imageset to process", type=str
-    )
-    group.add_argument(
-        "-a", "--all", help="Process all images in data_directory", action="store_true"
-    )
-    parser.add_argument(
-        "-d", "--data_directory", help="Path to input directory", type=str
-    )
+    group.add_argument("-s", "--string_match", help="Regex to match imageset to process", type=str)
+    group.add_argument("-a", "--all", help="Process all images in data_directory", action="store_true")
+    parser.add_argument("-d", "--data_directory", help="Path to input directory", type=str)
     parser.add_argument(
         "-D",
         "--detect",
@@ -68,9 +68,7 @@ if __name__ == "__main__":
         type=str,
         default=default_output_dir,
     )
-    parser.add_argument(
-        "-k", "--header_id_key", help="Header ID key", type=str, default=None
-    )
+    parser.add_argument("-k", "--header_id_key", help="Header ID key", type=str, default=None)
 
     args = parser.parse_args()
 
@@ -102,9 +100,7 @@ if __name__ == "__main__":
     elif args.id:
         run_id = args.id
         if not args.header_id_key:
-            raise ValueError(
-                "Header ID key is required for ID-based collection (-k/--header_id_key)"
-            )
+            raise ValueError("Header ID key is required for ID-based collection (-k/--header_id_key)")
         files = get_imageset_by_id(data_directory, args.id, args.header_id_key)
     elif args.all:
         files = get_all_images_in_directory(data_directory)
@@ -114,17 +110,13 @@ if __name__ == "__main__":
     if args.header_id_key:
         ids = [extract_id_from_header(file, args.header_id_key) for file in files]
         if len(ids) == 0:
-            raise ValueError(
-                f"No ID found in the header for the key {args.header_id_key}"
-            )
+            raise ValueError(f"No ID found in the header for the key {args.header_id_key}")
         if len(set(ids)) > 1:
             raise ValueError(f"All files must have the same ID, I found: {set(ids)}")
 
         id_value = ids[0]
         if args.id is not None and args.id != id_value:
-            raise ValueError(
-                f"ID mismatch, I found: {id_value} but you requested: {args.id}"
-            )
+            raise ValueError(f"ID mismatch, I found: {id_value} but you requested: {args.id}")
         run_id = id_value
 
     file_list: list[ProcessedFitsImage] = load_fits_files(files)
@@ -133,21 +125,17 @@ if __name__ == "__main__":
     config.runtime.output_dir = output_dir
     config.detection.detect = args.detect
 
-    save_run_metadata(output_dir, "senpai.cli.rate_sidereal", config)
+    save_run_metadata(output_dir, "senpai.cli.rate_sidereal")
 
     senpai_run = profile_run(process_senpai_collect, file_list, id=run_id, run_id=run_id)
 
     result = senpai_run.to_result()
-    json.dump(
-        result.model_dump(),
-        open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w"),
-    )
+    with open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w") as f:
+        json.dump(result.model_dump(), f)
 
     summary = senpai_run.to_summary()
-    json.dump(
-        summary.model_dump(),
-        open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w"),
-    )
+    with open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w") as f:
+        json.dump(summary.model_dump(), f)
 
     # Per-frame quick-look JSONs (detections + WCS, no bulk star arrays)
     write_frame_quicklooks(summary, output_dir)

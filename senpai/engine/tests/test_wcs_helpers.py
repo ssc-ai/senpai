@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy.optimize import linear_sum_assignment
 
 from senpai.engine.models.starfield import StarInImage
 from senpai.engine.utils.wcs_helpers import find_local_maxima, match_stars_to_detections
 
 
-def _smooth_peaky_image(seed=3, size=1200, n_peaks=120):
+def _smooth_peaky_image(seed: int = 3, size: int = 1200, n_peaks: int = 120) -> np.ndarray:
+    """Build a smooth field with a known number of peaks."""
     rng = np.random.default_rng(seed)
     img = rng.normal(0.0, 1.0, (size, size))
     ys = rng.integers(40, size - 40, n_peaks)
@@ -24,7 +26,8 @@ def _smooth_peaky_image(seed=3, size=1200, n_peaks=120):
     return gaussian_filter(img, sigma=4.0)
 
 
-def test_find_local_maxima_fast_path_matches_full_computation():
+def test_find_local_maxima_fast_path_matches_full_computation() -> None:
+    """The fast local-maxima path finds exactly what the full computation does."""
     img = _smooth_peaky_image()
     k = 50
     fast = find_local_maxima(img, min_distance=30, max_detections=k)
@@ -34,7 +37,8 @@ def test_find_local_maxima_fast_path_matches_full_computation():
     assert np.array_equal(fast, full)
 
 
-def test_find_local_maxima_respects_threshold():
+def test_find_local_maxima_respects_threshold() -> None:
+    """Only maxima above the threshold are returned."""
     img = _smooth_peaky_image(seed=4)
     thresh = float(np.percentile(img, 99.999))
     got = find_local_maxima(img, min_distance=30, threshold=thresh, max_detections=20)
@@ -43,10 +47,8 @@ def test_find_local_maxima_respects_threshold():
     assert all(img[y, x] > thresh for y, x in got)
 
 
-def _match_reference(stars, detected_points, max_distance=20):
-    """The original (pre-vectorization) implementation, kept as the oracle."""
-    from scipy.optimize import linear_sum_assignment
-
+def _match_reference(stars: list, detected_points: list, max_distance: float = 20) -> list:
+    """Match stars the original pre-vectorization way, kept here as the oracle."""
     cost = np.zeros((len(stars), len(detected_points)))
     for i, star in enumerate(stars):
         if star is None:
@@ -61,12 +63,14 @@ def _match_reference(stars, detected_points, max_distance=20):
     return pairs, un_s, un_d
 
 
-def test_match_stars_to_detections_matches_reference():
+def test_match_stars_to_detections_matches_reference() -> None:
+    """The vectorized matcher agrees with the original implementation.
+
+    The reference is kept in the test as an oracle, so a rewrite for speed cannot change which
+    star pairs with which detection.
+    """
     rng = np.random.default_rng(9)
-    stars = [
-        StarInImage(x=float(x), y=float(y), counts=1.0)
-        for x, y in rng.uniform(0, 2000, (300, 2))
-    ]
+    stars = [StarInImage(x=float(x), y=float(y), counts=1.0) for x, y in rng.uniform(0, 2000, (300, 2))]
     stars[7] = None  # None stars get infinite-cost rows
     # Detections: noisy copies of a subset of stars plus a few spurious points
     dets = [(s.y + rng.normal(0, 2), s.x + rng.normal(0, 2)) for s in stars[:40] if s]

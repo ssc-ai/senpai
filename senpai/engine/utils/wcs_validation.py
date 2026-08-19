@@ -9,11 +9,18 @@ WCS predicts for the brightest catalog stars?
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.astrometry import WCSQualityMetrics
+
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
+
+    #: Validation reads only the starfield and pixels, which both flavours carry.
+    FrameLike = SiderealFrame | RateTrackFrame
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +77,7 @@ def flux_significance_test(
     integral = np.zeros((h + 1, w + 1))
     integral[1:, 1:] = np.cumsum(np.cumsum(bgsub, axis=0), axis=1)
 
-    pos = np.array(
-        [(x, y) for x, y in positions if margin < x < w - margin and margin < y < h - margin]
-    )
+    pos = np.array([(x, y) for x, y in positions if margin < x < w - margin and margin < y < h - margin])
     if len(pos) == 0:
         return {"n_tested": 0, "frac_significant": 0.0, "control_frac": 0.0}
 
@@ -94,13 +99,13 @@ def flux_significance_test(
     ctrl = _box_sums(integral, cx, pos[:, 1], box_radius)
 
     return {
-        "n_tested": int(len(pos)),
+        "n_tested": len(pos),
         "frac_significant": float(np.mean(pred > threshold)),
         "control_frac": float(np.mean(ctrl > threshold)),
     }
 
 
-def _validation_box_radius(frame) -> int:
+def _validation_box_radius(frame: "FrameLike") -> int:
     """Box radius matched to how a star appears in this frame.
 
     For rate-track frames the box is matched to the streak *width*, not its
@@ -121,29 +126,23 @@ def _validation_box_radius(frame) -> int:
     return int(np.clip(3 * fwhm, 6, 15))
 
 
-def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetrics | None:
+def validate_frame_wcs(frame: "FrameLike", refit_stats: dict | None = None) -> WCSQualityMetrics | None:
     """Run absolute WCS validation on a frame and return the quality metrics.
 
     ``refit_stats`` (from :func:`fit_and_validate_wcs`) is folded into the
     metrics when the refinement produced a refit. Returns None (and logs) when
     validation is disabled or the frame has no usable catalog.
     """
-    config = get_config().wcs_validation
+    config = settings.wcs_validation
     if not config.enable:
         return None
 
     starfield = frame.starfield
     if starfield is None or not starfield.catalog_stars:
-        logger.warning(
-            "WCS validation skipped for frame %d: no catalog stars", frame.index
-        )
+        logger.warning("WCS validation skipped for frame %d: no catalog stars", frame.index)
         return None
 
-    stars = [
-        s
-        for s in starfield.catalog_stars
-        if s.x is not None and s.y is not None and s.magnitude is not None
-    ]
+    stars = [s for s in starfield.catalog_stars if s.x is not None and s.y is not None and s.magnitude is not None]
     stars.sort(key=lambda s: s.magnitude)
     positions = [(s.x, s.y) for s in stars[: config.n_stars]]
 
@@ -179,8 +178,7 @@ def validate_frame_wcs(frame, refit_stats: dict | None = None) -> WCSQualityMetr
     )
 
     logger.info(
-        "WCS validation frame %d: %d stars, frac_significant=%.2f (control=%.2f, "
-        "box=%dpx) -> %s",
+        "WCS validation frame %d: %d stars, frac_significant=%.2f (control=%.2f, box=%dpx) -> %s",
         frame.index,
         metrics.n_stars_tested,
         metrics.frac_significant,

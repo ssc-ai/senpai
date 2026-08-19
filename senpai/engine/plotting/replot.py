@@ -28,9 +28,27 @@ JSON expansion is needed for any of the above.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
+from senpai.engine.models.images import ProcessedFitsImage
+from senpai.engine.models.senpai import (
+    RateTrackFrame,
+    RateTrackFrameSerializable,
+    SiderealFrame,
+    SiderealFrameSerializable,
+)
+from senpai.engine.photometry.utils import (
+    _completeness_limits,
+    _save_completeness_plot,
+    _save_simple_limiting_mag_plot,
+    calculate_star_snrs_with_aperture_photometry,
+)
+from senpai.engine.plotting import psf as P
+from senpai.engine.plotting.images import plot_single_frame
+from senpai.engine.processing.collect import _write_sequence_gif
 from senpai.engine.utils.file_io import load_fits_file, load_senpai_run
 
 logger = logging.getLogger(__name__)
@@ -56,17 +74,16 @@ def find_batch_dirs(root: Path) -> list[Path]:
 
 
 def _find_result_json(batch_dir: Path) -> Path | None:
-    matches = [
-        p
-        for p in sorted(batch_dir.glob("senpai_*.json"))
-        if not p.name.endswith("_summary.json")
-    ]
+    matches = [p for p in sorted(batch_dir.glob("senpai_*.json")) if not p.name.endswith("_summary.json")]
     return matches[0] if matches else None
 
 
-def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
-    """Load a frame's processed FITS, preferring the stored path but falling back
-    to a same-named file in ``batch_dir`` (so a moved/copied dir still plots)."""
+def _resolve_frame_image(batch_dir: Path, processed_path: str | None) -> ProcessedFitsImage | None:
+    """Load a frame's processed FITS, by stored path or by name beside the batch.
+
+    Prefers the path the run recorded, then a same-named file in ``batch_dir``, so a batch
+    directory that was moved or copied still plots.
+    """
     candidates: list[Path] = []
     if processed_path:
         candidates.append(Path(processed_path))
@@ -77,12 +94,13 @@ def _resolve_frame_image(batch_dir: Path, processed_path: str | None):
     return None
 
 
-def _streak_candidate_objs(candidates):
-    """The serializable model stores streak_candidates as raw dicts, but
-    ``plot_single_frame`` reads them by attribute (``.x``, ``.length_pixels``,
-    ...). Wrap each dict so attribute access (and getattr-with-default) works."""
-    from types import SimpleNamespace
+def _streak_candidate_objs(candidates: list[dict] | None) -> list[SimpleNamespace] | None:
+    """Wrap raw candidate dicts so they can be read by attribute.
 
+    The serializable model stores streak_candidates as dicts, but ``plot_single_frame``
+    reads them by attribute (``.x``, ``.length_pixels``, and so on), including with
+    getattr-and-default.
+    """
     if not candidates:
         return None
     out = []
@@ -91,10 +109,10 @@ def _streak_candidate_objs(candidates):
     return out or None
 
 
-def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
+def _plot_review(
+    img: ProcessedFitsImage, frame: SiderealFrameSerializable | RateTrackFrameSerializable, out_dir: Path, force: bool
+) -> list[Path]:
     """final_<idx>.png (overlays) + raw_<idx>.png for one frame."""
-    from senpai.engine.plotting.images import plot_single_frame
-
     written: list[Path] = []
     final_path = out_dir / f"final_{frame.index}.png"
     raw_path = out_dir / f"raw_{frame.index}.png"
@@ -115,14 +133,10 @@ def _plot_review(img, frame, out_dir: Path, force: bool) -> list[Path]:
     return written
 
 
-def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
+def _plot_photometry_curves(
+    frame: SiderealFrameSerializable | RateTrackFrameSerializable, out_dir: Path, force: bool
+) -> list[Path]:
     """Completeness + limiting-mag diagnostics from the stored summary arrays."""
-    from senpai.engine.photometry.utils import (
-        _completeness_limits,
-        _save_completeness_plot,
-        _save_simple_limiting_mag_plot,
-    )
-
     ps = frame.photometry_summary or {}
     written: list[Path] = []
 
@@ -131,7 +145,7 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
     if comp_mag and comp_pct:
         comp_path = out_dir / f"frame_{frame.index}_completeness.png"
         if force or not comp_path.exists():
-            target = float(get_config().photometry.limiting_completeness_fraction)
+            target = float(settings.photometry.limiting_completeness_fraction)
             m_target, m50, m90 = _completeness_limits(comp_mag, comp_pct, target=target)
             _save_completeness_plot(comp_mag, comp_pct, m_target, m50, m90, comp_path)
             written.append(comp_path)
@@ -142,10 +156,8 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
         lim_path = out_dir / f"frame_{frame.index}_limiting_mag.png"
         if force or not lim_path.exists():
             limiting = ps.get("limiting_magnitude_50") or ps.get("limiting_magnitude")
-            min_snr = float(ps.get("limiting_snr", get_config().photometry.limiting_snr))
-            _save_simple_limiting_mag_plot(
-                stars_mag, stars_snr, limiting, min_snr, lim_path
-            )
+            min_snr = float(ps.get("limiting_snr", settings.photometry.limiting_snr))
+            _save_simple_limiting_mag_plot(stars_mag, stars_snr, limiting, min_snr, lim_path)
             written.append(lim_path)
     return written
 
@@ -154,7 +166,13 @@ def _plot_photometry_curves(frame, out_dir: Path, force: bool) -> list[Path]:
 _MAX_STARS_FOR_APERTURE = 500
 
 
-def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Path]:
+def _plot_aperture(
+    img: ProcessedFitsImage,
+    frame: SiderealFrameSerializable | RateTrackFrameSerializable,
+    kind: str,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
     """Regenerate the per-star aperture overlay.
 
     Reconstructs a real ``SiderealFrame``/``RateTrackFrame`` from the rehydrated
@@ -163,11 +181,6 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     ``plotting.photometry`` is on) — the same routine the WCS-refinement path uses
     inline. No astrometry/catalog/WCS recompute: the solved StarField is reused.
     """
-    from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
-    from senpai.engine.photometry.utils import (
-        calculate_star_snrs_with_aperture_photometry,
-    )
-
     ap_path = out_dir / f"frame_{frame.index}_aperture_photometry_stars.png"
     if not force and ap_path.exists():
         return []
@@ -185,7 +198,6 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
     stars = stars[:_MAX_STARS_FOR_APERTURE]
 
     # Serializable timestamps are ISO strings; the full frame model wants datetime.
-    from datetime import datetime
 
     ts = frame.timestamp
     if isinstance(ts, str):
@@ -194,37 +206,43 @@ def _plot_aperture(img, frame, kind: str, out_dir: Path, force: bool) -> list[Pa
         except ValueError:
             ts = datetime.now()
 
-    common = dict(
-        starfield=sf,
-        detections=frame.detections,
-        frame=img,
-        index=frame.index,
-        timestamp=ts,
-        frame_metadata=frame.frame_metadata,
-        photometry_summary=frame.photometry_summary,
-    )
+    common = {
+        "starfield": sf,
+        "detections": frame.detections,
+        "frame": img,
+        "index": frame.index,
+        "timestamp": ts,
+        "frame_metadata": frame.frame_metadata,
+        "photometry_summary": frame.photometry_summary,
+    }
     if kind == "rate":
         frame_obj = RateTrackFrame(streak=getattr(frame, "streak", None), **common)
     else:
         frame_obj = SiderealFrame(**common)
 
-    cfg = get_config()
-    cfg.runtime.output_dir = out_dir
-    prev = cfg.plotting.photometry
-    cfg.plotting.photometry = True
+    settings.runtime.output_dir = out_dir
+    prev = settings.plotting.photometry
+    settings.plotting.photometry = True
     try:
         calculate_star_snrs_with_aperture_photometry(frame_obj, stars, plot=True)
     finally:
-        cfg.plotting.photometry = prev
+        settings.plotting.photometry = prev
     return [ap_path] if ap_path.exists() else []
 
 
-def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
-    """Per-frame empirical PSF panel. Prefers the saved .npy stamp (cheap, no FITS
-    reload); falls back to reloading the processed FITS and re-stacking (which
-    also re-writes the .npy), so panels regenerate even if psfs was off at run."""
-    from senpai.engine.plotting import psf as P
+def _plot_psf(
+    img: ProcessedFitsImage,
+    frame: SiderealFrameSerializable | RateTrackFrameSerializable,
+    mode: str,
+    out_dir: Path,
+    force: bool,
+) -> list[Path]:
+    """Per-frame empirical PSF panel.
 
+    Prefers the saved .npy stamp (cheap, no FITS reload); falls back to reloading the processed
+    FITS and re-stacking (which also re-writes the .npy), so panels regenerate even if psfs was
+    off at run.
+    """
     suffix = "psf" if mode == "sidereal" else "streak"
     png = out_dir / f"frame_{frame.index}_{suffix}.png"
     npy = out_dir / f"frame_{frame.index}_{suffix}.npy"
@@ -234,37 +252,48 @@ def _plot_psf(img, frame, mode: str, out_dir: Path, force: bool) -> list[Path]:
     if sf is None or not sf.catalog_stars:
         return []
     wcs = P._astropy_wcs(sf)
-    meta = {"index": frame.index, "exposure": P._exposure(frame),
-            "pixel_scale_arcsec": P._plate_scale(wcs)}
+    meta = {"index": frame.index, "exposure": P._exposure(frame), "pixel_scale_arcsec": P._plate_scale(wcs)}
     st = getattr(frame, "streak", None)
     if mode == "rate" and (st is None or not st.pixel_length):
         return []
     try:
-        if not force and npy.exists():           # cheap: render from saved stamp
+        if not force and npy.exists():  # cheap: render from saved stamp
             import numpy as np
+
             stamp = np.load(npy)
             if mode == "sidereal":
                 P.sidereal_from_stamp(stamp, wcs, meta, png)
             else:
-                P.streak_from_stamp(stamp, wcs, float(st.fwhm),
-                                    float(st.pixel_length), float(st.degree_angle()),
-                                    meta, png)
-        else:                                    # reload-and-slice (re-stacks)
+                P.streak_from_stamp(
+                    stamp, wcs, float(st.fwhm), float(st.pixel_length), float(st.degree_angle()), meta, png
+                )
+        else:  # reload-and-slice (re-stacks)
             data = img.data if img is not None else None
-            if data is None:                     # fall back to the original FITS
+            if data is None:  # fall back to the original FITS
                 op = getattr(frame, "original_frame_path", None)
                 if op and Path(op).exists():
                     data = load_fits_file(op).data
             if data is None:
                 return []
             if mode == "sidereal":
-                fwhm = (getattr(getattr(frame, "seeing", None), "pixel_fwhm", None)
-                        or (sf.fwhm_stats.median_fwhm if sf.fwhm_stats else None) or 4.0)
+                fwhm = (
+                    getattr(getattr(frame, "seeing", None), "pixel_fwhm", None)
+                    or (sf.fwhm_stats.median_fwhm if sf.fwhm_stats else None)
+                    or 4.0
+                )
                 P.make_sidereal_psf(data, P._stars(sf), wcs, float(fwhm), meta, png, npy)
             else:
-                P.make_streak_psf(data, P._stars(sf), wcs, float(st.fwhm),
-                                  float(st.pixel_length), float(st.degree_angle()),
-                                  meta, png, npy)
+                P.make_streak_psf(
+                    data,
+                    P._stars(sf),
+                    wcs,
+                    float(st.fwhm),
+                    float(st.pixel_length),
+                    float(st.degree_angle()),
+                    meta,
+                    png,
+                    npy,
+                )
     except Exception as e:
         logger.warning("frame %s: PSF panel failed: %s", frame.index, e)
         return []
@@ -281,8 +310,6 @@ def replot_batch_dir(
 
     Returns a per-kind count of files written.
     """
-    from senpai.engine.processing.collect import _write_sequence_gif
-
     batch_dir = Path(batch_dir)
     result_json = _find_result_json(batch_dir)
     if result_json is None:
@@ -292,7 +319,7 @@ def replot_batch_dir(
     frames = [(f, "sidereal") for f in run.sidereal_frames]
     frames += [(f, "rate") for f in run.rate_track_frames]
 
-    counts = {k: 0 for k in kinds}
+    counts = dict.fromkeys(kinds, 0)
     review_finals: list[Path] = []
     review_raws: list[Path] = []
     review_rate_finals: list[Path] = []
@@ -303,7 +330,8 @@ def replot_batch_dir(
         if img is None and needs_img:
             logger.warning(
                 "frame %s: processed FITS not found (%s); skipping image plots",
-                frame.index, frame.processed_frame_path,
+                frame.index,
+                frame.processed_frame_path,
             )
 
         if "review" in kinds and img is not None:
@@ -321,14 +349,10 @@ def replot_batch_dir(
                 review_raws.append(raw_path)
 
         if "photometry" in kinds:
-            counts["photometry"] += len(
-                _plot_photometry_curves(frame, batch_dir, force)
-            )
+            counts["photometry"] += len(_plot_photometry_curves(frame, batch_dir, force))
 
         if "aperture" in kinds and img is not None:
-            counts["aperture"] += len(
-                _plot_aperture(img, frame, mode, batch_dir, force)
-            )
+            counts["aperture"] += len(_plot_aperture(img, frame, mode, batch_dir, force))
 
         if "psf" in kinds:
             counts["psf"] += len(_plot_psf(img, frame, mode, batch_dir, force))
@@ -338,9 +362,7 @@ def replot_batch_dir(
         if review_finals:
             _write_sequence_gif(review_finals, batch_dir / f"{run_id}_sequence.gif")
         if review_rate_finals:
-            _write_sequence_gif(
-                review_rate_finals, batch_dir / f"{run_id}_sequence_rate.gif"
-            )
+            _write_sequence_gif(review_rate_finals, batch_dir / f"{run_id}_sequence_rate.gif")
         if review_raws:
             _write_sequence_gif(review_raws, batch_dir / f"{run_id}_sequence_raw.gif")
 
@@ -366,7 +388,7 @@ def replot(
         logger.warning("No batch directories (senpai_*.json) found under: %s", paths)
         return {}
 
-    totals: dict[str, int] = {k: 0 for k in kinds}
+    totals: dict[str, int] = dict.fromkeys(kinds, 0)
     for d in batch_dirs:
         logger.info("Replotting %s (%s)", d.name, ", ".join(kinds))
         try:

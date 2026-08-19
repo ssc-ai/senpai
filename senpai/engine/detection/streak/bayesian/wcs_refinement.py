@@ -73,6 +73,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> bool:
 
     Raises:
         ValueError: If the frame's WCS status is not PIXEL_SHIFTED_WCS.
+
     """
     if frame.starfield.wcs_status != WCSStatus.PIXEL_SHIFTED_WCS:
         logger.error(
@@ -103,9 +104,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> bool:
     convolved_image = convolve(frame.frame.data, kernel, mode="same")
 
     # First pass: Get global shift using astrometric fit stars
-    global_shift_x, global_shift_y = get_global_shift_from_astrometric_stars(
-        frame, convolved_image
-    )
+    global_shift_x, global_shift_y = get_global_shift_from_astrometric_stars(frame, convolved_image)
 
     # Apply the global shift to the WCS
     original_wcs_model = frame.starfield.wcs
@@ -152,9 +151,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> bool:
         )
 
         # Update catalog stars with the new WCS
-        catalog_stars = catalog_stars_from_wcs(
-            refined_wcs, limiting_magnitude=frame.starfield.limiting_magnitude
-        )
+        catalog_stars = catalog_stars_from_wcs(refined_wcs, limiting_magnitude=frame.starfield.limiting_magnitude)
         frame.starfield.catalog_stars = catalog_stars.stars
 
         if settings.plotting.debug:  # pragma: no cover
@@ -162,8 +159,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> bool:
                 frame.frame.data,
                 starfield=frame.starfield,
                 streak=frame.streak,
-                output_file=Path(settings.plotting.output_dir)
-                / f"{frame.index}_kernel_3_refined.png",
+                output_file=Path(settings.plotting.output_dir) / f"{frame.index}_kernel_3_refined.png",
             )
 
     # Update WCS status
@@ -174,9 +170,7 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> bool:
     return refined_wcs is not None
 
 
-def get_global_shift_from_astrometric_stars(
-    frame: RateTrackFrame, convolved_image: np.ndarray
-) -> tuple[float, float]:
+def get_global_shift_from_astrometric_stars(frame: RateTrackFrame, convolved_image: np.ndarray) -> tuple[float, float]:
     """Get global shift using astrometric fit stars.
 
     Args:
@@ -185,6 +179,7 @@ def get_global_shift_from_astrometric_stars(
 
     Returns:
         tuple[float, float]: The median shifts in x and y.
+
     """
     logger.info("First pass: Getting global shift from astrometric fit stars")
 
@@ -253,9 +248,7 @@ def get_global_shift_from_astrometric_stars(
             temp_space_stars.append(temp_space_star)
 
         # Get SNR and counts for all stars at once
-        star_snr_results = calculate_star_snrs_with_aperture_photometry(
-            frame, temp_space_stars, plot=False
-        )
+        star_snr_results = calculate_star_snrs_with_aperture_photometry(frame, temp_space_stars, plot=False)
 
         # Update the detected stars with their counts
         for i, (_temp_star, _snr, counts) in enumerate(star_snr_results):
@@ -274,9 +267,7 @@ def get_global_shift_from_astrometric_stars(
         median_x_shift = 0.0
         median_y_shift = 0.0
 
-    logger.info(
-        f"Global shift: x={median_x_shift:.2f}, y={median_y_shift:.2f} from {len(x_shifts)} matched stars"
-    )
+    logger.info(f"Global shift: x={median_x_shift:.2f}, y={median_y_shift:.2f} from {len(x_shifts)} matched stars")
 
     return median_x_shift, median_y_shift
 
@@ -286,6 +277,7 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
 
     Args:
         frame (SiderealFrame): The sidereal frame containing the stars.
+
     """
     # Same contract as the anchor registration: the refinement kernel is sized from the
     # frame's measured PSF scale. Guarding here also covers the plotting-branch reads further
@@ -317,14 +309,11 @@ def refine_sidereal_frame(frame: SiderealFrame) -> None:
             frame.frame.data,
             starfield=frame.starfield,
             markersize=2 * frame.starfield.detection_metadata.pixel_fwhm,
-            output_file=Path(settings.plotting.output_dir)
-            / f"{frame.index}_side_kernel_3_refit.png",
+            output_file=Path(settings.plotting.output_dir) / f"{frame.index}_side_kernel_3_refit.png",
         )
 
 
-def refine_sidereal_with_catalog_stars(
-    frame: SiderealFrame, convolved_image: np.ndarray
-) -> WCSModel:
+def refine_sidereal_with_catalog_stars(frame: SiderealFrame, convolved_image: np.ndarray) -> WCSModel:
     """Refine WCS for sidereal frames using catalog stars from brightest to dimmest.
 
     Similar to refine_wcs_with_catalog_stars but adapted for sidereal frames where
@@ -336,11 +325,10 @@ def refine_sidereal_with_catalog_stars(
 
     Returns:
         WCSModel: The refined WCS model, or None if refinement failed.
+
     """
     # First pass: Get global shift using astrometric fit stars
-    global_shift_x, global_shift_y = get_global_shift_from_astrometric_stars(
-        frame, convolved_image
-    )
+    global_shift_x, global_shift_y = get_global_shift_from_astrometric_stars(frame, convolved_image)
 
     # Apply the global shift to the WCS
     original_wcs_model = frame.starfield.wcs
@@ -351,8 +339,7 @@ def refine_sidereal_with_catalog_stars(
             frame.frame.data,
             starfield=frame.starfield,
             markersize=2 * frame.starfield.detection_metadata.pixel_fwhm,
-            output_file=Path(settings.plotting.output_dir)
-            / f"{frame.index}_side_kernel_0_init.png",
+            output_file=Path(settings.plotting.output_dir) / f"{frame.index}_side_kernel_0_init.png",
         )
 
     # Update the WCS with the global shift
@@ -371,22 +358,17 @@ def refine_sidereal_with_catalog_stars(
             frame.frame.data,
             starfield=frame.starfield,
             markersize=2 * frame.starfield.detection_metadata.pixel_fwhm,
-            output_file=Path(settings.plotting.output_dir)
-            / f"{frame.index}_side_kernel_1_global.png",
+            output_file=Path(settings.plotting.output_dir) / f"{frame.index}_side_kernel_1_global.png",
         )
 
     logger.info("Refining WCS for sidereal frame with catalog stars")
 
     # Get catalog stars and sort by magnitude (brightest first)
     catalog_stars = frame.starfield.catalog_stars
-    catalog_stars.sort(
-        key=lambda star: star.magnitude if star.magnitude is not None else float("inf")
-    )
+    catalog_stars.sort(key=lambda star: star.magnitude if star.magnitude is not None else float("inf"))
 
     # Calculate proper SNRs using aperture photometry
-    star_snr_results = calculate_star_snrs_with_aperture_photometry(
-        frame, catalog_stars, plot=False
-    )
+    star_snr_results = calculate_star_snrs_with_aperture_photometry(frame, catalog_stars, plot=False)
 
     # Store SNR with each star for later use
     for star, snr, counts in star_snr_results:
@@ -398,9 +380,7 @@ def refine_sidereal_with_catalog_stars(
     filtered_catalog_stars = [star for star, snr, _ in star_snr_results if snr >= min_snr]
 
     # Estimate limiting magnitude
-    limiting_magnitude = estimate_limiting_magnitude_from_photometry(
-        frame, star_snr_results, min_snr
-    )
+    limiting_magnitude = estimate_limiting_magnitude_from_photometry(frame, star_snr_results, min_snr)
 
     # Store the limiting magnitude in the starfield
     if hasattr(frame.starfield, "limiting_magnitude") and limiting_magnitude is not None:
@@ -438,9 +418,7 @@ def refine_sidereal_with_catalog_stars(
         too_close = False
         for processed_data in filtered_star_data:
             processed_detection = processed_data[0]  # Get the detection from the tuple
-            dist = np.sqrt(
-                (star.x - processed_detection.x) ** 2 + (star.y - processed_detection.y) ** 2
-            )
+            dist = np.sqrt((star.x - processed_detection.x) ** 2 + (star.y - processed_detection.y) ** 2)
             if dist < min_separation:
                 too_close = True
                 break
@@ -477,9 +455,7 @@ def refine_sidereal_with_catalog_stars(
         aperture = CircularAperture((measured_x, measured_y), r=aperture_radius)
 
         # Background annulus
-        bg_aperture = CircularAnnulus(
-            (measured_x, measured_y), r_in=aperture_radius * 1.5, r_out=aperture_radius * 2.5
-        )
+        bg_aperture = CircularAnnulus((measured_x, measured_y), r_in=aperture_radius * 1.5, r_out=aperture_radius * 2.5)
 
         # Perform photometry
         phot_table = aperture_photometry(frame.frame.data, aperture)
@@ -501,9 +477,7 @@ def refine_sidereal_with_catalog_stars(
             f"Added star with magnitude {star.magnitude:.2f}, SNR {getattr(star, 'snr', 'N/A'):.1f} at ({measured_x:.1f}, {measured_y:.1f})"
         )
 
-    logger.info(
-        f"Found {len(filtered_star_data)} well-separated, high-SNR stars for WCS refinement"
-    )
+    logger.info(f"Found {len(filtered_star_data)} well-separated, high-SNR stars for WCS refinement")
 
     # If no stars passed the SNR / separation filters, return the WCS that was
     # already updated by the global-shift pass.  Returning updated_wcs_model
@@ -550,14 +524,11 @@ def refine_sidereal_with_catalog_stars(
                 image_metadata=frame.starfield.image_metadata,
             ),
             markersize=2 * frame.starfield.detection_metadata.pixel_fwhm,
-            output_file=Path(settings.plotting.output_dir)
-            / f"{frame.index}_side_kernel_2_refit.png",
+            output_file=Path(settings.plotting.output_dir) / f"{frame.index}_side_kernel_2_refit.png",
         )
 
     # Upstream catalog SIP refit (config-gated); None = Bayesian-engine default (astroeasy does SIP).
-    sip_degree = (
-        settings.astrometry.sip_refit_order if settings.astrometry.sip_refit_enabled else None
-    )
+    sip_degree = settings.astrometry.sip_refit_order if settings.astrometry.sip_refit_enabled else None
 
     # Fit new WCS. Degenerate star geometry (e.g. matched pixel positions collapsing to ~one
     # point) makes fit_wcs_from_points raise "Initial guess is outside of provided bounds". That
@@ -591,19 +562,16 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
 
     Returns:
         WCSModel: The refined WCS model, or None if refinement failed.
+
     """
     logger.info("Second pass: Refining WCS with catalog stars")
 
     # Get catalog stars and sort by magnitude (brightest first)
     catalog_stars = frame.starfield.catalog_stars
-    catalog_stars.sort(
-        key=lambda star: star.magnitude if star.magnitude is not None else float("inf")
-    )
+    catalog_stars.sort(key=lambda star: star.magnitude if star.magnitude is not None else float("inf"))
 
     # Calculate proper SNRs using aperture photometry
-    star_snr_results = calculate_star_snrs_with_aperture_photometry(
-        frame, catalog_stars, plot=False
-    )
+    star_snr_results = calculate_star_snrs_with_aperture_photometry(frame, catalog_stars, plot=False)
 
     # Store SNR with each star for later use
     for star, snr, counts in star_snr_results:
@@ -615,9 +583,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
     filtered_catalog_stars = [star for star, snr, _ in star_snr_results if snr >= min_snr]
 
     # Estimate limiting magnitude
-    limiting_magnitude = estimate_limiting_magnitude_from_photometry(
-        frame, star_snr_results, min_snr
-    )
+    limiting_magnitude = estimate_limiting_magnitude_from_photometry(frame, star_snr_results, min_snr)
 
     # Store the limiting magnitude in the starfield
     if hasattr(frame.starfield, "limiting_magnitude") and limiting_magnitude is not None:
@@ -658,8 +624,10 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
             if settings.plotting.debug:
                 try:
                     plot_variable_kernel_grid(
-                        frame, astropy_wcs_for_kernels,
-                        nx=vk_cfg.diagnostics_grid_nx, ny=vk_cfg.diagnostics_grid_ny,
+                        frame,
+                        astropy_wcs_for_kernels,
+                        nx=vk_cfg.diagnostics_grid_nx,
+                        ny=vk_cfg.diagnostics_grid_ny,
                     )
                 except Exception as e:
                     logger.warning("Variable-kernel grid diagnostic failed for frame %d: %s", frame.index, e)
@@ -676,9 +644,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
         too_close = False
         for processed_data in filtered_star_data:
             processed_detection = processed_data[0]  # Get the detection from the tuple
-            dist = np.sqrt(
-                (star.x - processed_detection.x) ** 2 + (star.y - processed_detection.y) ** 2
-            )
+            dist = np.sqrt((star.x - processed_detection.x) ** 2 + (star.y - processed_detection.y) ** 2)
             if dist < min_separation:
                 too_close = True
                 break
@@ -701,13 +667,23 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
                 image_cutout = frame.frame.data[cy_min:cy_max, cx_min:cx_max]
                 try:
                     local_kernel = get_local_streak_kernel(
-                        astropy_wcs_for_kernels, streak, x=float(x), y=float(y),
-                        scale_width=True, upsample=100, halo_fwhm=None, halo_level=1e-3, verbose=False,
+                        astropy_wcs_for_kernels,
+                        streak,
+                        x=float(x),
+                        y=float(y),
+                        scale_width=True,
+                        upsample=100,
+                        halo_fwhm=None,
+                        halo_level=1e-3,
+                        verbose=False,
                     )
                 except Exception as e:
                     logger.warning(
                         "Local streak kernel failed at (%.1f, %.1f) frame %d: %s; using global.",
-                        x, y, frame.index, e,
+                        x,
+                        y,
+                        frame.index,
+                        e,
                     )
                     local_kernel = None
                 if local_kernel is not None:
@@ -719,8 +695,15 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
                         if settings.plotting.debug and diag_star_counter < vk_cfg.diagnostics_max_stars:
                             try:
                                 plot_variable_kernel_star_diagnostic(
-                                    frame, image_cutout, local_kernel, correlation,
-                                    cx_min, cy_min, measured_x, measured_y, diag_star_counter,
+                                    frame,
+                                    image_cutout,
+                                    local_kernel,
+                                    correlation,
+                                    cx_min,
+                                    cy_min,
+                                    measured_x,
+                                    measured_y,
+                                    diag_star_counter,
                                 )
                                 diag_star_counter += 1
                             except Exception as e:
@@ -758,9 +741,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
     if len(filtered_star_data) == 0:
         return None
 
-    logger.info(
-        f"Found {len(filtered_star_data)} well-separated, high-SNR stars for WCS refinement"
-    )
+    logger.info(f"Found {len(filtered_star_data)} well-separated, high-SNR stars for WCS refinement")
 
     # Update the detections list with just the detection objects
     frame.starfield.detections = [data[0] for data in filtered_star_data]
@@ -804,9 +785,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
         )
 
     # Upstream catalog SIP refit (config-gated) — see the sidereal sibling.
-    sip_degree = (
-        settings.astrometry.sip_refit_order if settings.astrometry.sip_refit_enabled else None
-    )
+    sip_degree = settings.astrometry.sip_refit_order if settings.astrometry.sip_refit_enabled else None
 
     # Fit new WCS
     try:
@@ -818,9 +797,7 @@ def refine_wcs_with_catalog_stars(frame: RateTrackFrame, convolved_image: np.nda
             sip_degree=sip_degree,
         )
     except ValueError as e:
-        logger.warning(
-            f"WCS could not be refined with catalog stars due to an error in fit_wcs_from_points: {e}."
-        )
+        logger.warning(f"WCS could not be refined with catalog stars due to an error in fit_wcs_from_points: {e}.")
         return None
 
     wcs_model = WCSModel.from_astropy_wcs(refined_astropy_wcs, image_shape=frame.frame.data.shape)
@@ -836,6 +813,7 @@ def ensure_star_counts(frame: RateTrackFrame) -> None:
 
     Args:
         frame (RateTrackFrame): The frame containing stars to check.
+
     """
     # Collect all stars that need counts
     stars_needing_counts = []
@@ -854,9 +832,7 @@ def ensure_star_counts(frame: RateTrackFrame) -> None:
         return  # No stars need counts
 
     # Use the batch processing function to calculate counts for all stars at once
-    star_snr_results = calculate_star_snrs_with_aperture_photometry(
-        frame, stars_needing_counts, plot=False
-    )
+    star_snr_results = calculate_star_snrs_with_aperture_photometry(frame, stars_needing_counts, plot=False)
 
     # Update the counts for each star
     for star, _, counts in star_snr_results:

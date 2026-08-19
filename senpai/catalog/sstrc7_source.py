@@ -21,6 +21,7 @@ string.
 """
 
 import logging
+from pathlib import Path
 
 import numpy as np
 import sstrc7
@@ -44,7 +45,7 @@ MAG_DECIMALS = 3
 BAND_NAMES = tuple(sstrc7.BAND_NAMES)
 
 
-def resolve_catalog_path(path: str | None = None):
+def resolve_catalog_path(path: str | None = None) -> Path:
     """Resolve the catalog directory.
 
     An explicit path (senpai's `catalog.path` config) wins; otherwise the
@@ -83,7 +84,7 @@ def _catalog_labels(source_flags: np.ndarray) -> list[str]:
 OPEN_FIRST_BANDS = ("Gaia_G", "Johnson_R", "Sloan_r", "Johnson_V", "Johnson_B")
 
 
-def _priority_ladder(field) -> np.ndarray:
+def _priority_ladder(field: "sstrc7.StarField") -> np.ndarray:
     """Per-star visual magnitude under the configured band priority.
 
     `johnson_v_first` (the default) is the package's own `visual` ladder. NaN
@@ -102,7 +103,7 @@ def _priority_ladder(field) -> np.ndarray:
     return ladder
 
 
-def _star_records(field, filter_center: float | None) -> list[dict]:
+def _star_records(field: "sstrc7.StarField", filter_center: float | None) -> list[dict]:
     """Convert a package StarField into senpai's star dicts."""
     # The catalog stores magnitudes as integer millimags; the package hands
     # them back as float32, so 17.968 arrives as 17.968000411987305. Rounding
@@ -192,6 +193,7 @@ def query_by_los_radec_with_rotation(
 
     Returns:
         A list of star dicts, in senpai's cross-catalog record shape.
+
     """
     margin = 1.0 + safety_margin
     # Half-diagonal of the expanded field: the smallest cone that contains the

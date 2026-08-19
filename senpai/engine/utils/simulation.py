@@ -1,3 +1,10 @@
+"""Synthesize frames with known contents, for tests that need a ground truth.
+
+Real frames have no truth attached: the answer a detector should give is itself an estimate. A
+generated frame's stars were placed at known positions with known fluxes, so a test can assert
+what the detector must find rather than that it found what it found last time.
+"""
+
 import logging
 
 import numpy as np
@@ -10,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def add_gaussian(source: dict, image: np.ndarray) -> None:
+    """Add one Gaussian source to an image in place."""
     x_mean, y_mean = source["x_mean"], source["y_mean"]
     x_stddev, y_stddev = source["x_stddev"], source["y_stddev"]
     amplitude = source["amplitude"]
@@ -34,8 +42,7 @@ def simulated_sidereal_frame(
     max_stars: int = 20,
     constant_signal: bool = False,
 ) -> np.ndarray:
-    """
-    Generate a simulated sidereal frame from a StarField object.
+    """Generate a simulated sidereal frame from a StarField object.
 
     Args:
         starfield: StarField object containing star information
@@ -45,6 +52,7 @@ def simulated_sidereal_frame(
 
     Returns:
         Simulated image as a numpy array
+
     """
     logger.info("Generating simulated sidereal frame")
 
@@ -136,6 +144,7 @@ def build_star_model_image(
 
     Returns:
         Synthetic star image (same shape as input, float64).
+
     """
     # Determine PSF width
     if fwhm_override is not None:

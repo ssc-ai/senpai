@@ -1,5 +1,4 @@
-"""
-Flat field utilities for creating and applying master flat corrections.
+r"""Flat field utilities for creating and applying master flat corrections.
 
 This module provides functions for:
 1. Creating master flat fields from directories of flat frame FITS files
@@ -29,7 +28,7 @@ Programmatic Usage:
 
 Creating master flats:
     from senpai.engine.utils.flats import create_master_flat
-    
+
     master_flat, header = create_master_flat(
         flat_directory="/path/to/flats/",
         output_path="/path/to/master_flat.fits",
@@ -38,7 +37,7 @@ Creating master flats:
 
 Applying flat corrections:
     from senpai.engine.utils.preprocessing import apply_flat_field
-    
+
     corrected_image = apply_flat_field(
         image=processed_fits_image,
         master_flat="/path/to/master_flat.fits"
@@ -46,48 +45,51 @@ Applying flat corrections:
 
 Auto-applying calibrations based on config:
     from senpai.engine.utils.preprocessing import auto_apply_calibrations
-    
+
     calibrated_image = auto_apply_calibrations(processed_fits_image)
 """
 
+import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from astropy.io import fits
 from astropy.stats import SigmaClip
 
 from senpai.engine.models.images import ProcessedFitsImage, ProcessingStep
+from senpai.engine.utils.darks import find_best_dark_for_exposure
 
 
 @dataclass
 class _FlatSource:
-    """A validated flat frame, referenced by path; data is re-read lazily
-    chunk-by-chunk during combination so full frames never co-reside in
-    memory (a night of unbinned 8120^2 twilight flats is ~50 GB)."""
+    """A validated flat frame, referenced by path rather than held in memory.
+
+    Data is re-read lazily chunk-by-chunk during combination so full frames never co-reside:
+    a night of unbinned 8120-square twilight flats is about 50 GB.
+    """
 
     path: Path
     median: float  # frame median (after dark subtraction); normalizes the frame
-    dark_path: Optional[Path] = None
+    dark_path: Path | None = None
     dark_scale: float = 1.0
 
 
 def create_master_flat(
-    flat_directory: Union[str, Path],
-    output_path: Optional[Union[str, Path]] = None,
+    flat_directory: str | Path,
+    output_path: str | Path | None = None,
     min_median: float = 40000.0,
     max_median: float = 50000.0,
     max_counts: float = 50000.0,
     max_percentile: float = 99.9,
     sigma: float = 3.0,
     maxiters: int = 5,
-    required_headers: Optional[List[str]] = None,
-    dark_directory: Optional[Union[str, Path]] = None,
+    required_headers: list[str] | None = None,
+    dark_directory: str | Path | None = None,
     max_dark_exptime_ratio: float = 10.0,
-) -> Tuple[np.ndarray, fits.Header]:
-    """
-    Create a master flat from a directory of flat field FITS files.
+) -> tuple[np.ndarray, fits.Header]:
+    """Create a master flat from a directory of flat field FITS files.
 
     Parameters
     ----------
@@ -121,6 +123,7 @@ def create_master_flat(
         flat: dividing a science frame by it preserves the flux scale)
     header : fits.Header
         Header from the first valid flat frame
+
     """
     flat_directory = Path(flat_directory)
 
@@ -185,12 +188,11 @@ def create_master_flat(
 
 
 def apply_flat_field(
-    image: Union[ProcessedFitsImage, np.ndarray],
-    master_flat: Union[str, Path, np.ndarray],
+    image: ProcessedFitsImage | np.ndarray,
+    master_flat: str | Path | np.ndarray,
     store_intermediates: bool = False,
-) -> Union[ProcessedFitsImage, np.ndarray]:
-    """
-    Apply flat field correction to an image.
+) -> ProcessedFitsImage | np.ndarray:
+    """Apply flat field correction to an image.
 
     Parameters
     ----------
@@ -205,6 +207,7 @@ def apply_flat_field(
     -------
     corrected_image : ProcessedFitsImage or np.ndarray
         Flat field corrected image
+
     """
     # Load master flat if provided as file path. float32 throughout: master
     # flats are saved as float32 anyway, and the corrected frame's dtype is
@@ -260,9 +263,8 @@ def apply_flat_field(
         return image.astype(np.float32) / safe_flat
 
 
-def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]) -> Dict[Tuple[str, ...], List[Path]]:
-    """
-    Group FITS files by consistent header values.
+def _group_frames_by_headers(fits_files: list[Path], required_headers: list[str]) -> dict[tuple[str, ...], list[Path]]:
+    """Group FITS files by consistent header values.
 
     Parameters
     ----------
@@ -275,6 +277,7 @@ def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]
     -------
     groups : dict
         Dictionary mapping group keys (tuples of header values) to lists of file paths
+
     """
     if not required_headers:
         # If no headers specified, return all files as one group
@@ -305,9 +308,8 @@ def _group_frames_by_headers(fits_files: List[Path], required_headers: List[str]
     return groups
 
 
-def load_master_flat(file_path: Union[str, Path]) -> Tuple[np.ndarray, fits.Header]:
-    """
-    Load a master flat from a FITS file.
+def load_master_flat(file_path: str | Path) -> tuple[np.ndarray, fits.Header]:
+    """Load a master flat from a FITS file.
 
     Parameters
     ----------
@@ -320,18 +322,18 @@ def load_master_flat(file_path: Union[str, Path]) -> Tuple[np.ndarray, fits.Head
         The master flat field data
     header : fits.Header
         The FITS header
+
     """
     with fits.open(file_path) as hdul:
         return hdul[0].data.astype(np.float64), hdul[0].header
 
 
 def _create_descriptive_filename(
-    base_output_path: Union[str, Path],
-    group_key: Tuple[str, ...],
-    header_names: List[str],
+    base_output_path: str | Path,
+    group_key: tuple[str, ...],
+    header_names: list[str],
 ) -> Path:
-    """
-    Create a descriptive filename based on group characteristics.
+    """Create a descriptive filename based on group characteristics.
 
     Parameters
     ----------
@@ -346,6 +348,7 @@ def _create_descriptive_filename(
     -------
     Path
         Descriptive filename incorporating group characteristics
+
     """
     base_path = Path(base_output_path)
     output_dir = base_path.parent
@@ -367,13 +370,11 @@ def _create_descriptive_filename(
 
 
 def _find_dark_for_flat(
-    dark_directory: Union[str, Path],
+    dark_directory: str | Path,
     flat_exptime: float,
     max_exptime_ratio: float = 10.0,
-) -> Optional[Tuple[Path, float]]:
+) -> tuple[Path, float] | None:
     """Find the best-matching dark for a flat exposure. Returns (path, dark_exptime)."""
-    from senpai.engine.utils.darks import find_best_dark_for_exposure
-
     return find_best_dark_for_exposure(
         dark_directory=dark_directory,
         target_exptime=flat_exptime,
@@ -383,15 +384,15 @@ def _find_dark_for_flat(
 
 
 def _validate_flat_sources(
-    fits_files: List[Path],
+    fits_files: list[Path],
     min_median: float,
     max_median: float,
     max_counts: float,
     max_percentile: float,
-    dark_directory: Optional[Union[str, Path]] = None,
+    dark_directory: str | Path | None = None,
     max_dark_exptime_ratio: float = 10.0,
     indent: str = "",
-) -> Tuple[List[_FlatSource], List[fits.Header], int]:
+) -> tuple[list[_FlatSource], list[fits.Header], int]:
     """Quality-filter flat frames from subsampled stats only.
 
     Full frames are never held in memory; stats come from an 8x-strided
@@ -399,8 +400,8 @@ def _validate_flat_sources(
     BSCALE/BZERO-scaled integer FITS, where memmap is unavailable). The
     combination step re-reads accepted frames chunk-by-chunk.
     """
-    valid_sources: List[_FlatSource] = []
-    valid_headers: List[fits.Header] = []
+    valid_sources: list[_FlatSource] = []
+    valid_headers: list[fits.Header] = []
     dark_subtracted_count = 0
 
     for file_path in fits_files:
@@ -409,13 +410,11 @@ def _validate_flat_sources(
                 header = hdul[0].header
                 sample = np.asarray(hdul[0].section[::8, ::8], dtype=np.float64)
 
-            dark_path: Optional[Path] = None
+            dark_path: Path | None = None
             dark_scale = 1.0
             if dark_directory is not None:
                 flat_exptime = header.get("EXPTIME", header.get("EXPOSURE", 1.0))
-                dark_result = _find_dark_for_flat(
-                    dark_directory, flat_exptime, max_dark_exptime_ratio
-                )
+                dark_result = _find_dark_for_flat(dark_directory, flat_exptime, max_dark_exptime_ratio)
                 if dark_result is None:
                     print(f"{indent}    No suitable dark found for {flat_exptime}s flat")
                 else:
@@ -424,9 +423,7 @@ def _validate_flat_sources(
                     if abs(flat_exptime - dark_exptime) > 0.1:
                         dark_scale = flat_exptime / dark_exptime
                     with fits.open(dark_path) as dh:
-                        sample = sample - dark_scale * np.asarray(
-                            dh[0].section[::8, ::8], dtype=np.float64
-                        )
+                        sample = sample - dark_scale * np.asarray(dh[0].section[::8, ::8], dtype=np.float64)
                     dark_subtracted_count += 1
 
             # Check linearity constraints using percentile instead of max to handle hot pixels
@@ -434,9 +431,7 @@ def _validate_flat_sources(
             frame_percentile = float(np.percentile(sample, max_percentile))
 
             if min_median <= frame_median <= max_median and frame_percentile < max_counts:
-                valid_sources.append(
-                    _FlatSource(Path(file_path), frame_median, dark_path, dark_scale)
-                )
+                valid_sources.append(_FlatSource(Path(file_path), frame_median, dark_path, dark_scale))
                 valid_headers.append(header)
                 print(
                     f"{indent}✓ {file_path.name}: median={frame_median:.1f}, "
@@ -455,7 +450,7 @@ def _validate_flat_sources(
 
 
 def _combine_flat_sources(
-    sources: List[_FlatSource],
+    sources: list[_FlatSource],
     sigma: float,
     maxiters: int,
     chunk_size: int = 512,
@@ -481,16 +476,14 @@ def _combine_flat_sources(
         print(f"    Combining rows {start_row}-{end_row - 1}")
 
         chunk_stack = np.empty((len(sources), end_row - start_row, width), dtype=np.float32)
-        dark_chunks: Dict[Path, np.ndarray] = {}
+        dark_chunks: dict[Path, np.ndarray] = {}
         for i, src in enumerate(sources):
             with fits.open(src.path) as hdul:
                 chunk = np.asarray(hdul[0].section[start_row:end_row, :], dtype=np.float32)
             if src.dark_path is not None:
                 if src.dark_path not in dark_chunks:
                     with fits.open(src.dark_path) as dh:
-                        dark_chunks[src.dark_path] = np.asarray(
-                            dh[0].section[start_row:end_row, :], dtype=np.float32
-                        )
+                        dark_chunks[src.dark_path] = np.asarray(dh[0].section[start_row:end_row, :], dtype=np.float32)
                 chunk = chunk - np.float32(src.dark_scale) * dark_chunks[src.dark_path]
             chunk_stack[i] = chunk / np.float32(src.median)
 
@@ -499,9 +492,7 @@ def _combine_flat_sources(
             chunk_result = np.ma.median(clipped, axis=0)
             # Pixels masked in every frame (shouldn't happen) fall back to
             # the unclipped median.
-            chunk_result = np.asarray(
-                chunk_result.filled(np.nan), dtype=np.float64
-            )
+            chunk_result = np.asarray(chunk_result.filled(np.nan), dtype=np.float64)
             bad = np.isnan(chunk_result)
             if bad.any():
                 chunk_result[bad] = np.median(chunk_stack, axis=0)[bad]
@@ -517,11 +508,8 @@ def _combine_flat_sources(
     return master_flat
 
 
-def main():
+def main() -> None:
     """CLI interface for creating master flat fields."""
-    import argparse
-    import sys
-
     parser = argparse.ArgumentParser(
         description="Create master flat fields from a directory of flat field FITS files",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -631,7 +619,6 @@ def main():
 
             if len(frame_groups) == 1:
                 print("Only one group found, creating single master flat...")
-                output_path = args.output
             else:
                 print(f"Found {len(frame_groups)} groups with different headers:")
                 for i, (group_key, group_files) in enumerate(frame_groups.items()):
@@ -649,7 +636,7 @@ def main():
                     group_output = args.output
 
                 # Create master flat from this group's files
-                master_flat, header = _create_master_flat_from_files(
+                master_flat, _header = _create_master_flat_from_files(
                     group_files,
                     group_output,
                     args.min_median_counts,
@@ -666,7 +653,7 @@ def main():
                 print(f"✓ Master flat created: {group_output}")
         else:
             # Original single master flat creation
-            master_flat, header = create_master_flat(
+            master_flat, _header = create_master_flat(
                 flat_directory=args.input_dir,
                 output_path=args.output,
                 min_median=args.min_median_counts,
@@ -690,8 +677,8 @@ def main():
 
 
 def _create_master_flat_from_files(
-    fits_files: List[Path],
-    output_path: Union[str, Path],
+    fits_files: list[Path],
+    output_path: str | Path,
     min_median: float,
     max_median: float,
     max_counts: float,
@@ -699,12 +686,10 @@ def _create_master_flat_from_files(
     min_frames: int,
     sigma: float,
     maxiters: int,
-    dark_directory: Optional[Union[str, Path]] = None,
+    dark_directory: str | Path | None = None,
     max_dark_exptime_ratio: float = 10.0,
-) -> Tuple[np.ndarray, fits.Header]:
-    """
-    Helper function to create master flat from a specific list of files.
-    """
+) -> tuple[np.ndarray, fits.Header]:
+    """Create a master flat from a specific list of files."""
     valid_sources, valid_headers, dark_subtracted_count = _validate_flat_sources(
         fits_files,
         min_median=min_median,

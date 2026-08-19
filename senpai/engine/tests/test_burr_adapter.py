@@ -1,5 +1,6 @@
-"""Tests for senpai.integrations.burr — filename parsing, run_state model,
-and the BurrNight indexer/batcher.
+"""Tests for the burr integration.
+
+Covers filename parsing, the run_state model and the night indexer/batcher.
 
 Fixtures are built inline against tmp_path so the suite carries no data files.
 """
@@ -7,10 +8,13 @@ Fixtures are built inline against tmp_path so the suite carries no data files.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pytest
+from astropy.io import fits
 
 from senpai.integrations.burr import (
     BurrNight,
@@ -30,7 +34,10 @@ from senpai.integrations.burr.night import (
 
 
 class TestParseBurrFilename:
-    def test_semantic_calsats(self):
+    """Parsing what a burr FITS filename encodes, and failing softly when it encodes nothing."""
+
+    def test_semantic_calsats(self) -> None:
+        """A calsat filename yields its task, target and frame index."""
         p = parse_burr_filename("20260527T071650_calsats_41175_f0.fits")
         assert not p.is_uuid
         assert p.task == "calsats"
@@ -39,64 +46,79 @@ class TestParseBurrFilename:
         assert p.timestamp == datetime(2026, 5, 27, 7, 16, 50, tzinfo=UTC)
         assert p.command_verb == "calsat_observed"
 
-    def test_semantic_coverage_alt_az(self):
+    def test_semantic_coverage_alt_az(self) -> None:
+        """A coverage filename with an alt/az target parses."""
         p = parse_burr_filename("20260527T071737_coverage_AltAzTarget_f0.fits")
         assert p.task == "coverage"
         assert p.target == "AltAzTarget"
         assert p.frame_index == 0
         assert p.command_verb == "coverage_point_observed"
 
-    def test_semantic_photometric_standards(self):
-        p = parse_burr_filename(
-            "20260527T071926_photometric_standards_ICRSTarget_f0.fits"
-        )
+    def test_semantic_photometric_standards(self) -> None:
+        """A multi-word task is preserved verbatim rather than split on the underscore."""
+        p = parse_burr_filename("20260527T071926_photometric_standards_ICRSTarget_f0.fits")
         # Multi-word task ('photometric_standards') is preserved verbatim.
         assert p.task == "photometric_standards"
         assert p.target == "ICRSTarget"
         assert p.command_verb == "photometric_standards_observed"
 
-    def test_semantic_rate_subframe(self):
+    def test_semantic_rate_subframe(self) -> None:
+        """A rate sub-frame yields its target and its index within the set."""
         p = parse_burr_filename("20260527T071754_coverage_RateTarget_f1.fits")
         assert p.target == "RateTarget"
         assert p.frame_index == 1
 
-    def test_semantic_calsats_with_underscored_target(self):
+    def test_semantic_calsats_with_underscored_target(self) -> None:
         # DAO-01 calsats targets carry a SAT_ prefix + NORAD id; the target must
         # survive the embedded underscore (the old [^_]+ target dropped these).
+        """A target containing an underscore survives parsing.
+
+        Calsat targets carry a SAT_ prefix and a NORAD id, which the older single-token pattern
+        dropped entirely.
+        """
         p = parse_burr_filename("20260530T022055_calsats_SAT_26605_f0.fits")
         assert p.task == "calsats"
         assert p.target == "SAT_26605"
         assert p.frame_index == 0
         assert p.timestamp == datetime(2026, 5, 30, 2, 20, 55, tzinfo=UTC)
 
-    def test_semantic_photometric_multi_underscore_target(self):
+    def test_semantic_photometric_multi_underscore_target(self) -> None:
+        """A target with several underscores parses whole."""
         p = parse_burr_filename("20260530T022546_photometric_standards_104_485_f1.fits")
         assert p.task == "photometric_standards"
         assert p.target == "104_485"
         assert p.frame_index == 1
 
-    def test_semantic_photometric_messy_target(self):
+    def test_semantic_photometric_messy_target(self) -> None:
         # Targets like BD_+5_2468 mix underscores and punctuation.
+        """A target mixing underscores and punctuation parses whole."""
         p = parse_burr_filename("20260530T040313_photometric_standards_BD_+5_2468_f0.fits")
         assert p.task == "photometric_standards"
         assert p.target == "BD_+5_2468"
         assert p.frame_index == 0
 
-    def test_semantic_coverage_numeric_pixel(self):
+    def test_semantic_coverage_numeric_pixel(self) -> None:
+        """A numeric coverage pixel id parses as the target."""
         p = parse_burr_filename("20260531T035148_coverage_7_f1.fits")
         assert p.task == "coverage"
         assert p.target == "7"
         assert p.frame_index == 1
 
-    def test_unknown_task_is_unrecognized(self):
+    def test_unknown_task_is_unrecognized(self) -> None:
         # Anchoring on known tasks means an unknown verb falls through rather
         # than being mis-split — caller can fall back to header inspection.
+        """An unknown task falls through rather than being mis-split.
+
+        Anchoring on the known task names means the caller can fall back to reading the header
+        instead of acting on a wrong split.
+        """
         p = parse_burr_filename("20260530T010000_madeup_task_X_f0.fits")
         assert not p.is_uuid
         assert p.task is None
         assert p.timestamp is None
 
-    def test_uuid_filename(self):
+    def test_uuid_filename(self) -> None:
+        """A UUID-style name is recognised as carrying no semantics."""
         p = parse_burr_filename("0073b353-3f9f-11f1-9659-010101010000.fits")
         assert p.is_uuid
         assert p.timestamp is None
@@ -104,16 +126,22 @@ class TestParseBurrFilename:
         assert p.frame_index is None
         assert p.command_verb is None
 
-    def test_unrecognized_filename(self):
+    def test_unrecognized_filename(self) -> None:
         # Should not raise, returns a record where everything is None and
         # is_uuid is False — caller decides what to do.
+        """An unparseable name yields an all-None record rather than raising.
+
+        The caller decides what to do with a frame it cannot place; parsing is not the place to fail
+        the night.
+        """
         p = parse_burr_filename("garbage_unparseable.fits")
         assert not p.is_uuid
         assert p.timestamp is None
         assert p.task is None
         assert p.command_verb is None
 
-    def test_accepts_path_input(self):
+    def test_accepts_path_input(self) -> None:
+        """A Path is accepted as well as a string, and is preserved on the record."""
         p = parse_burr_filename(Path("/some/dir/20260527T071650_calsats_41175_f0.fits"))
         assert p.task == "calsats"
         assert p.path == Path("/some/dir/20260527T071650_calsats_41175_f0.fits")
@@ -123,14 +151,20 @@ class TestParseBurrFilename:
 
 
 class TestTrackingModeFromTarget:
-    @pytest.mark.parametrize("target,expected", [
-        ("AltAzTarget", "sidereal"),
-        ("ICRSTarget", "sidereal"),
-        ("RateTarget", "rate"),
-        ("41175", None),   # NORAD id — adapter must fall back to command log
-        (None, None),
-    ])
-    def test_mapping(self, target, expected):
+    """Deriving the intended track mode from the target token in a filename."""
+
+    @pytest.mark.parametrize(
+        "target,expected",
+        [
+            ("AltAzTarget", "sidereal"),
+            ("ICRSTarget", "sidereal"),
+            ("RateTarget", "rate"),
+            ("41175", None),  # NORAD id — adapter must fall back to command log
+            (None, None),
+        ],
+    )
+    def test_mapping(self, target: str, expected: str | None) -> None:
+        """Each target token maps to the track mode it implies."""
         assert _tracking_mode_from_target(target) == expected
 
 
@@ -138,7 +172,10 @@ class TestTrackingModeFromTarget:
 
 
 class TestRunState:
-    def test_loads_minimal_real_shape(self, tmp_path):
+    """Loading the scheduler's run_state.json into the model."""
+
+    def test_loads_minimal_real_shape(self, tmp_path: Path) -> None:
+        """A realistic run_state loads, with the fields downstream code reads populated."""
         rs_data = {
             "version": "0.3.0",
             "run_id": "Hornet_20260527",
@@ -193,11 +230,9 @@ class TestRunState:
         c = coll[0]
         assert c.tracking_modes == ["rate", "rate", "rate", "sidereal"]
         assert c.target_label == "norad_32711"
-        assert c.observation_time == datetime(
-            2026, 5, 27, 7, 6, 58, 221203, tzinfo=UTC
-        )
+        assert c.observation_time == datetime(2026, 5, 27, 7, 6, 58, 221203, tzinfo=UTC)
 
-    def test_ignores_unknown_top_level_fields(self, tmp_path):
+    def test_ignores_unknown_top_level_fields(self, tmp_path: Path) -> None:
         """Forward compat: burr controller adds fields, RunState shouldn't break."""
         rs_data = {
             "run_id": "X",
@@ -213,53 +248,61 @@ class TestRunState:
 # --- attribution --------------------------------------------------------------
 
 
-def _cmd(verb: str, obs_iso: str, **md) -> ExecutedCommand:
+def _cmd(verb: str, obs_iso: str, **md: object) -> ExecutedCommand:
     return ExecutedCommand(
-        timestamp=obs_iso, command=verb, result=None, error=None,
-        stage="setup", metadata={"observation_time": obs_iso, **md},
+        timestamp=obs_iso,
+        command=verb,
+        result=None,
+        error=None,
+        stage="setup",
+        metadata={"observation_time": obs_iso, **md},
     )
 
 
 class TestAttributeCommand:
-    def test_picks_latest_preceding_within_window(self):
+    """Binding a frame to the logged command that took it."""
+
+    def test_picks_latest_preceding_within_window(self) -> None:
+        """A frame binds to the most recent command that preceded it inside the window."""
         cmds = [
             _cmd("coverage_point_observed", "2026-05-27T07:17:20+00:00", pixel_id=7),
             _cmd("coverage_point_observed", "2026-05-27T07:21:08+00:00", pixel_id=0),
         ]
         # A frame timestamp inside the first command's window picks the first.
-        parsed = parse_burr_filename(
-            "20260527T071737_coverage_AltAzTarget_f0.fits"
-        )
+        parsed = parse_burr_filename("20260527T071737_coverage_AltAzTarget_f0.fits")
         match = _attribute_command(parsed, cmds, window_s=300.0)
         assert match is cmds[0]
 
-    def test_skips_when_after_window(self):
+    def test_skips_when_after_window(self) -> None:
+        """A command too far before the frame does not bind."""
         cmds = [_cmd("calsat_observed", "2026-05-27T07:00:00+00:00", norad_id=1)]
         parsed = parse_burr_filename("20260527T080000_calsats_1_f0.fits")  # 1h later
         assert _attribute_command(parsed, cmds, window_s=300.0) is None
 
-    def test_skips_when_command_after_frame(self):
+    def test_skips_when_command_after_frame(self) -> None:
         # Frame timestamp predates the command — must never attribute.
+        """A command logged after the frame never binds.
+
+        Attribution must respect causality, or a frame would be credited to the next target.
+        """
         cmds = [_cmd("calsat_observed", "2026-05-27T07:30:00+00:00", norad_id=1)]
         parsed = parse_burr_filename("20260527T070000_calsats_1_f0.fits")
         assert _attribute_command(parsed, cmds, window_s=999_999.0) is None
 
-    def test_does_not_cross_command_types(self):
+    def test_does_not_cross_command_types(self) -> None:
+        """A coverage frame never binds to a calsat command, however close in time."""
         cmds = [_cmd("calsat_observed", "2026-05-27T07:16:00+00:00", norad_id=1)]
         # A coverage frame must never bind to a calsat_observed command.
-        parsed = parse_burr_filename(
-            "20260527T071737_coverage_AltAzTarget_f0.fits"
-        )
+        parsed = parse_burr_filename("20260527T071737_coverage_AltAzTarget_f0.fits")
         assert _attribute_command(parsed, cmds, window_s=300.0) is None
 
-    def test_picks_closer_when_multiple_match(self):
+    def test_picks_closer_when_multiple_match(self) -> None:
+        """With several eligible commands, the nearest preceding one wins."""
         cmds = [
             _cmd("coverage_point_observed", "2026-05-27T07:00:00+00:00"),
             _cmd("coverage_point_observed", "2026-05-27T07:17:00+00:00"),
         ]
-        parsed = parse_burr_filename(
-            "20260527T071800_coverage_AltAzTarget_f0.fits"
-        )
+        parsed = parse_burr_filename("20260527T071800_coverage_AltAzTarget_f0.fits")
         match = _attribute_command(parsed, cmds, window_s=3600.0)
         assert match is cmds[1]
 
@@ -273,34 +316,38 @@ def _record(ts_seconds: int) -> FrameRecord:
     The filename's embedded ts is irrelevant — we inject the timestamp directly
     so we can drive gap-based clustering with arbitrary offsets.
     """
-    from dataclasses import replace
     base = datetime(2026, 5, 27, 7, 0, 0, tzinfo=UTC)
-    parsed = parse_burr_filename(
-        "20260527T070000_photometric_standards_ICRSTarget_f0.fits"
-    )
+    parsed = parse_burr_filename("20260527T070000_photometric_standards_ICRSTarget_f0.fits")
     parsed = replace(parsed, timestamp=base + timedelta(seconds=ts_seconds))
     return FrameRecord(path=Path(f"x_{ts_seconds}.fits"), parsed=parsed)
 
 
-def _offsets(cluster, base=datetime(2026, 5, 27, 7, 0, 0, tzinfo=UTC)):
+def _offsets(cluster: list[FrameRecord], base: datetime = datetime(2026, 5, 27, 7, 0, 0, tzinfo=UTC)) -> list[int]:
+    """Second offsets of a cluster's frames from a base time, for readable assertions."""
     return [int((r.parsed.timestamp - base).total_seconds()) for r in cluster]
 
 
 class TestClusterByTimeGap:
-    def test_empty(self):
+    """Clustering frames into batches on time gaps alone."""
+
+    def test_empty(self) -> None:
+        """No frames yields no clusters."""
         assert list(_cluster_by_time_gap([], 60.0)) == []
 
-    def test_single(self):
+    def test_single(self) -> None:
+        """One frame yields one cluster of one."""
         clusters = list(_cluster_by_time_gap([_record(0)], 60.0))
         assert len(clusters) == 1 and len(clusters[0]) == 1
 
-    def test_within_gap_clusters_together(self):
+    def test_within_gap_clusters_together(self) -> None:
+        """Frames closer than the gap stay in one cluster."""
         rs = [_record(0), _record(10), _record(40)]
         clusters = list(_cluster_by_time_gap(rs, 60.0))
         assert len(clusters) == 1
         assert _offsets(clusters[0]) == [0, 10, 40]
 
-    def test_gap_breaks_cluster(self):
+    def test_gap_breaks_cluster(self) -> None:
+        """A gap larger than the threshold starts a new cluster."""
         rs = [_record(0), _record(10), _record(100)]  # 90s gap between 10 and 100
         clusters = list(_cluster_by_time_gap(rs, 60.0))
         assert len(clusters) == 2
@@ -312,9 +359,10 @@ class TestClusterByTimeGap:
 
 
 def _rec(task: str, target: str, ts_seconds: int) -> FrameRecord:
-    """A FrameRecord with a chosen task/target and a timestamp offset, for
-    exercising the command-less (task, target) clustering path."""
-    from dataclasses import replace
+    """Build a FrameRecord with a chosen task, target and timestamp offset.
+
+    For exercising the clustering path taken when no command log is available.
+    """
     base = datetime(2026, 5, 30, 2, 0, 0, tzinfo=UTC)
     parsed = parse_burr_filename(f"20260530T020000_{task}_{target}_f0.fits")
     parsed = replace(parsed, timestamp=base + timedelta(seconds=ts_seconds))
@@ -322,20 +370,33 @@ def _rec(task: str, target: str, ts_seconds: int) -> FrameRecord:
 
 
 class TestPointingKey:
-    def test_mode_token_target_has_no_pointing_identity(self):
+    """Which target tokens carry a pointing identity and which only carry a track mode."""
+
+    def test_mode_token_target_has_no_pointing_identity(self) -> None:
         # AltAzTarget/RateTarget encode tracking mode, not pointing → None.
+        """Mode tokens carry no pointing identity, so they cannot break a cluster.
+
+        AltAzTarget and RateTarget describe how the mount tracked, not where it looked.
+        """
         assert _pointing_key(_rec("coverage", "AltAzTarget", 0)) is None
         assert _pointing_key(_rec("photometric_standards", "RateTarget", 0)) is None
 
-    def test_concrete_target_is_pointing_identity(self):
+    def test_concrete_target_is_pointing_identity(self) -> None:
+        """A concrete target -- a NORAD id or a coverage pixel -- is its own pointing identity."""
         assert _pointing_key(_rec("calsats", "SAT_26605", 0)) == "SAT_26605"
         assert _pointing_key(_rec("coverage", "7", 0)) == "7"
 
 
 class TestClusterByPointing:
-    def test_target_change_breaks_within_gap(self):
+    """Clustering frames on pointing as well as time, for nights with no command log."""
+
+    def test_target_change_breaks_within_gap(self) -> None:
         # Two calsat sequences 10s apart — well within the 60s gap — but
         # different NORAD ids must land in separate batches.
+        """A change of target splits a batch even inside the time gap.
+
+        Two calsat sequences ten seconds apart are two collects, not one.
+        """
         rs = [
             _rec("calsats", "SAT_1", 0),
             _rec("calsats", "SAT_1", 7),
@@ -347,15 +408,20 @@ class TestClusterByPointing:
         assert {r.parsed.target for r in clusters[0]} == {"SAT_1"}
         assert {r.parsed.target for r in clusters[1]} == {"SAT_2"}
 
-    def test_same_target_far_apart_still_splits_on_gap(self):
+    def test_same_target_far_apart_still_splits_on_gap(self) -> None:
         # Same coverage pixel revisited after a long slew → two batches.
+        """The same target revisited after a long gap is two batches."""
         rs = [_rec("coverage", "7", 0), _rec("coverage", "7", 5000)]
         clusters = list(_cluster_by_time_gap(rs, 60.0, key=_pointing_key))
         assert [len(c) for c in clusters] == [1, 1]
 
-    def test_none_key_falls_back_to_pure_gap(self):
+    def test_none_key_falls_back_to_pure_gap(self) -> None:
         # Mode-token targets alternate within one pointing; a None key must not
         # force a break (preserves the photometric_standards orphan behavior).
+        """A target with no pointing identity does not force a break.
+
+        Mode tokens alternate within a single pointing, so keying on them would split every set.
+        """
         rs = [
             _rec("photometric_standards", "ICRSTarget", 0),
             _rec("photometric_standards", "RateTarget", 8),
@@ -375,7 +441,6 @@ def _make_night(
     commands: list[dict],
 ) -> tuple[BurrNight, Path]:
     """Spin up a tmp_path layout that mirrors /burr/{Hornet/, burr/Hornet_XXXX/}."""
-
     burr_root = tmp_path / "burr_root"
     sensor_dir = burr_root / "Hornet"
     night_meta = burr_root / "burr" / "Hornet_20260527" / "metadata"
@@ -402,7 +467,8 @@ def _make_night(
     return night, sensor_dir
 
 
-def test_burrnight_calsat_batch_grouping(tmp_path):
+def test_burrnight_calsat_batch_grouping(tmp_path: Path) -> None:
+    """A calsat night groups into one batch per satellite sequence."""
     files = [
         "20260527T071650_calsats_41175_f0.fits",
         "20260527T071658_calsats_41175_f1.fits",
@@ -430,15 +496,19 @@ def test_burrnight_calsat_batch_grouping(tmp_path):
     assert len(b.frames) == 4
     # f0..f3 → modes from tracking_modes vector for calsats
     assert [f.intended_tracking_mode for f in b.frames] == [
-        "rate", "rate", "rate", "sidereal",
+        "rate",
+        "rate",
+        "rate",
+        "sidereal",
     ]
 
 
-def test_burrnight_coverage_uses_target_token_for_mode(tmp_path):
+def test_burrnight_coverage_uses_target_token_for_mode(tmp_path: Path) -> None:
+    """Coverage frames take their intended track mode from the target token."""
     files = [
-        "20260527T071737_coverage_AltAzTarget_f0.fits",   # sidereal sub-exposure
-        "20260527T071747_coverage_RateTarget_f0.fits",    # rate, sub-frame 0
-        "20260527T071754_coverage_RateTarget_f1.fits",    # rate, sub-frame 1
+        "20260527T071737_coverage_AltAzTarget_f0.fits",  # sidereal sub-exposure
+        "20260527T071747_coverage_RateTarget_f0.fits",  # rate, sub-frame 0
+        "20260527T071754_coverage_RateTarget_f1.fits",  # rate, sub-frame 1
     ]
     cmd = {
         "timestamp": "2026-05-27T07:17:20+00:00",
@@ -447,7 +517,8 @@ def test_burrnight_coverage_uses_target_token_for_mode(tmp_path):
         "result": "ok",
         "metadata": {
             "observation_time": "2026-05-27T07:17:20+00:00",
-            "map_id": 1, "pixel_id": 7,
+            "map_id": 1,
+            "pixel_id": 7,
             "exposure_times": [1.0, 3.0, 5.0],
             "tracking_modes": ["sidereal", "rate", "rate"],
         },
@@ -460,9 +531,10 @@ def test_burrnight_coverage_uses_target_token_for_mode(tmp_path):
     assert sorted(modes) == ["rate", "rate", "sidereal"]
 
 
-def test_burrnight_clusters_orphans_per_pointing(tmp_path):
+def test_burrnight_clusters_orphans_per_pointing(tmp_path: Path) -> None:
     # No command logged (photometric_standards), but timestamps cluster into
     # two pointings separated by >60s.
+    """Frames with no logged command still batch, clustered per pointing."""
     files = [
         "20260527T071926_photometric_standards_ICRSTarget_f0.fits",
         "20260527T071935_photometric_standards_RateTarget_f0.fits",
@@ -478,7 +550,8 @@ def test_burrnight_clusters_orphans_per_pointing(tmp_path):
     assert sizes == [2, 3]
 
 
-def test_burrnight_skips_out_of_window_frames(tmp_path):
+def test_burrnight_skips_out_of_window_frames(tmp_path: Path) -> None:
+    """Frames outside the night window are skipped rather than batched into it."""
     files = [
         "20250101T010000_calsats_1_f0.fits",  # way before night window
         "20260527T071650_calsats_41175_f0.fits",  # in-window
@@ -492,11 +565,13 @@ def test_burrnight_skips_out_of_window_frames(tmp_path):
     assert "20250101T010000_calsats_1_f0.fits" not in paths
 
 
-def test_auto_nights_splits_flat_multi_night_dir(tmp_path):
-    """A flat dir holding two observing nights (burr's 'didn't split per night'
-    bug) splits into two BurrNights with evening-local ids, frame-derived
-    windows, and command-less (task, target) batching."""
+def test_auto_nights_splits_flat_multi_night_dir(tmp_path: Path) -> None:
+    """A flat directory holding two observing nights splits into two nights.
 
+    Each gets an evening-local id and a frame-derived window, and batches by task and target
+    since there is no command log. This is the case where the scheduler did not split its
+    output per night.
+    """
     data_dir = tmp_path / "DAO-01"
     meta_dir = tmp_path / "processed" / "DAO-01_20260528" / "metadata"
     data_dir.mkdir(parents=True)
@@ -551,14 +626,12 @@ def test_auto_nights_splits_flat_multi_night_dir(tmp_path):
     assert len(batches_b[0].frames) == 2
 
 
-def test_frame_batches_by_seq_key(tmp_path):
-    """seq_key groups frames by a FITS header id (BURRSEQ): one batch per set,
-    and frames missing the keyword fall back to command/orphan batching rather
-    than being dropped."""
+def test_frame_batches_by_seq_key(tmp_path: Path) -> None:
+    """A sequence-id header groups frames into one batch per set.
 
-    import numpy as np
-    from astropy.io import fits
-
+    Frames missing the keyword fall back to command or orphan batching rather than being
+    dropped, so a partially-stamped night still yields every frame.
+    """
     data_dir = tmp_path / "DAO-01"
     meta_dir = tmp_path / "processed" / "DAO-01_20260528" / "metadata"
     data_dir.mkdir(parents=True)
@@ -598,7 +671,12 @@ def test_frame_batches_by_seq_key(tmp_path):
     assert sum(len(b.frames) for b in batches) == 5
 
 
-def test_burrnight_keeps_uuid_records_without_attribution(tmp_path):
+def test_burrnight_keeps_uuid_records_without_attribution(tmp_path: Path) -> None:
+    """UUID-named frames are kept as unattributed rather than dropped.
+
+    A frame nobody can place is still a frame that was taken, and dropping it loses data
+    silently.
+    """
     files = [
         "0073b353-3f9f-11f1-9659-010101010000.fits",
         "20260527T071650_calsats_41175_f0.fits",

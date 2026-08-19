@@ -2,25 +2,34 @@
 
 import logging
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.detection.jacobian import wcs_distortion_metrics
 from senpai.engine.detection.point.satellite import extract_point_sources
+from senpai.engine.detection.point.sidereal import validate_point_detection
 from senpai.engine.detection.streak.frame_shift import (
     enforce_chain_consistency,
     solve_shift,
 )
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.metadata import SeeingModel, TrackMode
-from senpai.engine.models.senpai import RateTrackFrame, SenpaiRun, SiderealFrame
+from senpai.engine.models.senpai import CorrelatedStreak, RateTrackFrame, SenpaiRun, SiderealFrame
+from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
+from senpai.engine.photometry.utils import (
+    measure_detection_photometry,
+    measure_rate_starfield_photometry,
+    measure_simple_starfield_photometry,
+)
 from senpai.engine.plotting.images import plot_single_frame
 from senpai.engine.processing.sidereal import process_astrometry_fits_sidereal
 from senpai.engine.utils.memory import reclaim_process_memory
 from senpai.engine.utils.preprocessing import (
+    preprocess_image,
     scale_starfield_coordinates,
 )
 from senpai.engine.utils.propagate_wcs import (
@@ -34,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 def process_senpai_collect(
     file_list: list[ProcessedFitsImage],
-    id: str = "senpai",
+    id: str = "senpai",  # noqa: A002 - `id` is the published parameter name
     force_track_mode: TrackMode | None = None,
     pipeline_mode: Literal["full", "detect_solve", "detect"] | None = None,
 ) -> SenpaiRun:
@@ -57,31 +66,26 @@ def _process_senpai_collect(
     pipeline_mode: Literal["full", "detect_solve", "detect"] | None = None,
 ) -> SenpaiRun:
     t_start = time.time()
-    config = get_config()
     # Per-call override of `astrometry.pipeline_mode`, resolved once and used everywhere
     # below in place of the config field. This is what lets a single process run reduced-mode
     # batches (an autofocus focus sweep) and full science batches interchangeably: the choice
     # travels with the call instead of living in global config. Omitting it reproduces the
     # configured behaviour exactly.
-    pipeline_mode = pipeline_mode or config.astrometry.pipeline_mode
+    pipeline_mode = pipeline_mode or settings.astrometry.pipeline_mode
 
     # Apply preprocessing to all frames before organizing
-    from senpai.engine.utils.preprocessing import preprocess_image
 
     logger.info("Applying preprocessing to all frames...")
     for frame in file_list:
-        preprocess_image(frame, config, store_intermediates=False)
+        preprocess_image(frame, store_intermediates=False)
 
         # Save the processed frame data for later export (replot reads these;
         # full-night runs skip them — ~260 MB/frame dominates the output dir).
-        if (config.runtime.save_processed_fits
-                and hasattr(frame, "file_path") and frame.file_path):
+        if settings.runtime.save_processed_fits and hasattr(frame, "file_path") and frame.file_path:
             # Create processed filename
             processed_path = Path(frame.file_path)
-            processed_filename = (
-                f"{processed_path.stem}_processed{processed_path.suffix}"
-            )
-            processed_file_path = config.runtime.output_dir / processed_filename
+            processed_filename = f"{processed_path.stem}_processed{processed_path.suffix}"
+            processed_file_path = settings.runtime.output_dir / processed_filename
 
             # Save processed FITS file
             from astropy.io import fits
@@ -93,83 +97,57 @@ def _process_senpai_collect(
             frame.processed_file_path = str(processed_file_path)
             logger.debug(f"Saved processed frame: {processed_file_path}")
 
-    senpai_run = SenpaiRun.organize_senpai_frames(
-        file_list, id=collect_id, force_track_mode=force_track_mode
-    )
+    senpai_run = SenpaiRun.organize_senpai_frames(file_list, id=collect_id, force_track_mode=force_track_mode)
 
     valid_sidereal_frame = False
     for image_frame in senpai_run.sidereal_frames:
-        sidereal_wcs_starfield = process_astrometry_fits_sidereal(
-            image_frame.frame, pipeline_mode=pipeline_mode
-        )
+        sidereal_wcs_starfield = process_astrometry_fits_sidereal(image_frame.frame, pipeline_mode=pipeline_mode)
 
         # Stop processing once we have a valid solution
         if sidereal_wcs_starfield.fit:
-            logger.info(
-                f"Found valid WCS solution in frame {image_frame.index}, initial sidereal processing complete"
-            )
+            logger.info(f"Found valid WCS solution in frame {image_frame.index}, initial sidereal processing complete")
             valid_sidereal_frame = True
-            image_frame.seeing = SeeingModel.from_fwhm_stats(
-                sidereal_wcs_starfield.fwhm_stats
-            )
+            image_frame.seeing = SeeingModel.from_fwhm_stats(sidereal_wcs_starfield.fwhm_stats)
             # Propagate seeing to all sidereal frames (they share the same optics)
             for other_frame in senpai_run.sidereal_frames:
                 if other_frame.seeing is None:
                     other_frame.seeing = image_frame.seeing
             # Apply FWHM optimization if enabled
-            if config.calibrations.auto_scale_images:
+            if settings.calibrations.auto_scale_images:
                 # Get FWHM stats from the successfully solved sidereal frame
                 fwhm_stats = sidereal_wcs_starfield.fwhm_stats
-                if (
-                    fwhm_stats
-                    and fwhm_stats.recommended_scale_factor
-                    and fwhm_stats.recommended_scale_factor > 1.0
-                ):
+                if fwhm_stats and fwhm_stats.recommended_scale_factor and fwhm_stats.recommended_scale_factor > 1.0:
                     scale_factor = fwhm_stats.recommended_scale_factor
+                    logger.info(f"Scaling all frames using FWHM stats from frame {image_frame.index}")
                     logger.info(
-                        f"Scaling all frames using FWHM stats from frame {image_frame.index}"
+                        f"FWHM: {fwhm_stats.median_fwhm:.1f} -> {settings.calibrations.target_fwhm:.1f} pixels (factor: {scale_factor:.2f})"
                     )
                     logger.info(
-                        f"FWHM: {fwhm_stats.median_fwhm:.1f} -> {config.calibrations.target_fwhm:.1f} pixels (factor: {scale_factor:.2f})"
-                    )
-                    logger.info(
-                        f"Method: {config.calibrations.scaling_method}, {fwhm_stats.n_measurements} FWHM measurements"
+                        f"Method: {settings.calibrations.scaling_method}, {fwhm_stats.n_measurements} FWHM measurements"
                     )
 
                     # Scale all sidereal frames
                     for frame in senpai_run.sidereal_frames:
-                        frame.frame.scale_frame(
-                            scale_factor, method=config.calibrations.scaling_method
-                        )
+                        frame.frame.scale_frame(scale_factor, method=settings.calibrations.scaling_method)
                         if frame.starfield:
-                            frame.starfield = scale_starfield_coordinates(
-                                frame.starfield, scale_factor
-                            )
+                            frame.starfield = scale_starfield_coordinates(frame.starfield, scale_factor)
 
                     # Scale all rate track frames
                     for frame in senpai_run.rate_track_frames:
-                        frame.frame.scale_frame(
-                            scale_factor, method=config.calibrations.scaling_method
-                        )
+                        frame.frame.scale_frame(scale_factor, method=settings.calibrations.scaling_method)
                         if frame.starfield:
-                            frame.starfield = scale_starfield_coordinates(
-                                frame.starfield, scale_factor
-                            )
+                            frame.starfield = scale_starfield_coordinates(frame.starfield, scale_factor)
 
                     # Get the actual scale factor used from the processing history
                     # For median_filter, this will be the rounded integer value
                     actual_scale_factor = scale_factor
-                    if config.calibrations.scaling_method == "median_filter":
+                    if settings.calibrations.scaling_method == "median_filter":
                         # Get the actual integer scale factor from the first frame's processing history
-                        for frame in (
-                            senpai_run.sidereal_frames + senpai_run.rate_track_frames
-                        ):
+                        for frame in senpai_run.sidereal_frames + senpai_run.rate_track_frames:
                             if frame.frame.processing_history:
                                 for step in reversed(frame.frame.processing_history):
                                     if step.step_type.value == "fwhm_optimization":
-                                        actual_scale_factor = step.parameters.get(
-                                            "scale_factor", scale_factor
-                                        )
+                                        actual_scale_factor = step.parameters.get("scale_factor", scale_factor)
                                         break
                                 if actual_scale_factor != scale_factor:
                                     break
@@ -205,19 +183,13 @@ def _process_senpai_collect(
 
                         # Use a nominal unit rate vector in RA; metrics are relative so the
                         # specific rate magnitude is not critical for distortion assessment.
-                        metrics = wcs_distortion_metrics(
-                            astropy_wcs, rate_ra=1.0, rate_dec=0.0, nx=5, ny=5
-                        )
+                        metrics = wcs_distortion_metrics(astropy_wcs, rate_ra=1.0, rate_dec=0.0, nx=5, ny=5)
 
                         # Keep only compact scalar metrics on the starfield to avoid bloating results
                         distortion_summary = {
                             "delta_J": float(metrics["delta_J"]),
-                            "max_angle_variation_deg": float(
-                                metrics["max_angle_variation_deg"]
-                            ),
-                            "max_length_variation_fraction": float(
-                                metrics["max_length_variation_fraction"]
-                            ),
+                            "max_angle_variation_deg": float(metrics["max_angle_variation_deg"]),
+                            "max_length_variation_fraction": float(metrics["max_length_variation_fraction"]),
                         }
                         image_frame.starfield.distortion_metrics = distortion_summary
 
@@ -236,17 +208,15 @@ def _process_senpai_collect(
                     e,
                 )
 
-            if config.plotting.review and config.plotting.debug:
+            if settings.plotting.review and settings.plotting.debug:
                 # otherwise this'll be plotted at the end (review True, debug False)
                 target = senpai_run.get_frame_by_index(image_frame.index)
 
                 plot_single_frame(
                     target.frame.data,
                     starfield=target.starfield,
-                    detections=(
-                        target.detections if isinstance(target, SiderealFrame) else None
-                    ),
-                    output_file=config.runtime.output_dir / f"final_{target.index}.png",
+                    detections=(target.detections if isinstance(target, SiderealFrame) else None),
+                    output_file=settings.runtime.output_dir / f"final_{target.index}.png",
                 )
 
             break
@@ -270,14 +240,11 @@ def _process_senpai_collect(
                 # Per-frame, and deliberately NOT propagated across frames the way the
                 # solved path does: a focus sweep is precisely a set of frames whose
                 # FWHM differs, so sharing one frame's seeing would erase the signal.
-                image_frame.seeing = SeeingModel.from_fwhm_stats(
-                    image_frame.starfield.fwhm_stats
-                )
+                image_frame.seeing = SeeingModel.from_fwhm_stats(image_frame.starfield.fwhm_stats)
 
         if senpai_run.rate_track_frames:
             logger.warning(
-                "pipeline_mode=%s covers sidereal frames only; %d rate-track frame(s) "
-                "left unprocessed",
+                "pipeline_mode=%s covers sidereal frames only; %d rate-track frame(s) left unprocessed",
                 pipeline_mode,
                 len(senpai_run.rate_track_frames),
             )
@@ -339,7 +306,7 @@ def _process_senpai_collect(
 
             # Diagnostic overlay: show streak centroids handed to the solver,
             # so a WCS failure still produces a visible debug artifact.
-            if (config.plotting.debug or config.plotting.review) and sources:
+            if (settings.plotting.debug or settings.plotting.review) and sources:
                 sources_for_plot = StarListImage(
                     detections=sources,
                     image_metadata=ImageMetadata(
@@ -352,7 +319,7 @@ def _process_senpai_collect(
                     starlist=sources_for_plot,
                     streak=image_frame.streak,
                     markersize=(image_frame.streak.fwhm * 2 if image_frame.streak else 10),
-                    output_file=config.runtime.output_dir / f"rate_detections_{image_frame.index}.png",
+                    output_file=settings.runtime.output_dir / f"rate_detections_{image_frame.index}.png",
                 )
 
             boresight_ra, boresight_dec = extract_boresight_from_header(image_frame.frame.header)
@@ -363,9 +330,7 @@ def _process_senpai_collect(
                 boresight_ra=boresight_ra,
                 boresight_dec=boresight_dec,
                 exposure_time=(
-                    float(frame_meta.exposure_time_seconds)
-                    if frame_meta and frame_meta.exposure_time_seconds
-                    else None
+                    float(frame_meta.exposure_time_seconds) if frame_meta and frame_meta.exposure_time_seconds else None
                 ),
             )
             starlist = StarListImage(detections=sources, image_metadata=img_meta)
@@ -388,17 +353,13 @@ def _process_senpai_collect(
                 except Exception as e:
                     logger.warning("Catalog query failed for rate frame %d: %s", image_frame.index, e)
 
-                wcs_starfield.detection_metadata = DetectionMetadata(
-                    pixel_fwhm=float(image_frame.streak.fwhm)
-                )
+                wcs_starfield.detection_metadata = DetectionMetadata(pixel_fwhm=float(image_frame.streak.fwhm))
                 image_frame.starfield = wcs_starfield
 
                 # Track rate in pixels/s
                 exp = frame_meta.exposure_time_seconds if frame_meta else None
                 if exp and exp > 0:
-                    image_frame.pixel_track_rate_per_second = (
-                        float(image_frame.streak.pixel_length) / float(exp)
-                    )
+                    image_frame.pixel_track_rate_per_second = float(image_frame.streak.pixel_length) / float(exp)
 
                 valid_sidereal_frame = True
                 logger.info(
@@ -417,14 +378,13 @@ def _process_senpai_collect(
 
     next_shift = senpai_run.get_next_shift()
     while next_shift is not None:
-        if config.plotting.debug:
+        if settings.plotting.debug:
             plot_single_frame(
                 senpai_run.get_frame_by_index(next_shift.target_index).frame.data,
-                output_file=config.runtime.output_dir
-                / f"{next_shift.target_index}_raw.png",
+                output_file=settings.runtime.output_dir / f"{next_shift.target_index}_raw.png",
             )
 
-        if config.streak.registration_engine == "bayesian":
+        if settings.streak.registration_engine == "bayesian":
             from senpai.engine.detection.streak.bayesian.frame_shift import (
                 solve_shift as bayesian_solve_shift,
             )
@@ -441,15 +401,13 @@ def _process_senpai_collect(
         # failed here so the loop can make progress.
         if not next_shift.processed:
             logger.error(
-                "Shift %d->%d returned unprocessed from solver; force-retiring "
-                "as failed to avoid livelock.",
-                next_shift.source_index, next_shift.target_index,
+                "Shift %d->%d returned unprocessed from solver; force-retiring as failed to avoid livelock.",
+                next_shift.source_index,
+                next_shift.target_index,
             )
             next_shift.processed = True
             next_shift.is_valid = False
-            next_shift.error_message = (
-                next_shift.error_message or "Solver returned without processing"
-            )
+            next_shift.error_message = next_shift.error_message or "Solver returned without processing"
 
         # A solved hop must also agree with the accepted chain: one reversed or
         # aliased shift here would silently corrupt the WCS of every frame
@@ -462,7 +420,7 @@ def _process_senpai_collect(
         logger.info("Shifting WCS by pixel shift")
 
         if next_shift.is_valid and next_shift.processed:
-            bayesian_engine = config.streak.registration_engine == "bayesian"
+            bayesian_engine = settings.streak.registration_engine == "bayesian"
 
             if bayesian_engine:
                 from senpai.engine.detection.streak.bayesian.wcs_ops import (
@@ -491,7 +449,7 @@ def _process_senpai_collect(
                 # axis unrelated to the drift) feeds a garbage kernel into the
                 # refinement below and overlong star line labels downstream —
                 # reconcile with the chain-derived geometry first.
-                if config.streak.reconcile_with_chain:
+                if settings.streak.reconcile_with_chain:
                     if bayesian_engine:
                         from senpai.engine.detection.streak.bayesian.streak_chain import (
                             chain_drift_rates,
@@ -506,8 +464,8 @@ def _process_senpai_collect(
                     reconcile_streak_with_chain(
                         target,
                         chain_drift_rates(senpai_run),
-                        config.streak.reconcile_length_tolerance,
-                        config.streak.reconcile_angle_tolerance_deg,
+                        settings.streak.reconcile_length_tolerance,
+                        settings.streak.reconcile_angle_tolerance_deg,
                     )
 
                 logger.info("Refining WCS by kernel convolution")
@@ -521,14 +479,10 @@ def _process_senpai_collect(
                     # pixel-shift correction to fold back into next_shift, and the rate
                     # seed comes from the mount headers rather than the refined shift.
                     wcs_refined = bayesian_refine_wcs(target)
-                    if config.detection.detect and (
-                        not config.detection.require_wcs_refinement or wcs_refined
-                    ):
+                    if settings.detection.detect and (not settings.detection.require_wcs_refinement or wcs_refined):
                         target.detections = extract_point_sources(target)
                 else:
-                    shift_correction_x, shift_correction_y = (
-                        refine_wcs_by_kernel_convolution(target)
-                    )
+                    shift_correction_x, shift_correction_y = refine_wcs_by_kernel_convolution(target)
 
                     # Apply the correction to the existing shift
                     original_x = next_shift.x_shift
@@ -545,38 +499,26 @@ def _process_senpai_collect(
                     # This is critical for the next frame pair's validation attempt
                     source = senpai_run.get_frame_by_index(next_shift.source_index)
                     if isinstance(source, RateTrackFrame):
-                        frame_gap_seconds = abs(
-                            (target.timestamp - source.timestamp).total_seconds()
-                        )
-                        refined_shift_magnitude = np.sqrt(
-                            next_shift.x_shift**2 + next_shift.y_shift**2
-                        )
+                        frame_gap_seconds = abs((target.timestamp - source.timestamp).total_seconds())
+                        refined_shift_magnitude = np.sqrt(next_shift.x_shift**2 + next_shift.y_shift**2)
                         old_rate = target.pixel_track_rate_per_second
-                        target.pixel_track_rate_per_second = (
-                            refined_shift_magnitude / frame_gap_seconds
-                        )
+                        target.pixel_track_rate_per_second = refined_shift_magnitude / frame_gap_seconds
                         logger.info(
                             f"Updated pixel_track_rate_per_second for frame {target.index}: "
                             f"{old_rate:.3f} -> {target.pixel_track_rate_per_second:.3f} px/s "
                             f"(shift_mag={refined_shift_magnitude:.2f}px, gap={frame_gap_seconds:.2f}s)"
                         )
-                    if config.detection.detect:
+                    if settings.detection.detect:
                         target.detections = extract_point_sources(target)
 
-            if config.plotting.review and config.plotting.debug:
+            if settings.plotting.review and settings.plotting.debug:
                 # otherwise this'll be plotted at the end (review True, debug False)
                 plot_single_frame(
                     target.frame.data,
                     starfield=target.starfield,
-                    detections=(
-                        target.detections
-                        if isinstance(target, RateTrackFrame)
-                        else None
-                    ),
-                    streak=(
-                        target.streak if isinstance(target, RateTrackFrame) else None
-                    ),
-                    output_file=config.runtime.output_dir / f"final_{target.index}.png",
+                    detections=(target.detections if isinstance(target, RateTrackFrame) else None),
+                    streak=(target.streak if isinstance(target, RateTrackFrame) else None),
+                    output_file=settings.runtime.output_dir / f"final_{target.index}.png",
                 )
 
         senpai_run.log_analysis_chain()
@@ -588,14 +530,14 @@ def _process_senpai_collect(
     # left undetected: it extracts only under `next_shift.is_valid and processed`, so a
     # target whose registration failed carries no detections on purpose, and detecting
     # it here would measure sources against a WCS the pipeline had already rejected.
-    if config.detection.detect:
+    if settings.detection.detect:
         shift_target_indices = (
             {
                 shift.target_index
                 for shift in senpai_run.frame_shifts + senpai_run.frame_shifts_failed
                 if shift.processed
             }
-            if config.detection.require_wcs_refinement
+            if settings.detection.require_wcs_refinement
             else set()
         )
         for image_frame in senpai_run.rate_track_frames:
@@ -608,13 +550,6 @@ def _process_senpai_collect(
             image_frame.detections = extract_point_sources(image_frame)
 
     # --- Photometry ---
-    from dataclasses import asdict
-
-    from senpai.engine.photometry.utils import (
-        measure_detection_photometry,
-        measure_rate_starfield_photometry,
-        measure_simple_starfield_photometry,
-    )
 
     # Sidereal frames: simple circular aperture photometry
     for image_frame in senpai_run.sidereal_frames:
@@ -622,7 +557,9 @@ def _process_senpai_collect(
             continue
         try:
             _, summary = measure_simple_starfield_photometry(
-                image_frame.frame, image_frame.starfield, config.photometry,
+                image_frame.frame,
+                image_frame.starfield,
+                settings.photometry,
                 frame_index=image_frame.index,
             )
             image_frame.photometry_summary = asdict(summary)
@@ -640,7 +577,6 @@ def _process_senpai_collect(
     # --- Catalog-filtered point source detections in sidereal frames ---
     # Match starfield.detections against catalog_stars; non-matched sources that
     # are bright enough to reliably be in the catalog are potential satellites/asteroids.
-    from senpai.engine.models.starfield import SatelliteInImage, SatelliteListImage
 
     for image_frame in senpai_run.sidereal_frames:
         if image_frame.starfield is None or not image_frame.starfield.fit:
@@ -655,9 +591,7 @@ def _process_senpai_collect(
         match_radius_sq = (2 * fwhm) ** 2
 
         catalog_positions = [
-            (s.x, s.y)
-            for s in image_frame.starfield.catalog_stars
-            if s.x is not None and s.y is not None
+            (s.x, s.y) for s in image_frame.starfield.catalog_stars if s.x is not None and s.y is not None
         ]
         if not catalog_positions:
             continue
@@ -688,10 +622,7 @@ def _process_senpai_collect(
 
         min_counts = float(np.percentile(matched_counts, 50))
 
-        non_catalog = [
-            det for det in unmatched
-            if det.counts is not None and det.counts >= min_counts
-        ]
+        non_catalog = [det for det in unmatched if det.counts is not None and det.counts >= min_counts]
 
         # Shape/locality vetting: the brightness threshold above compares
         # globally background-subtracted counts, so detections sitting on
@@ -699,13 +630,9 @@ def _process_senpai_collect(
         # wiggles on an elevated background.  Require each flagged detection
         # to be a significant point source at its LOCAL scale.
         n_before_validation = len(non_catalog)
-        from senpai.engine.detection.point.sidereal import validate_point_detection
 
         frame_data = image_frame.frame.data
-        non_catalog = [
-            det for det in non_catalog
-            if validate_point_detection(frame_data, det.x, det.y, fwhm)
-        ]
+        non_catalog = [det for det in non_catalog if validate_point_detection(frame_data, det.x, det.y, fwhm)]
         n_rejected_shape = n_before_validation - len(non_catalog)
 
         if non_catalog:
@@ -719,19 +646,24 @@ def _process_senpai_collect(
                         ra_val = float(sky.ra.deg)
                         dec_val = float(sky.dec.deg)
                     except Exception:
-                        pass
+                        logger.debug("Could not convert satellite pixel position to sky coordinates", exc_info=True)
                 satellites.append(
                     SatelliteInImage(
-                        x=det.x, y=det.y, snr=det.snr,
-                        ra=ra_val, dec=dec_val,
-                        pixel_fwhm=fwhm, detection_type="point",
+                        x=det.x,
+                        y=det.y,
+                        snr=det.snr,
+                        ra=ra_val,
+                        dec=dec_val,
+                        pixel_fwhm=fwhm,
+                        detection_type="point",
                     )
                 )
 
             img_meta = image_frame.starfield.image_metadata
             if image_frame.detections is None:
                 image_frame.detections = SatelliteListImage(
-                    detections=satellites, image_metadata=img_meta,
+                    detections=satellites,
+                    image_metadata=img_meta,
                 )
             else:
                 image_frame.detections.detections.extend(satellites)
@@ -740,8 +672,12 @@ def _process_senpai_collect(
             "Sidereal frame %d: %d non-catalog point detections "
             "(%d unmatched, %d below brightness threshold, "
             "%d rejected by shape/local-significance, counts_thresh=%.0f)",
-            image_frame.index, len(non_catalog), len(unmatched),
-            len(unmatched) - n_before_validation, n_rejected_shape, min_counts,
+            image_frame.index,
+            len(non_catalog),
+            len(unmatched),
+            len(unmatched) - n_before_validation,
+            n_rejected_shape,
+            min_counts,
         )
 
     # Rate-track frames: rectangular aperture photometry + detection photometry
@@ -752,8 +688,11 @@ def _process_senpai_collect(
             continue
         try:
             _, summary = measure_rate_starfield_photometry(
-                image_frame.frame, image_frame.starfield, image_frame.streak,
-                config.photometry, frame_index=image_frame.index,
+                image_frame.frame,
+                image_frame.starfield,
+                image_frame.streak,
+                settings.photometry,
+                frame_index=image_frame.index,
             )
             image_frame.photometry_summary = asdict(summary)
             if summary.limiting_magnitude_50 is not None:
@@ -766,40 +705,28 @@ def _process_senpai_collect(
             )
 
             # Detection photometry if we have detections and a valid zero point
-            if (
-                image_frame.detections
-                and image_frame.detections.detections
-                and summary.zero_point is not None
-            ):
+            if image_frame.detections and image_frame.detections.detections and summary.zero_point is not None:
                 try:
-                    exp_time = (
-                        image_frame.frame_metadata.exposure_time_seconds
-                        if image_frame.frame_metadata
-                        else None
-                    )
+                    exp_time = image_frame.frame_metadata.exposure_time_seconds if image_frame.frame_metadata else None
                     measure_detection_photometry(
                         image_frame.frame,
                         image_frame.detections,
                         summary.zero_point,
                         summary.zero_point_err,
                         exposure_time=exp_time,
-                        config=config.photometry,
+                        config=settings.photometry,
                         multiband_calibration=summary.multiband_calibration,
                         observation_filter=(
-                            image_frame.frame_metadata.observation_filter
-                            if image_frame.frame_metadata
-                            else None
+                            image_frame.frame_metadata.observation_filter if image_frame.frame_metadata else None
                         ),
                     )
                 except Exception as e:
-                    logger.warning(
-                        f"Detection photometry failed for rate frame {image_frame.index}: {e}"
-                    )
+                    logger.warning(f"Detection photometry failed for rate frame {image_frame.index}: {e}")
         except Exception as e:
             logger.warning(f"Photometry failed for rate frame {image_frame.index}: {e}")
 
     # --- Streak detection & cross-frame correlation ---
-    if config.detection.detect and config.detection.detect_streaks:
+    if settings.detection.detect and settings.detection.detect_streaks:
         from senpai.engine.processing.rate_scan_confirmation import (
             confirm_streaks_via_rate_scan,
         )
@@ -827,10 +754,7 @@ def _process_senpai_collect(
         for frame in senpai_run.sidereal_frames + senpai_run.rate_track_frames:
             if frame.detections is None:
                 continue
-            streak_dets = [
-                d for d in frame.detections.detections
-                if getattr(d, "detection_type", None) == "streak"
-            ]
+            streak_dets = [d for d in frame.detections.detections if getattr(d, "detection_type", None) == "streak"]
             streak_dets.extend(frame.streak_candidates or [])
             if not streak_dets:
                 continue
@@ -839,7 +763,7 @@ def _process_senpai_collect(
                 fwhm = frame.starfield.detection_metadata.pixel_fwhm
             radius = 2 * fwhm
 
-            def _near_streak(d, s) -> bool:
+            def _near_streak(d: SatelliteInImage, s: CorrelatedStreak, radius: float) -> bool:
                 # Distance from the point to the streak SEGMENT (not just its
                 # center) so detections anywhere along the streak are caught.
                 dx, dy = d.x - s.x, d.y - s.y
@@ -854,16 +778,18 @@ def _process_senpai_collect(
 
             cleaned = []
             for d in frame.detections.detections:
-                if getattr(d, "detection_type", None) == "point":
-                    if any(_near_streak(d, s) for s in streak_dets):
-                        continue
+                if getattr(d, "detection_type", None) == "point" and any(
+                    _near_streak(d, s, radius) for s in streak_dets
+                ):
+                    continue
                 cleaned.append(d)
             n_removed = len(frame.detections.detections) - len(cleaned)
             if n_removed:
                 frame.detections.detections = cleaned
                 logger.info(
                     "Frame %d: removed %d point detections overlapping streak detections",
-                    frame.index, n_removed,
+                    frame.index,
+                    n_removed,
                 )
 
     t_end = time.time()
@@ -875,15 +801,15 @@ def _process_senpai_collect(
     return senpai_run
 
 
-def _write_sequence_gif(image_paths: list, gif_path) -> None:
+def _write_sequence_gif(image_paths: list, gif_path: Path) -> None:
     """Write a per-frame animation, padding frames to a common shape first.
 
     Mixed sidereal/rate batches render their ``final_*`` plots at different pixel
     sizes (different overlays/colorbars), so a naive ``np.stack`` of the frames
     raises "all input arrays must have the same shape". We pad each frame to the
     max height/width before stacking. The GIF is a diagnostic nicety, so any
-    failure is logged and swallowed rather than failing the batch."""
-
+    failure is logged and swallowed rather than failing the batch.
+    """
     try:
         import imageio.v3 as iio
         import numpy as np
@@ -904,15 +830,17 @@ def _write_sequence_gif(image_paths: list, gif_path) -> None:
         logger.warning(f"Skipping animation {gif_path}: {e}")
 
 
-def final_plots(senpai_run: SenpaiRun, output_dir: Path):
-    config = get_config()
+def final_plots(senpai_run: SenpaiRun, output_dir: Path) -> None:
+    """Render the run's end-of-collect diagnostics: PSF panels, overlays and the sequence GIF.
 
-    run_id = config.runtime.run_id
+    Everything here is gated on plotting config, so a production run does none of it.
+    """
+    run_id = settings.runtime.run_id
 
     # Per-frame empirical PSF panels (stacked stars for sidereal, stacked streak
     # for rate). A small .npy stamp is saved next to each PNG so the panel can be
     # regenerated later (see engine.plotting.replot) without the raw FITS.
-    if config.plotting.psfs:
+    if settings.plotting.psfs:
         from senpai.engine.plotting.psf import plot_rate_frame, plot_sidereal_frame
 
         for f in senpai_run.sidereal_frames:
@@ -921,20 +849,18 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
                 try:
                     plot_sidereal_frame(f, png, output_dir / f"frame_{f.index}_psf.npy")
                 except Exception as e:
-                    logger.warning("PSF panel failed for sidereal frame %s: %s",
-                                   f.index, e)
+                    logger.warning("PSF panel failed for sidereal frame %s: %s", f.index, e)
         for f in senpai_run.rate_track_frames:
             png = output_dir / f"frame_{f.index}_streak.png"
             if not png.exists():
                 try:
                     plot_rate_frame(f, png, output_dir / f"frame_{f.index}_streak.npy")
                 except Exception as e:
-                    logger.warning("PSF panel failed for rate frame %s: %s",
-                                   f.index, e)
+                    logger.warning("PSF panel failed for rate frame %s: %s", f.index, e)
 
     for image_frame in senpai_run.sidereal_frames:
         output_file = output_dir / f"final_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 starfield=image_frame.starfield,
@@ -943,7 +869,7 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
                 output_file=output_file,
             )
         output_file = output_dir / f"raw_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 output_file=output_file,
@@ -951,7 +877,7 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
 
     for image_frame in senpai_run.rate_track_frames:
         output_file = output_dir / f"final_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 starfield=image_frame.starfield,
@@ -962,13 +888,13 @@ def final_plots(senpai_run: SenpaiRun, output_dir: Path):
             )
 
         output_file = output_dir / f"raw_{image_frame.index}.png"
-        if config.plotting.review and not output_file.exists():
+        if settings.plotting.review and not output_file.exists():
             plot_single_frame(
                 image_frame.frame.data,
                 output_file=output_file,
             )
 
-    if config.plotting.review:
+    if settings.plotting.review:
         # Collect all plot filenames and sort by frame index
         plot_files = []
         plot_rate_files = []

@@ -1,3 +1,11 @@
+"""Convolution kernels shaped like the things being detected.
+
+A matched filter responds best when its kernel resembles the signal, so a point source is
+searched for with a PSF-shaped kernel and a streak with a rectangle of the streak's length and
+angle. The kernels here are built analytically from FWHM, length and angle rather than measured,
+which is what lets a search be seeded before anything has been detected.
+"""
+
 import functools
 import logging
 
@@ -19,10 +27,17 @@ logger = logging.getLogger(__name__)
 MAX_KERNEL_FINE_ELEMENTS = 500_000_000
 
 
-def shift_filter_subpx(filter, pix_shift):
+def shift_filter_subpx(kernel: np.ndarray, pix_shift: np.ndarray) -> np.ndarray:
+    """Shift a kernel by a sub-pixel offset, keeping it non-negative and normalized in range.
+
+    The kernel is padded before shifting so interpolation at the edge does not wrap, and the
+    result is clamped: values below 1e-4 go to zero, negatives to a small positive floor.
+    Sub-pixel interpolation rings slightly, and a negative kernel weight would subtract
+    signal where it should add it.
+    """
     pad = (pix_shift + 0.5).round().astype(int)
 
-    padded = np.pad(filter, ((pad[0], pad[0]), (pad[1], pad[1])))
+    padded = np.pad(kernel, ((pad[0], pad[0]), (pad[1], pad[1])))
     shifted = shift(padded, pix_shift)
 
     shifted[np.where(np.abs(shifted) < 1e-4)] = 0.000
@@ -75,6 +90,7 @@ def rectangle_pyramoid(
 
     Returns:
         np.ndarray: the rotated streak kernel at pixel resolution.
+
     """
     if verbose:
         logger.info("rectangle_pyramoid")
@@ -134,9 +150,7 @@ def rectangle_pyramoid(
 
 
 @functools.lru_cache(maxsize=256)
-def streak_matched_kernel(
-    fwhm: float, angle_deg: float, length_fwhm: float = 5.0
-) -> np.ndarray:
+def streak_matched_kernel(fwhm: float, angle_deg: float, length_fwhm: float = 5.0) -> np.ndarray:
     """Directional matched filter: Gaussian cross-section extruded along an angle.
 
     Used as part of a filter bank to detect streak-shaped signal in residual
@@ -151,6 +165,7 @@ def streak_matched_kernel(
 
     Returns:
         2D kernel array normalized to sum to 1.
+
     """
     sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))
     length = fwhm * length_fwhm
@@ -204,6 +219,7 @@ def build_directional_filter_bank(
 
     Returns:
         Tuple of (list of kernel arrays, array of angles in degrees).
+
     """
     angles = np.linspace(0, 180, n_angles, endpoint=False)
     # Round for lru_cache friendliness
@@ -222,6 +238,7 @@ def sidereal_kernel(fwhm: float) -> np.ndarray:
 
     Returns:
         np.ndarray: 2D Gaussian kernel normalized to sum to 1.
+
     """
     # Convert FWHM to sigma
     sigma = fwhm / (2 * np.sqrt(2 * np.log(2)))

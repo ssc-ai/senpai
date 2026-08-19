@@ -1,3 +1,9 @@
+"""Query SDSS for catalog stars, by bounds or by line of sight.
+
+SDSS covers only part of the sky, so this is a supplement to the all-sky sources rather than an
+alternative to them -- useful where its photometry is better than what a general catalog gives.
+"""
+
 import logging
 from typing import Any
 
@@ -12,8 +18,8 @@ def query_by_ra_dec_bounds(
     max_ra: float,
     min_dec: float,
     max_dec: float,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:
     """Query SDSS catalog using explicit RA/DEC bounds.
@@ -29,6 +35,7 @@ def query_by_ra_dec_bounds(
 
     Returns:
         A `list`, stars within the bounds of input parameters
+
     """
     # Set default magnitude limits
     if faint_lim is None:
@@ -86,10 +93,7 @@ def query_by_ra_dec_bounds(
             if result2 is not None and len(result2) > 0:
                 results_to_combine.append(result2)
 
-            if len(results_to_combine) > 0:
-                result = vstack(results_to_combine)
-            else:
-                result = None
+            result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
         else:
             # Field doesn't cross boundary - simple case
             logger.info(
@@ -145,11 +149,11 @@ def query_by_ra_dec_bounds(
             }
             stars.append(star)
 
-        return stars
-
-    except Exception as e:
-        logger.error(f"SDSS query failed: {e}")
+    except Exception:
+        logger.exception("SDSS query failed")
         return []
+    else:
+        return stars
 
 
 def query_by_bounds(
@@ -158,8 +162,8 @@ def query_by_bounds(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     safety_margin: float = 0.1,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:
@@ -178,6 +182,7 @@ def query_by_bounds(
 
     Returns:
         A `list`, stars within the bounds of input parameters
+
     """
     # Apply safety margin
     x_fov_with_margin = x_fov * (1 + safety_margin)
@@ -274,10 +279,7 @@ def query_by_bounds(
                 if result2 is not None and len(result2) > 0:
                     results_to_combine.append(result2)
 
-                if len(results_to_combine) > 0:
-                    result = vstack(results_to_combine)
-                else:
-                    result = None
+                result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
             else:
                 # Fallback to simple query
                 min_ra = np.min(ra_corners_normalized)
@@ -356,11 +358,11 @@ def query_by_bounds(
             }
             stars.append(star)
 
-        return stars
-
-    except Exception as e:
-        logger.error(f"SDSS query failed: {e}")
+    except Exception:
+        logger.exception("SDSS query failed")
         return []
+    else:
+        return stars
 
 
 def query_by_los_radec_with_rotation(
@@ -369,10 +371,10 @@ def query_by_los_radec_with_rotation(
     ra: float,
     dec: float,
     rotation: float = 0.0,
-    rootPath: str = None,
-    filter_center: float = None,
-    faint_lim: float = None,
-    bright_lim: float = None,
+    rootPath: str | None = None,
+    filter_center: float | None = None,
+    faint_lim: float | None = None,
+    bright_lim: float | None = None,
     safety_margin: float = 0.1,
     primary_filter: str = "g",
 ) -> list[dict[str, Any]]:

@@ -1,9 +1,20 @@
+"""WCS models: a plate solution as senpai stores it, converts it, and reports on it.
+
+`WCSModel` is the persisted form -- a flat set of FITS keywords including SIP coefficients --
+so it round-trips through JSON without an astropy dependency in the schema. It converts to and
+from `astropy.wcs.WCS` for calculation, and to a FITS header for the solver.
+
+`WCSMetadata` is the derived summary (plate scale, field of view, field centre) that reports
+and consumers read instead of recomputing it.
+"""
+
 import logging
-from enum import Enum
+import warnings
+from enum import StrEnum
 
 import astropy.units as u
 import numpy as np
-from astropy.coordinates import Angle
+from astropy.coordinates import Angle, SkyCoord
 from astropy.io import fits
 from astropy.io.fits import PrimaryHDU
 from astropy.wcs import WCS
@@ -14,7 +25,9 @@ from senpai.core.config import AppConfig
 logger = logging.getLogger(__name__)
 
 
-class WCSStatus(str, Enum):
+class WCSStatus(StrEnum):
+    """How a frame's WCS was obtained, or why it has none."""
+
     NO_WCS = "NO_WCS"
     SIDEREAL_FIT_WCS = "SIDEREAL_FIT_WCS"
     PIXEL_SHIFTED_WCS = "PIXEL_SHIFTED_WCS"
@@ -38,16 +51,12 @@ class WCSQualityMetrics(BaseModel):
     method: str = "flux_at_catalog_positions"
     n_stars_tested: int
     box_radius_px: int
-    frac_significant: float = Field(
-        description="Fraction of tested stars whose flux exceeds the null p-th percentile"
-    )
+    frac_significant: float = Field(description="Fraction of tested stars whose flux exceeds the null p-th percentile")
     control_frac_significant: float = Field(
         description="Same fraction for the control grid (predictions offset by control_offset_px)"
     )
     null_percentile: float
-    passed: bool | None = Field(
-        description="True/False = validation verdict; None = too few testable stars to judge"
-    )
+    passed: bool | None = Field(description="True/False = validation verdict; None = too few testable stars to judge")
     # Residuals of the WCS refit against the star positions it was fitted to
     # (absent when refinement fell back to the propagated WCS).
     refit_rms_px: float | None = None
@@ -64,6 +73,8 @@ class WCSQualityMetrics(BaseModel):
 
 
 class ReturnAstrometryConfig(BaseModel):
+    """The astrometry settings a result reports back, so a run is reproducible from it."""
+
     indices_series: str = Field(description="Indices series (5200/5200_LITE/4100/5200_LITE_4100)")
     max_sources: int = Field(description="Maximum number of sources to solve for")
     min_width_degrees: float = Field(description="Minimum width in degrees")
@@ -71,6 +82,7 @@ class ReturnAstrometryConfig(BaseModel):
 
     @classmethod
     def from_app_config(cls, config: AppConfig) -> "ReturnAstrometryConfig":
+        """Capture the astrometry settings this run used."""
         return cls(
             indices_series=config.astrometry.indices_series,
             max_sources=config.astrometry.max_sources,
@@ -80,6 +92,8 @@ class ReturnAstrometryConfig(BaseModel):
 
 
 class WCSModel(BaseModel):
+    """A plate solution as flat FITS keywords, SIP included, ready to persist."""
+
     model_config = ConfigDict(extra="allow")  # Allow extra fields for dynamic SIP coefficients
 
     WCSAXES: int
@@ -141,6 +155,7 @@ class WCSModel(BaseModel):
 
     @classmethod
     def from_astrometrydotnet(cls, astrometry_net_wcs: PrimaryHDU) -> "WCSModel":
+        """Build a model from the FITS header astrometry.net writes."""
         header = astrometry_net_wcs.header
 
         # Try PC matrix first
@@ -192,7 +207,8 @@ class WCSModel(BaseModel):
             **sip_params,
         )
 
-    def to_astrometrydotnet_fits(self, output_path: str):
+    def to_astrometrydotnet_fits(self, output_path: str) -> None:
+        """Write this solution as a FITS header at `output_path`, as the solver expects it."""
         values = self.model_dump()
         values["IMAGEW"] = values["NAXIS1"]
         values["IMAGEH"] = values["NAXIS2"]
@@ -207,9 +223,9 @@ class WCSModel(BaseModel):
         hdu.writeto(output_path)
 
     @classmethod
-    def from_astropy_wcs(cls, astropy_wcs: WCS, image_shape=None):
-        """
-        Convert an Astropy WCS object to a WCSModel.
+    def from_astropy_wcs(cls, astropy_wcs: WCS, image_shape: tuple[int, int] | None = None) -> "WCSModel":
+        """Build a model from an astropy WCS, recording the image shape when known."""
+        """Convert an Astropy WCS object to a WCSModel.
 
         Parameters
         ----------
@@ -223,6 +239,7 @@ class WCSModel(BaseModel):
         -------
         WCSModel
             The converted WCS model
+
         """
         # Use relax=True to include SIP keywords in header
         header = astropy_wcs.to_header(relax=True)
@@ -335,13 +352,13 @@ class WCSModel(BaseModel):
 
         return cls(**wcs_dict)
 
-    def to_astropy_wcs(self):
-        """Convert this model to a WCS object
+    def to_astropy_wcs(self) -> WCS | None:
+        """Convert this model to a WCS object.
 
         Returns:
             astropy.wcs.WCS: a WCS object to do calcs with
-        """
 
+        """
         try:
             # Filter out None values from the model dump
             header_dict = {k: v for k, v in self.model_dump().items() if v is not None}
@@ -365,11 +382,11 @@ class WCSModel(BaseModel):
         return wcs
 
     def get_boresight(self) -> tuple[float, float]:
-        """Get the boresight coordinates (RA, Dec)"""
+        """Get the boresight coordinates (RA, Dec)."""
         return self.CRVAL1, self.CRVAL2
 
     def pix2world_0based(self, x: float | np.ndarray, y: float | np.ndarray) -> tuple[float, float]:
-        """Convert 0-based pixel coordinates to world coordinates (RA, Dec)
+        """Convert 0-based pixel coordinates to world coordinates (RA, Dec).
 
         Args:
             x: 0-based x pixel coordinate(s)
@@ -377,6 +394,7 @@ class WCSModel(BaseModel):
 
         Returns:
             tuple[float, float]: (RA, Dec) in degrees
+
         """
         wcs = self.to_astropy_wcs()
         # Add 1 to convert from 0-based to 1-based coordinates
@@ -388,7 +406,7 @@ class WCSModel(BaseModel):
         return ra, dec
 
     def world2pix_0based(self, ra: float, dec: float) -> tuple[float, float]:
-        """Convert world coordinates (RA, Dec) to 0-based pixel coordinates
+        """Convert world coordinates (RA, Dec) to 0-based pixel coordinates.
 
         Args:
             ra: Right Ascension in degrees
@@ -396,11 +414,11 @@ class WCSModel(BaseModel):
 
         Returns:
             tuple[float, float]: (x, y) pixel coordinates in 0-based indexing
+
         """
         wcs = self.to_astropy_wcs()
 
         # Create a SkyCoord object from the RA and Dec values
-        from astropy.coordinates import SkyCoord
 
         coords = SkyCoord(ra * u.deg, dec * u.deg)
 
@@ -412,8 +430,7 @@ class WCSModel(BaseModel):
         return x - 1, y - 1
 
     def get_fov_and_dimensions(self) -> tuple[float, float, int, int]:
-        """
-        Calculate the field of view and pixel dimensions from this WCS model.
+        """Calculate the field of view and pixel dimensions from this WCS model.
 
         Returns:
             tuple containing:
@@ -421,6 +438,7 @@ class WCSModel(BaseModel):
                 - field of view height in degrees
                 - pixel width
                 - pixel height
+
         """
         # Get pixel dimensions
         pixel_width = self.NAXIS1
@@ -447,7 +465,6 @@ class WCSModel(BaseModel):
                 world_corners.append((ra, dec))
 
         # Calculate the width and height FOV
-        from astropy.coordinates import SkyCoord
 
         ra_vals = [c[0] for c in world_corners]
         dec_vals = [c[1] for c in world_corners]
@@ -467,6 +484,8 @@ class WCSModel(BaseModel):
 
 
 class WCSMetadata(BaseModel):
+    """Plate scale, field of view and field centre, derived once from a solution."""
+
     x_ifov_arcsec: float
     y_ifov_arcsec: float
     x_fov_degrees: float
@@ -478,14 +497,17 @@ class WCSMetadata(BaseModel):
 
     @field_serializer("x_ifov_arcsec", "y_ifov_arcsec", "x_fov_degrees", "y_fov_degrees")
     def serialize_3digits(self, v: float) -> float:
+        """Round to three decimals for output."""
         return round(v, 3)
 
     @field_serializer("RA_center_deg", "Dec_center_deg")
     def serialize_6digits(self, v: float) -> float:
+        """Round to six decimals for output."""
         return round(v, 6)
 
     @classmethod
     def from_wcs(cls, wcs: WCS) -> "WCSMetadata":
+        """Derive plate scale, field of view and field centre from a solution."""
         x_ifov, y_ifov = wcs.proj_plane_pixel_scales()
         x_fov_deg, y_fov_deg = np.array([x_ifov.value, y_ifov.value]) * np.array(wcs.pixel_shape)
 
@@ -499,6 +521,21 @@ class WCSMetadata(BaseModel):
             wcs.pixel_to_world(center_x, center_y).dec.deg,
         )
 
+        # astropy 8.0.1 / numpy 2.4.6 run Angle.to_string()'s formatter through np.vectorize,
+        # which reports "invalid value encountered in do_format" for VALID angles -- a NaN
+        # angle formats silently as 'nan', so the warning is not about the data at all. It
+        # fires twice per call and accounts for ~2,725 lines in a 134-collect run, a quarter
+        # of all warning output. Suppressed here, at the only place angles are formatted for
+        # display, rather than with a global filter that would hide real numeric warnings.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="invalid value encountered in do_format",
+                category=RuntimeWarning,
+            )
+            ra_hms = Angle(ra_center, unit=u.deg).to_string(unit=u.hour, sep=":")
+            dec_dms = Angle(dec_center, unit=u.deg).to_string(unit=u.deg, sep=":")
+
         return cls(
             x_ifov_arcsec=x_ifov.to(u.arcsec).value,
             y_ifov_arcsec=y_ifov.to(u.arcsec).value,
@@ -506,12 +543,11 @@ class WCSMetadata(BaseModel):
             y_fov_degrees=y_fov_deg,
             RA_center_deg=ra_center,
             Dec_center_deg=dec_center,
-            RA_center_HMS=Angle(ra_center, unit=u.deg).to_string(unit=u.hour, sep=":"),
-            Dec_center_DMS=Angle(dec_center, unit=u.deg).to_string(unit=u.deg, sep=":"),
+            RA_center_HMS=ra_hms,
+            Dec_center_DMS=dec_dms,
         )
 
     @classmethod
     def from_wcsmodel(cls, wcs_model: WCSModel) -> "WCSMetadata":
+        """Derive the summary from a stored model, via its astropy form."""
         return cls.from_wcs(wcs_model.to_astropy_wcs())
-
-

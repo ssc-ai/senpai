@@ -1,11 +1,13 @@
-"""Pure-logic tests for senpai.catalog — query construction, mag-limit defaults,
-RA-wraparound handling, runner box-region helpers, and the config faint-limit
-fallback. All network access (astroquery Gaia/SDSS) is mocked; no query ever
-leaves the process.
+"""Pure-logic tests for the catalog layer.
+
+Covers query construction, magnitude-limit defaults, RA-wraparound handling, the runner's
+box-region helpers and the config faint-limit fallback. All network access is mocked, so no
+query ever leaves the process.
 """
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 from typing import Any
@@ -14,6 +16,9 @@ import numpy as np
 import pytest
 
 from senpai.catalog import gaia, runner, sdss
+from senpai.core import config as config_module
+from senpai.engine.models.astrometry import WCSModel
+from senpai.exceptions import SiderealSolveError
 
 
 # --------------------------------------------------------------------------- #
@@ -23,6 +28,7 @@ from senpai.catalog import gaia, runner, sdss
 class _FakeRow(dict):
     """Row supporting both row['k'] and hasattr(row, 'k') / row.k access."""
 
+    # A table row's columns are heterogeneous, so Any is the accurate annotation here.
     def __getattr__(self, name: str) -> Any:
         try:
             return self[name]
@@ -39,14 +45,15 @@ class _FakeTable(list):
 # --------------------------------------------------------------------------- #
 # Gaia ADQL construction
 # --------------------------------------------------------------------------- #
-def _install_fake_gaia(monkeypatch, capture: list[str], table: _FakeTable | None):
+def _install_fake_gaia(monkeypatch: pytest.MonkeyPatch, capture: list[str], table: _FakeTable | None) -> None:
     """Install a fake astroquery.gaia module that records launched ADQL."""
 
     class _Job:
         def __init__(self, adql: str) -> None:
             self._adql = adql
 
-        def get_results(self):
+        def get_results(self) -> _FakeTable | None:
+            """Return the canned table the fake was constructed with."""
             return table
 
     class _Gaia:
@@ -60,7 +67,8 @@ def _install_fake_gaia(monkeypatch, capture: list[str], table: _FakeTable | None
     monkeypatch.setitem(sys.modules, "astroquery.gaia", fake_mod)
 
 
-def test_gaia_query_default_mag_limits_in_adql(monkeypatch) -> None:
+def test_gaia_query_default_mag_limits_in_adql(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default magnitude limits appear in the generated ADQL."""
     captured: list[str] = []
     _install_fake_gaia(monkeypatch, captured, _FakeTable())
     gaia.query_by_ra_dec_bounds(150.0, 151.0, 2.0, 3.0)
@@ -73,14 +81,19 @@ def test_gaia_query_default_mag_limits_in_adql(monkeypatch) -> None:
     assert "dec BETWEEN 2.0 AND 3.0" in adql
 
 
-def test_gaia_query_custom_mag_limits(monkeypatch) -> None:
+def test_gaia_query_custom_mag_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Caller-supplied magnitude limits replace the defaults in the ADQL."""
     captured: list[str] = []
     _install_fake_gaia(monkeypatch, captured, _FakeTable())
     gaia.query_by_ra_dec_bounds(10.0, 11.0, 5.0, 6.0, faint_lim=18.0, bright_lim=6.0)
     assert "BETWEEN 6.0 AND 18.0" in captured[0]
 
 
-def test_gaia_query_ra_wraparound_two_queries(monkeypatch) -> None:
+def test_gaia_query_ra_wraparound_two_queries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A field straddling RA=0 is split into two queries.
+
+    One query with min_ra > max_ra would select the whole sky except the field.
+    """
     captured: list[str] = []
     _install_fake_gaia(monkeypatch, captured, _FakeTable())
     # field straddling RA=0: min=359, max=1 -> crosses seam -> two ADQL queries
@@ -91,7 +104,8 @@ def test_gaia_query_ra_wraparound_two_queries(monkeypatch) -> None:
     assert "ra >= 0.0 AND ra <= 1.0" in joined
 
 
-def test_gaia_query_parses_rows_and_transforms(monkeypatch) -> None:
+def test_gaia_query_parses_rows_and_transforms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Returned rows are parsed and converted into the star records senpai uses."""
     captured: list[str] = []
     table = _FakeTable(
         [
@@ -124,10 +138,16 @@ def test_gaia_query_parses_rows_and_transforms(monkeypatch) -> None:
     assert star["ra_pm"] != 10.0
 
 
-def test_gaia_query_failure_returns_empty(monkeypatch) -> None:
+def test_gaia_query_failure_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed query yields no stars rather than propagating the error.
+
+    A catalog outage should degrade the solve, not abort the collect.
+    """
+
     class _BoomGaia:
         @staticmethod
-        def launch_job(adql: str):
+        def launch_job(adql: str) -> None:
+            """Fail as a network error would."""
             raise RuntimeError("network down")
 
     fake_mod = types.ModuleType("astroquery.gaia")
@@ -139,10 +159,12 @@ def test_gaia_query_failure_returns_empty(monkeypatch) -> None:
 # --------------------------------------------------------------------------- #
 # SDSS SQL construction
 # --------------------------------------------------------------------------- #
-def test_sdss_query_default_mag_limits(monkeypatch) -> None:
+def test_sdss_query_default_mag_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default magnitude limits appear in the generated SQL."""
     captured: list[str] = []
 
-    def fake_query_sql(sql: str):
+    def fake_query_sql(sql: str) -> _FakeTable:
+        """Record the SQL and return an empty table."""
         captured.append(sql)
         return _FakeTable()
 
@@ -156,10 +178,12 @@ def test_sdss_query_default_mag_limits(monkeypatch) -> None:
     assert "ra BETWEEN 150.0 AND 151.0" in sql
 
 
-def test_sdss_query_ra_wraparound_two_queries(monkeypatch) -> None:
+def test_sdss_query_ra_wraparound_two_queries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A field straddling RA=0 is split into two SQL queries."""
     captured: list[str] = []
 
-    def fake_query_sql(sql: str):
+    def fake_query_sql(sql: str) -> _FakeTable:
+        """Record the SQL and return an empty table."""
         captured.append(sql)
         return _FakeTable()
 
@@ -171,10 +195,12 @@ def test_sdss_query_ra_wraparound_two_queries(monkeypatch) -> None:
     assert "ra >= 0.0 AND ra <= 1.0" in joined
 
 
-def test_sdss_query_parses_rows(monkeypatch) -> None:
+def test_sdss_query_parses_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Returned rows are parsed into star records with their per-band magnitudes."""
     table = _FakeTable([_FakeRow(objid=7, ra=150.0, dec=2.0, u=18.0, g=16.0, r=15.5, i=15.0, z=14.8)])
 
-    def fake_query_sql(sql: str):
+    def fake_query_sql(sql: str) -> _FakeTable:
+        """Return the canned table."""
         return table
 
     monkeypatch.setattr(sdss.SDSS, "query_sql", staticmethod(fake_query_sql))
@@ -187,18 +213,26 @@ def test_sdss_query_parses_rows(monkeypatch) -> None:
     assert star["ra_pm"] == 0.0  # SDSS has no proper motion
 
 
-def test_sdss_query_failure_returns_empty(monkeypatch) -> None:
-    def boom(sql: str):
+def test_sdss_query_failure_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed query yields no stars rather than propagating the error."""
+
+    def boom(sql: str) -> None:
+        """Fail as the remote service would."""
         raise RuntimeError("boom")
 
     monkeypatch.setattr(sdss.SDSS, "query_sql", staticmethod(boom))
     assert sdss.query_by_ra_dec_bounds(1.0, 2.0, 1.0, 2.0) == []
 
 
-def test_sdss_query_by_bounds_applies_safety_margin(monkeypatch) -> None:
+def test_sdss_query_by_bounds_applies_safety_margin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The queried box is padded beyond the frame.
+
+    A WCS is approximate, so querying the exact frame bounds loses stars near the edges.
+    """
     captured: list[str] = []
 
-    def fake_query_sql(sql: str):
+    def fake_query_sql(sql: str) -> _FakeTable:
+        """Record the SQL and return an empty table."""
         captured.append(sql)
         return _FakeTable()
 
@@ -216,6 +250,7 @@ def test_sdss_query_by_bounds_applies_safety_margin(monkeypatch) -> None:
 # runner box-geometry helpers (pure functions)
 # --------------------------------------------------------------------------- #
 def test_box_overlap_and_contains() -> None:
+    """Box overlap and containment agree with the geometry they describe."""
     a = (0.0, 10.0, 0.0, 10.0)
     inside = (2.0, 4.0, 2.0, 4.0)
     overlapping = (5.0, 15.0, 5.0, 15.0)
@@ -229,6 +264,10 @@ def test_box_overlap_and_contains() -> None:
 
 def test_box_difference_strips_ra_shift() -> None:
     # C inside U, only RA grew on the right -> exactly one right strip
+    """A box that grew only in RA yields exactly one strip to fetch.
+
+    This is what lets a widened field re-use the stars already held instead of re-querying.
+    """
     C = (0.0, 10.0, 0.0, 10.0)
     U = (0.0, 12.0, 0.0, 10.0)
     strips = runner._box_difference_strips(C, U)
@@ -237,6 +276,7 @@ def test_box_difference_strips_ra_shift() -> None:
 
 
 def test_box_difference_strips_diagonal_two_strips() -> None:
+    """A box that grew in both axes yields two strips."""
     C = (0.0, 10.0, 0.0, 10.0)
     U = (0.0, 12.0, 0.0, 12.0)  # grew in RA and Dec
     strips = runner._box_difference_strips(C, U)
@@ -244,11 +284,13 @@ def test_box_difference_strips_diagonal_two_strips() -> None:
 
 
 def test_box_difference_strips_no_growth() -> None:
+    """A box that did not grow yields no strips, so nothing is re-queried."""
     C = (0.0, 10.0, 0.0, 10.0)
     assert runner._box_difference_strips(C, C) == []
 
 
 def test_sky_dedup_key_prefers_source_id() -> None:
+    """Deduplication keys on the catalog source id, falling back to rounded coordinates."""
     assert runner._sky_dedup_key({"source_id": 99, "ra": 1.0, "dec": 2.0}) == 99
     # falls back to rounded ra/dec when no source_id
     key = runner._sky_dedup_key({"source_id": None, "ra": 1.123456789, "dec": 2.0})
@@ -258,12 +300,17 @@ def test_sky_dedup_key_prefers_source_id() -> None:
 # --------------------------------------------------------------------------- #
 # faint_limit fallback in query_catalog_gaia (reads cfg.star_catalog.faint_limit)
 # --------------------------------------------------------------------------- #
-def test_query_catalog_gaia_faint_limit_from_config(monkeypatch) -> None:
-    """When faint_lim is None, query_catalog_gaia pulls cfg.star_catalog.faint_limit
-    (via getattr) and passes int(it) to the cached query."""
+def test_query_catalog_gaia_faint_limit_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no explicit faint limit, the configured one is used.
+
+    Read from the star-catalog config and passed to the cached query as an int.
+    """
     captured = {}
 
-    def fake_cached(wcs_tuple, faint_lim, bright_lim, pm_ts, max_stars):
+    def fake_cached(
+        wcs_tuple: tuple, faint_lim: int | None, bright_lim: float | None, pm_ts: float | None, max_stars: int | None
+    ) -> tuple[list, runner.ImageMetadata]:
+        """Record the faint limit the caller resolved, and return an empty result."""
         captured["faint_lim"] = faint_lim
         meta = runner.ImageMetadata(width=10, height=10, boresight_ra=1.0, boresight_dec=2.0)
         return [], meta
@@ -274,7 +321,7 @@ def test_query_catalog_gaia_faint_limit_from_config(monkeypatch) -> None:
     # Fake config with a star_catalog.faint_limit = 17.0
     fake_catalog = types.SimpleNamespace(faint_limit=17.0)
     fake_cfg = types.SimpleNamespace(star_catalog=fake_catalog)
-    monkeypatch.setattr(runner, "get_config", lambda: fake_cfg)
+    monkeypatch.setattr(runner, "settings", fake_cfg)
 
     # Build a real-ish WCSModel only to satisfy validation downstream
     wcs = _wcs_model()
@@ -282,10 +329,14 @@ def test_query_catalog_gaia_faint_limit_from_config(monkeypatch) -> None:
     assert captured["faint_lim"] == 17  # int(17.0)
 
 
-def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch) -> None:
+def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A config with no faint limit passes None through rather than substituting a default."""
     captured = {}
 
-    def fake_cached(wcs_tuple, faint_lim, bright_lim, pm_ts, max_stars):
+    def fake_cached(
+        wcs_tuple: tuple, faint_lim: int | None, bright_lim: float | None, pm_ts: float | None, max_stars: int | None
+    ) -> tuple[list, runner.ImageMetadata]:
+        """Record the faint limit the caller resolved, and return an empty result."""
         captured["faint_lim"] = faint_lim
         meta = runner.ImageMetadata(width=10, height=10, boresight_ra=1.0, boresight_dec=2.0)
         return [], meta
@@ -293,7 +344,7 @@ def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch) -> No
     monkeypatch.setattr(runner, "_query_catalog_gaia_cached", fake_cached)
     monkeypatch.setattr(runner, "_make_wcs_hashable", lambda wcs: ("k",))
     fake_cfg = types.SimpleNamespace(star_catalog=types.SimpleNamespace(faint_limit=None))
-    monkeypatch.setattr(runner, "get_config", lambda: fake_cfg)
+    monkeypatch.setattr(runner, "settings", fake_cfg)
 
     runner.query_catalog_gaia(_wcs_model(), faint_lim=None)
     assert captured["faint_lim"] is None
@@ -303,7 +354,6 @@ def test_query_catalog_gaia_faint_limit_none_when_config_none(monkeypatch) -> No
 # Helper: build a tiny TAN WCSModel for runner tests.
 # --------------------------------------------------------------------------- #
 def _wcs_model() -> runner.WCSModel:
-    from senpai.engine.models.astrometry import WCSModel
 
     return WCSModel(
         WCSAXES=2,
@@ -330,9 +380,8 @@ def _wcs_model() -> runner.WCSModel:
 # _validate_catalog_coverage RA-wraparound field-area logic (no logging assert,
 # just that the function runs without error on a wrap field)
 # --------------------------------------------------------------------------- #
-def test_validate_coverage_collapses_large_positive_ra_span(caplog) -> None:
-    import logging
-
+def test_validate_coverage_collapses_large_positive_ra_span(caplog: pytest.LogCaptureFixture) -> None:
+    """An RA span over 180 degrees is folded rather than taken literally."""
     caplog.set_level(logging.WARNING, logger="senpai.catalog.runner")
     # When min_ra/max_ra are given in ascending order, a >180deg span is folded to
     # 360-span (the wraparound branch). Here 10->300 (span 290) collapses to 70deg.
@@ -351,13 +400,16 @@ def test_validate_coverage_collapses_large_positive_ra_span(caplog) -> None:
     assert "very sparse" in caplog.text
 
 
-def test_validate_coverage_descending_ra_wrap_folds(caplog) -> None:
+def test_validate_coverage_descending_ra_wrap_folds(caplog: pytest.LogCaptureFixture) -> None:
     # A descending wrap field (min_ra=359, max_ra=1) spans 2 degrees, so the
     # field area is ~4 deg^2 and 50 stars (12.5 stars/deg^2) is NOT sparse.
     # Before the (max_ra - min_ra) % 360 fix this computed ~715 deg^2 and
     # logged a spurious sparse-coverage warning.
-    import logging
+    """A descending-RA wrap field computes its true area, so a normal density is not called sparse.
 
+    Before the modulo fix a 2-degree wrap field measured ~715 square degrees, which made 50
+    stars look like a coverage failure.
+    """
     with caplog.at_level(logging.WARNING):
         runner._validate_catalog_coverage(
             stars_from_catalog=[{"ra": 0.0}] * 50,
@@ -373,9 +425,8 @@ def test_validate_coverage_descending_ra_wrap_folds(caplog) -> None:
     assert "very sparse" not in caplog.text
 
 
-def test_validate_coverage_empty_logs_error(caplog) -> None:
-    import logging
-
+def test_validate_coverage_empty_logs_error(caplog: pytest.LogCaptureFixture) -> None:
+    """An empty catalog result is logged as an error."""
     with caplog.at_level(logging.ERROR):
         runner._validate_catalog_coverage(
             stars_from_catalog=[],
@@ -395,15 +446,13 @@ def test_validate_coverage_empty_logs_error(caplog) -> None:
 # SSTRC7 region query: centered on the image, max_stars counted in-frame.
 # --------------------------------------------------------------------------- #
 def _off_center_wcs() -> runner.WCSModel:
-    """A 100x100 TAN frame whose reference pixel is the corner, not the center.
+    """Build a 100x100 TAN frame whose reference pixel is the corner, not the centre.
 
     Any propagated or re-anchored solution looks like this, and it is what
     separates "center the query on CRVAL" from "center it on the image". The
     10-degree rotation keeps the PC matrix off the identity, as a real plate
     solution's is.
     """
-    from senpai.engine.models.astrometry import WCSModel
-
     theta = np.deg2rad(10.0)
     return WCSModel(
         WCSAXES=2,
@@ -426,17 +475,20 @@ def _off_center_wcs() -> runner.WCSModel:
     )
 
 
-def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict, max_width_degrees=10.0):
+def _fake_sstr7_region_query(
+    monkeypatch: pytest.MonkeyPatch, stars: list[dict], captured: dict, max_width_degrees: float = 10.0
+) -> None:
     """Stand in for the catalog region read, recording the region it was asked for."""
-    import types
 
-    def _query(fov_height, fov_width, center_ra, center_dec, **kwargs):
+    def _query(
+        fov_height: float, fov_width: float, center_ra: float, center_dec: float, **kwargs: object
+    ) -> list[dict]:
+        """Record the requested region and return the canned stars."""
         captured["center"] = (center_ra, center_dec)
         captured["fov"] = (fov_width, fov_height)
         return list(stars)
 
     monkeypatch.setattr(runner.sstr7, "query_by_los_radec_with_rotation", _query)
-    from senpai.core import config as config_module
 
     monkeypatch.setattr(
         config_module,
@@ -446,8 +498,8 @@ def _fake_sstr7_region_query(monkeypatch, stars: list[dict], captured: dict, max
     runner._query_catalog_sstr7_cached.cache_clear()
 
 
-def _star_at(wcs, x: float, y: float, mv: float) -> dict:
-    """A catalog record placed at a given pixel position of `wcs`."""
+def _star_at(wcs: runner.WCSModel, x: float, y: float, mv: float) -> dict:
+    """Build a catalog record placed at a given pixel position of ``wcs``."""
     ra_deg, dec_deg = wcs.to_astropy_wcs().wcs_pix2world([[x, y]], 0)[0]
     return {
         "ra": np.deg2rad(ra_deg),
@@ -460,7 +512,12 @@ def _star_at(wcs, x: float, y: float, mv: float) -> dict:
     }
 
 
-def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch) -> None:
+def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The region query centres on the image, not on the reference pixel.
+
+    A propagated or re-anchored WCS has CRPIX away from the image centre, so centring on CRVAL
+    puts part of the frame outside the queried region and its stars simply absent.
+    """
     wcs = _off_center_wcs()
     captured: dict = {}
     _fake_sstr7_region_query(monkeypatch, [], captured)
@@ -474,7 +531,12 @@ def test_sstr7_region_is_centered_on_the_image_not_crval(monkeypatch) -> None:
     assert abs(captured["center"][0] - wcs.CRVAL1) > 0.01
 
 
-def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch) -> None:
+def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The star cap counts stars inside the frame, not inside the padded query region.
+
+    Capping the region query instead would spend the budget on the padding and return only the
+    bright stars outside the image.
+    """
     wcs = _off_center_wcs()
     # Ten bright stars in the padded region but outside the image, then five
     # fainter ones inside it. Capping the region query would return only the
@@ -494,7 +556,8 @@ def test_sstr7_max_stars_counts_in_frame_stars(monkeypatch) -> None:
     assert [s.magnitude for s in result.stars] == pytest.approx([12.0, 12.1, 12.2])
 
 
-def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
+def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no cap, every star inside the frame is returned."""
     wcs = _off_center_wcs()
     stars = [_star_at(wcs, -50.0, 150.0, 4.0)]
     stars += [_star_at(wcs, 10.0 + i * 10, 50.0, 12.0 + i * 0.1) for i in range(5)]
@@ -506,10 +569,8 @@ def test_sstr7_max_stars_none_returns_every_in_frame_star(monkeypatch) -> None:
     assert len(result.stars) == 5
 
 
-def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch) -> None:
+def test_sstr7_rejects_an_implausible_field_of_view(monkeypatch: pytest.MonkeyPatch) -> None:
     """A corrupted WCS must fail typed, not read a huge slice of the catalog."""
-    from senpai.exceptions import SiderealSolveError
-
     # 0.1 deg/px over 100 px is a 10-degree field; a 1-degree configured maximum
     # puts it past the 2x sanity margin.
     wcs = _off_center_wcs().model_copy(update={"CDELT1": -0.1, "CDELT2": 0.1})

@@ -1,8 +1,16 @@
+"""Logging setup, safe for a pipeline that runs across processes.
+
+The rotating file handler is the reason this module exists: the ordinary one truncates or
+interleaves when several worker processes hold the same file open, so rotation is coordinated
+instead of assumed.
+"""
+
+import contextlib
 import logging
 import logging.config
 import logging.handlers
-from enum import Enum
-from typing import Any, Dict, Literal
+from enum import StrEnum
+from typing import Any, Literal
 
 from senpai.core.constants import LOG_PATH
 
@@ -24,19 +32,20 @@ class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """
 
     def rotate(self, source: str, dest: str) -> None:
-        try:
+        """Rotate, tolerating another process having already rotated the same file."""
+        # Another process may already have rotated this file out from under us.
+        with contextlib.suppress(FileNotFoundError):
             super().rotate(source, dest)
-        except FileNotFoundError:
-            # Another process already rotated this file out from under us.
-            pass
 
 
-class LogMode(str, Enum):
+class LogMode(StrEnum):
+    """Which logging preset to apply."""
+
     LOCAL = "local"
 
 
-def get_local_config() -> Dict[str, Any]:
-    """Configuration for local development with timestamps and color"""
+def get_local_config() -> dict[str, Any]:
+    """Log with timestamps and colour, for local development."""
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -93,12 +102,13 @@ def get_local_config() -> Dict[str, Any]:
     }
 
 
-def setup_logging(level: str = "INFO", disabled_loggers: list[str] = None) -> None:
-    """Configure logging based on level and context
+def setup_logging(level: str = "INFO", disabled_loggers: list[str] | None = None) -> None:
+    """Configure logging based on level and context.
 
     Args:
         level: The default logging level for all loggers
         disabled_loggers: List of logger names to disable or set to a higher level
+
     """
     # Check if logging is already configured with our settings
     root_logger = logging.getLogger()
@@ -142,6 +152,7 @@ def set_log_level(level: LogLevel) -> None:
 
     Args:
         level: The new logging level to set
+
     """
     root_logger = logging.getLogger()
     if not hasattr(root_logger, "senpai_logging_configured"):

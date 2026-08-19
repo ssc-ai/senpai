@@ -1,5 +1,4 @@
-"""
-Photometry plotting utilities for visualizing photometric results.
+"""Photometry plotting utilities for visualizing photometric results.
 
 This module provides plotting functions for:
 - Magnitude vs SNR scatter plots with completeness analysis
@@ -7,30 +6,30 @@ This module provides plotting functions for:
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.interpolate import griddata
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.photometry.utils import (
     SimplePhotometryResult,
     SimplePhotometrySummary,
     _find_common_magnitude_system,
 )
+from senpai.engine.plotting.images import plot_single_frame
 
 logger = logging.getLogger(__name__)
 
 
 def plot_magnitude_vs_snr(
-    results: List[SimplePhotometryResult],
+    results: list[SimplePhotometryResult],
     summary: SimplePhotometrySummary,
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a magnitude vs SNR scatter plot.
+    """Create a magnitude vs SNR scatter plot.
 
     Parameters
     ----------
@@ -47,6 +46,7 @@ def plot_magnitude_vs_snr(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -54,11 +54,8 @@ def plot_magnitude_vs_snr(
     # Use same magnitude selection logic as limiting magnitude calculation
     # to ensure consistency between plot and calculation AND to avoid mixing
     # different magnitude systems (e.g., Johnson_V vs Gaia_G)
-    cfg = get_config()
     preferred_filters = (
-        getattr(cfg.photometry, "preferred_filters", None)
-        if hasattr(cfg, "photometry")
-        else None
+        getattr(settings.photometry, "preferred_filters", None) if hasattr(settings, "photometry") else None
     )
 
     # Find a common magnitude system for all stars
@@ -70,17 +67,9 @@ def plot_magnitude_vs_snr(
         result_stars = [r.star for r in results]
         common_filter = _find_common_magnitude_system(result_stars, preferred_filters)
 
-        n_with_mag = sum(
-            1
-            for s in result_stars
-            if hasattr(s, "magnitude") and s.magnitude is not None
-        )
+        n_with_mag = sum(1 for s in result_stars if hasattr(s, "magnitude") and s.magnitude is not None)
         n_with_mag_dict = sum(
-            1
-            for s in result_stars
-            if hasattr(s, "magnitudes")
-            and s.magnitudes is not None
-            and len(s.magnitudes) > 0
+            1 for s in result_stars if hasattr(s, "magnitudes") and s.magnitudes is not None and len(s.magnitudes) > 0
         )
         logger.debug(
             f"Plotting: found common_filter={common_filter}, "
@@ -94,9 +83,7 @@ def plot_magnitude_vs_snr(
             mag = None
             if common_filter == "primary":
                 # Use primary magnitude
-                mag = (
-                    result.star.magnitude if hasattr(result.star, "magnitude") else None
-                )
+                mag = result.star.magnitude if hasattr(result.star, "magnitude") else None
             elif common_filter is not None:
                 # Use the common filter
                 if (
@@ -107,18 +94,14 @@ def plot_magnitude_vs_snr(
                     mag = result.star.magnitudes.get(common_filter)
             else:
                 # Fallback: use primary magnitude if available
-                mag = (
-                    result.star.magnitude if hasattr(result.star, "magnitude") else None
-                )
+                mag = result.star.magnitude if hasattr(result.star, "magnitude") else None
 
             if mag is not None:
                 magnitudes.append(mag)
                 snrs.append(result.snr)
                 quality_flags.append(result.quality_flag)
     except Exception as e:
-        logger.warning(
-            f"Error finding common magnitude system, falling back to primary magnitude: {e}"
-        )
+        logger.warning(f"Error finding common magnitude system, falling back to primary magnitude: {e}")
         # Fallback: use primary magnitude
         for result in results:
             if hasattr(result.star, "magnitude") and result.star.magnitude is not None:
@@ -176,8 +159,7 @@ def plot_magnitude_vs_snr(
     limiting_snr = summary.limiting_snr
     if limiting_snr is None:
         # Fallback to config if not stored in summary
-        cfg = get_config()
-        limiting_snr = getattr(cfg.photometry, "limiting_snr", 3.0)
+        limiting_snr = getattr(settings.photometry, "limiting_snr", 3.0)
 
     if limiting_snr > 0:
         ax.axhline(
@@ -208,8 +190,7 @@ def plot_magnitude_vs_snr(
             label=f"Limiting Mag [90%]: {summary.limiting_magnitude_90:.1f}",
         )
     # Plot completeness vs magnitude on a secondary y-axis
-    cfg = get_config()
-    limiting_snr = getattr(cfg.photometry, "limiting_snr", 3.0)
+    limiting_snr = getattr(settings.photometry, "limiting_snr", 3.0)
 
     ax2 = ax.twinx()
     if len(magnitudes) > 0:
@@ -221,9 +202,7 @@ def plot_magnitude_vs_snr(
         bin_width = 0.25
         min_mag = float(np.floor(np.min(mags_all)))
         max_mag_actual = float(np.max(mags_all))  # Actual max magnitude in data
-        max_mag = float(
-            np.ceil(max_mag_actual)
-        )  # For binning, use ceil to include last bin
+        max_mag = float(np.ceil(max_mag_actual))  # For binning, use ceil to include last bin
         bins = np.arange(min_mag, max_mag + bin_width, bin_width)
         if len(bins) > 1 and len(mags_all) > 0:
             bin_centers = 0.5 * (bins[:-1] + bins[1:])
@@ -236,9 +215,7 @@ def plot_magnitude_vs_snr(
                     # Skip empty bins - don't plot them
                     continue
                 else:
-                    completeness.append(
-                        float(np.mean(snrs_all[in_bin] >= limiting_snr))
-                    )
+                    completeness.append(float(np.mean(snrs_all[in_bin] >= limiting_snr)))
                     bin_centers_filtered.append(bin_centers[i])
 
             # Only plot if we have completeness data
@@ -255,7 +232,7 @@ def plot_magnitude_vs_snr(
 
                 # Warn if limiting magnitude is extrapolated beyond actual data range
                 if summary.limiting_magnitude > max_mag_actual:
-                    logger.warning(
+                    logger.info(
                         f"Limiting magnitude ({summary.limiting_magnitude:.2f}) "
                         f"is extrapolated beyond actual data range (max sampled mag={max_mag_actual:.2f}). "
                         f"Completeness data only extends to {max_mag_actual:.2f} mag."
@@ -292,13 +269,12 @@ def plot_magnitude_vs_snr(
 
 
 def plot_spatial_background_distribution(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of background level distribution.
+    """Create a spatial map of background level distribution.
 
     Parameters
     ----------
@@ -315,6 +291,7 @@ def plot_spatial_background_distribution(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -345,17 +322,13 @@ def plot_spatial_background_distribution(
     background_levels = np.array(background_levels)
 
     # Plot background level distribution
-    scatter = ax.scatter(
-        x_positions, y_positions, c=background_levels, cmap="viridis", s=50, alpha=0.7
-    )
+    scatter = ax.scatter(x_positions, y_positions, c=background_levels, cmap="viridis", s=50, alpha=0.7)
     ax.set_xlabel("X Position (pixels)")
     ax.set_ylabel("Y Position (pixels)")
     ax.set_title("Background Level Distribution")
     ax.set_aspect("equal")
     ax.invert_yaxis()  # Image coordinates: (0,0) at top-left
-    plt.colorbar(
-        scatter, ax=ax, label="Background Level (ADU/pixel)", shrink=0.6, aspect=20
-    )
+    plt.colorbar(scatter, ax=ax, label="Background Level (ADU/pixel)", shrink=0.6, aspect=20)
 
     plt.tight_layout()
 
@@ -367,13 +340,12 @@ def plot_spatial_background_distribution(
 
 
 def plot_spatial_background_quality(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of background levels with quality coding.
+    """Create a spatial map of background levels with quality coding.
 
     Parameters
     ----------
@@ -390,6 +362,7 @@ def plot_spatial_background_quality(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -469,9 +442,7 @@ def plot_spatial_background_quality(
     ax.invert_yaxis()  # Image coordinates: (0,0) at top-left
 
     # Use the first available scatter plot for colorbar
-    scatter_for_colorbar = (
-        scatter_quality if scatter_quality is not None else scatter_poor
-    )
+    scatter_for_colorbar = scatter_quality if scatter_quality is not None else scatter_poor
     if scatter_for_colorbar is not None:
         plt.colorbar(
             scatter_for_colorbar,
@@ -492,11 +463,10 @@ def plot_spatial_background_quality(
 
 def plot_background_contours_on_image(
     image: ProcessedFitsImage,
-    results: List[SimplePhotometryResult],
-    output_file: Optional[Path] = None,
+    results: list[SimplePhotometryResult],
+    output_file: Path | None = None,
 ) -> plt.Figure:
-    """
-    Create contour lines on the original image showing background distribution.
+    """Create contour lines on the original image showing background distribution.
 
     Parameters
     ----------
@@ -511,9 +481,8 @@ def plot_background_contours_on_image(
     -------
     plt.Figure
         The created figure
-    """
-    from senpai.engine.plotting.images import plot_single_frame
 
+    """
     # Use plot_single_frame to get the base image with proper axis
     fig, ax = plot_single_frame(image.data, output_file=None)
 
@@ -550,18 +519,13 @@ def plot_background_contours_on_image(
     X, Y = np.meshgrid(x_grid, y_grid)
 
     # Interpolate background levels onto the grid with cubic interpolation for smoother contours
-    from scipy.interpolate import griddata
 
     points = np.column_stack((x_positions, y_positions))
     Z = griddata(points, background_levels, (X, Y), method="cubic", fill_value=np.nan)
 
     # Create fewer contour lines with thicker white lines
-    contour_levels = np.linspace(
-        np.nanmin(background_levels), np.nanmax(background_levels), 6
-    )
-    contours = ax.contour(
-        X, Y, Z, levels=contour_levels, colors="white", linewidths=2.0, alpha=0.8
-    )
+    contour_levels = np.linspace(np.nanmin(background_levels), np.nanmax(background_levels), 6)
+    contours = ax.contour(X, Y, Z, levels=contour_levels, colors="white", linewidths=2.0, alpha=0.8)
     ax.clabel(contours, inline=True, fontsize=8, fmt="%.2f")
 
     # Overlay star positions (no quality coding)
@@ -588,13 +552,12 @@ def plot_background_contours_on_image(
 
 
 def plot_spatial_instrumental_magnitude(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (12, 10),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (12, 10),
 ) -> plt.Figure:
-    """
-    Create a spatial map of instrumental magnitudes.
+    """Create a spatial map of instrumental magnitudes.
 
     Parameters
     ----------
@@ -611,6 +574,7 @@ def plot_spatial_instrumental_magnitude(
     -------
     plt.Figure
         The created figure
+
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
 
@@ -626,14 +590,8 @@ def plot_spatial_instrumental_magnitude(
             x_positions.append(result.star.x)
             y_positions.append(result.star.y)
             # Convert None to NaN for proper numpy handling
-            inst_mag = (
-                result.instrumental_magnitude
-                if result.instrumental_magnitude is not None
-                else np.nan
-            )
-            catalog_mag = (
-                result.star.magnitude if result.star.magnitude is not None else np.nan
-            )
+            inst_mag = result.instrumental_magnitude if result.instrumental_magnitude is not None else np.nan
+            catalog_mag = result.star.magnitude if result.star.magnitude is not None else np.nan
             inst_mags.append(inst_mag)
             catalog_mags.append(catalog_mag)
             quality_flags.append(result.quality_flag)
@@ -730,13 +688,12 @@ def plot_spatial_instrumental_magnitude(
 
 
 def plot_spatial_snr(
-    results: List[SimplePhotometryResult],
-    image_shape: Tuple[int, int],
-    output_file: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
+    results: list[SimplePhotometryResult],
+    image_shape: tuple[int, int],
+    output_file: Path | None = None,
+    figsize: tuple[int, int] = (10, 8),
 ) -> plt.Figure:
-    """
-    Create a spatial map of SNR values.
+    """Create a spatial map of SNR values.
 
     Parameters
     ----------
@@ -753,6 +710,7 @@ def plot_spatial_snr(
     -------
     plt.Figure
         The created figure
+
     """
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -786,9 +744,7 @@ def plot_spatial_snr(
     quality_flags = np.array(quality_flags)
 
     # Create SNR scatter plot
-    scatter = ax.scatter(
-        x_positions, y_positions, c=snrs, cmap="viridis", s=50, alpha=0.7
-    )
+    scatter = ax.scatter(x_positions, y_positions, c=snrs, cmap="viridis", s=50, alpha=0.7)
     ax.set_xlabel("X Position (pixels)")
     ax.set_ylabel("Y Position (pixels)")
     ax.set_title("Signal-to-Noise Ratio Distribution")
@@ -802,9 +758,7 @@ def plot_spatial_snr(
 
     if np.any(quality_mask) and np.any(poor_mask):
         # Add legend for quality
-        ax.scatter(
-            [], [], c="blue", s=50, alpha=0.7, label=f"Quality ({np.sum(quality_mask)})"
-        )
+        ax.scatter([], [], c="blue", s=50, alpha=0.7, label=f"Quality ({np.sum(quality_mask)})")
         ax.scatter(
             [],
             [],
@@ -825,15 +779,14 @@ def plot_spatial_snr(
 
 
 def plot_photometry_summary(
-    results: List[SimplePhotometryResult],
+    results: list[SimplePhotometryResult],
     summary: SimplePhotometrySummary,
-    image_shape: Tuple[int, int],
+    image_shape: tuple[int, int],
     output_dir: Path,
-    image: Optional[ProcessedFitsImage] = None,
-    output_file: Optional[Path] = None,
+    image: ProcessedFitsImage | None = None,
+    output_file: Path | None = None,
 ) -> None:
-    """
-    Create photometry magnitude vs SNR plot.
+    """Create photometry magnitude vs SNR plot.
 
     Parameters
     ----------
@@ -849,6 +802,7 @@ def plot_photometry_summary(
         Original image for contour plots (not used)
     output_file : Path, optional
         Custom output file path. If None, uses default filename in output_dir
+
     """
     logger.info("Creating photometry summary plots...")
 
@@ -857,10 +811,7 @@ def plot_photometry_summary(
 
     # Plot 1: Magnitude vs SNR (only plot we want to keep)
     try:
-        if output_file is not None:
-            mag_snr_file = output_file
-        else:
-            mag_snr_file = output_dir / "photometry_magnitude_vs_snr.png"
+        mag_snr_file = output_file if output_file is not None else output_dir / "photometry_magnitude_vs_snr.png"
         plot_magnitude_vs_snr(results, summary, mag_snr_file)
     except Exception as e:
         logger.error(f"Failed to create magnitude vs SNR plot: {e}", exc_info=True)

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-CLI for photometry measurements on FITS images.
+r"""CLI for photometry measurements on FITS images.
 
 This CLI provides a command-line interface for performing comprehensive
 photometry on astronomical images with WCS solutions.
@@ -35,8 +34,8 @@ from senpai.engine.processing.photometry_pipeline import process_image_photometr
 logger = logging.getLogger(__name__)
 
 
-def main():
-    """Main CLI function."""
+def main() -> None:
+    """Run the photometry CLI."""
     parser = argparse.ArgumentParser(description="Perform photometry on FITS images")
 
     # Required arguments
@@ -73,7 +72,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    save_run_metadata(output_dir, "senpai.cli.photometry", cfg)
+    save_run_metadata(output_dir, "senpai.cli.photometry")
 
     # Photometry configuration: config file values with CLI overrides
     overrides = {
@@ -105,8 +104,8 @@ def main():
 
         logger.info(f"Photometry results saved to: {output_path}")
 
-    except Exception as e:
-        logger.error(f"Error processing photometry: {e}")
+    except Exception:
+        logger.exception("Error processing photometry")
         raise
 
 

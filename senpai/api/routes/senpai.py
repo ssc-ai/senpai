@@ -18,7 +18,7 @@ from senpai.api.models.returns import (
     frame_result_from_rate,
     frame_result_from_sidereal,
 )
-from senpai.core.config import get_config
+from senpai.core.config import settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.processing.collect import process_senpai_collect
 from senpai.engine.utils.file_io import load_base64_files
@@ -33,6 +33,8 @@ router = APIRouter()
 
 
 class FilePayloadItem(BaseModel):
+    """One uploaded frame, with the sequence position it occupies in its collect."""
+
     file: str = Field(..., description="Base64-encoded FITS file bytes")
     sequence_id: int | None = Field(None, description="Sequence ID for ordering")
     sequence_count: int | None = Field(None, description="Total sequence count")
@@ -60,9 +62,7 @@ def _run_collect_pipeline(
         frames.append(frame_result_from_rate(frame))
     frames.sort(key=lambda f: f.index)
 
-    correlated = [
-        cs.model_dump(mode="json") for cs in senpai_run.correlated_streaks
-    ]
+    correlated = [cs.model_dump(mode="json") for cs in senpai_run.correlated_streaks]
 
     logger.info(
         "POST %s — done: %d frames, %d correlated streaks, %s",
@@ -80,9 +80,9 @@ def _run_collect_pipeline(
 
 
 @router.get("/")
-async def index(request: Request):
-    config = get_config()
-    return {"api": str(request.base_url), "version": config.version}
+async def index(request: Request) -> dict[str, str]:
+    """Report the API root and the running version."""
+    return {"api": str(request.base_url), "version": settings.version}
 
 
 # ---------------------------------------------------------------------------

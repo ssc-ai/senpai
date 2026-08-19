@@ -49,6 +49,7 @@ def cutout_gauss(sub_image: np.ndarray, pixel_seeing: float) -> tuple[float, flo
 
     Raises:
         ValueError: If the Gaussian fit does not converge.
+
     """
     size = sub_image.shape[0]
 
@@ -96,6 +97,7 @@ def find_two_brightest_points(
 
     Returns:
         Coordinates of the two brightest points as ((y1, x1), (y2, x2))
+
     """
     # Find the coordinates of the brightest point
     brightest_point_1 = np.unravel_index(np.argmax(arr), arr.shape)
@@ -119,6 +121,7 @@ def euclidean_distance(point1: tuple[int, int], point2: tuple[int, int]) -> floa
 
     Returns:
         Euclidean distance.
+
     """
     return float(np.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2))
 
@@ -133,6 +136,7 @@ def generate_cutout(frame: np.ndarray, detection: tuple[float, float], side: int
 
     Returns:
         Square cutout of the image.
+
     """
     x, y = detection
     y_min = max(0, round(y) - side)
@@ -171,6 +175,7 @@ def _flux_concentration(cutout: np.ndarray) -> float:
 
     Returns:
         core_flux / total_flux, or 0.0 if the cutout is too small.
+
     """
     cy, cx = np.array(cutout.shape) // 2
     if cy - 1 < 0 or cx - 1 < 0 or cy + 2 > cutout.shape[0] or cx + 2 > cutout.shape[1]:
@@ -201,18 +206,14 @@ def psf_flux_concentration(cutout: np.ndarray, pixel_fwhm: float) -> float:
     Returns:
         inner_flux / outer_flux, or 0.0 when the cutout is too small to contain the
         outer aperture or the outer aperture holds no flux.
+
     """
     r_in = _CONCENTRATION_INNER_FWHM * pixel_fwhm
     r_out = _CONCENTRATION_OUTER_FWHM * pixel_fwhm
 
     cy, cx = np.array(cutout.shape) // 2
     # The cutout must be large enough to contain the full outer aperture.
-    if (
-        cy - r_out < 0
-        or cx - r_out < 0
-        or cy + r_out >= cutout.shape[0]
-        or cx + r_out >= cutout.shape[1]
-    ):
+    if cy - r_out < 0 or cx - r_out < 0 or cy + r_out >= cutout.shape[0] or cx + r_out >= cutout.shape[1]:
         return 0.0
 
     y, x = np.mgrid[: cutout.shape[0], : cutout.shape[1]]
@@ -245,6 +246,7 @@ def measured_pixel_fwhm(frame: RateTrackFrame) -> float:
 
     Returns:
         The measured PSF FWHM in pixels.
+
     """
 
     def _valid(value: float | None) -> bool:
@@ -265,9 +267,7 @@ def measured_pixel_fwhm(frame: RateTrackFrame) -> float:
     return _DEFAULT_PIXEL_FWHM
 
 
-def _simple_mask(
-    shape: tuple[int, int], center_yx: tuple[float, float], radius: int
-) -> np.ndarray:
+def _simple_mask(shape: tuple[int, int], center_yx: tuple[float, float], radius: int) -> np.ndarray:
     """Create a boolean mask with a rectangular aperture around a centre.
 
     Args:
@@ -277,6 +277,7 @@ def _simple_mask(
 
     Returns:
         Boolean array; True inside the aperture.
+
     """
     mask = np.zeros(shape, dtype=bool)
     cy, cx = int(center_yx[0]), int(center_yx[1])
@@ -369,6 +370,7 @@ def filter_point_sources(
 
     Returns:
         List of (x, y, fwhm) for accepted point sources.
+
     """
     verbose = settings.detection.verbose
     filtered_detections = []
@@ -399,8 +401,7 @@ def filter_point_sources(
         if hot_pixel_concentration > hot_pixel_threshold:
             if verbose:
                 logger.warning(
-                    f"[{idx + 1}] [FILTERING] Brightest pixel contains "
-                    f"{hot_pixel_concentration:.2f} of total flux"
+                    f"[{idx + 1}] [FILTERING] Brightest pixel contains {hot_pixel_concentration:.2f} of total flux"
                 )
             continue
 
@@ -435,26 +436,17 @@ def filter_point_sources(
 
         if fx < pixel_seeing / 2.5 or fy < pixel_seeing / 2.5:
             if verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] PSF too narrow (FWHM={fcomb:.2f}, "
-                    f"seeing={pixel_seeing:.2f})"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] PSF too narrow (FWHM={fcomb:.2f}, seeing={pixel_seeing:.2f})")
             continue
 
         if fx > pixel_seeing * 3 or fy > pixel_seeing * 3:
             if verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] PSF too wide (FWHM={fcomb:.2f}, "
-                    f"seeing={pixel_seeing:.2f})"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] PSF too wide (FWHM={fcomb:.2f}, seeing={pixel_seeing:.2f})")
             continue
 
         if percent_difference(fx, fy) > 55:
             if verbose:
-                logger.warning(
-                    f"[{idx + 1}] [FILTERING] PSF non-circular "
-                    f"(Δ={percent_difference(fx, fy):.1f}%)"
-                )
+                logger.warning(f"[{idx + 1}] [FILTERING] PSF non-circular (Δ={percent_difference(fx, fy):.1f}%)")
             continue
 
         # (7) Report position: the sub-pixel SEP centroid, with a PSF-relative
@@ -501,6 +493,7 @@ def extract_point_sources_sep(frame: RateTrackFrame) -> SatelliteListImage:
 
     Returns:
         A SatelliteListImage of detected point sources.
+
     """
     # Pre-processing
     image_data = median_filter(frame.frame.data, size=3)
@@ -596,10 +589,7 @@ def extract_point_sources_sep(frame: RateTrackFrame) -> SatelliteListImage:
             pixel_fwhm=float(pixel_fwhm),
         )
 
-        if (
-            settings.detection.snr_threshold is not None
-            and star.snr > settings.detection.snr_threshold
-        ):
+        if settings.detection.snr_threshold is not None and star.snr > settings.detection.snr_threshold:
             stars.append(star)
 
     if settings.detection.snr_threshold:

@@ -1,3 +1,12 @@
+"""Per-frame metadata models: what the headers said, and what measurement found.
+
+Two kinds of thing live here. Header-derived models (site, camera, telescope, frame) carry
+what the FITS keywords provided, and record explicitly which capabilities are missing so a
+degraded run is diagnosable rather than merely worse. Measurement-derived models (FWHM,
+seeing, streak, detection) carry what the pipeline measured from the pixels.
+"""
+
+import logging
 from datetime import datetime
 from enum import Enum
 
@@ -7,8 +16,15 @@ from pydantic import BaseModel
 
 from senpai.engine.detection.kernels import rectangle_pyramoid
 
+#: Gap signatures already reported in this process, so a keyword a sensor never writes is
+#: warned about once rather than once per frame. Workers recycle per collect, so this resets
+#: with each collect.
+_WARNED_CAPABILITY_GAPS: set[tuple[str, ...]] = set()
+
 
 class TrackMode(Enum):
+    """How the mount was driven while the frame was exposed."""
+
     RATE = "rate"
     SIDEREAL = "sidereal"
     UNKNOWN = "unknown"
@@ -16,6 +32,8 @@ class TrackMode(Enum):
 
 # Define SiteMetadata first, before importing functions that use it
 class SiteMetadata(BaseModel):
+    """Observing-site position, needed for airmass and observability."""
+
     name: str | None = None
     latitude: float
     longitude: float
@@ -44,15 +62,21 @@ class FWHMMetadata(BaseModel):
 
 
 class DetectionMetadata(BaseModel):
+    """The PSF scale detection measured, and the statistics behind it."""
+
     pixel_fwhm: float
     fwhm_stats: FWHMMetadata | None = None
 
 
 class CollectionMetadata(BaseModel):
+    """Identifiers tying a frame to the collect it belongs to."""
+
     pixel_rate_per_second: float | None = None
 
 
 class ImageMetadata(BaseModel):
+    """Frame geometry, timing and pointing, as the pipeline needs them."""
+
     image_id: str | None = None
     width: int
     height: int
@@ -64,6 +88,8 @@ class ImageMetadata(BaseModel):
 
 
 class SeeingMetadata(BaseModel):
+    """Seeing measured on a frame, in pixels and on the sky."""
+
     arcsec: float | None = None
     arcsec_stdev: float | None = None
     n_measurements: int | None = None
@@ -72,12 +98,15 @@ class SeeingMetadata(BaseModel):
 
 
 class SeeingModel(BaseModel):
+    """Seeing summarised for reporting, derived from the FWHM statistics."""
+
     pixel_fwhm: float
     pixel_fwhm_stdev: float
     n_measurements: int
 
     @classmethod
     def from_fwhm_stats(cls, fwhm_stats: FWHMMetadata) -> "SeeingModel":
+        """Summarise FWHM statistics into the reporting form."""
         return cls(
             pixel_fwhm=fwhm_stats.median_fwhm,
             pixel_fwhm_stdev=fwhm_stats.std_fwhm,
@@ -86,6 +115,8 @@ class SeeingModel(BaseModel):
 
 
 class StarMetadata(BaseModel):
+    """Counts of catalog and fit stars used on a frame."""
+
     ra: float
     dec: float
     magnitude: float
@@ -94,6 +125,12 @@ class StarMetadata(BaseModel):
 
 
 class StreakMetadata(BaseModel):
+    """A streak's measured geometry: length, orientation and width.
+
+    The orientation is stored as its sine and cosine rather than an angle, so that a kernel
+    can be built without a branch at the wrap point.
+    """
+
     pixel_length: float
     sine_angle: float
     cosine_angle: float
@@ -102,18 +139,23 @@ class StreakMetadata(BaseModel):
     use_variable_kernel: bool = False
 
     def degree_angle(self) -> float:
+        """Streak orientation in degrees."""
         return np.rad2deg(self.radian_angle())
 
     def radian_angle(self) -> float:
+        """Streak orientation in radians, recovered from its sine and cosine."""
         return np.arctan2(self.sine_angle, self.cosine_angle)
 
     def to_pyramoid(self) -> np.ndarray:
+        """Build the convolution kernel matching this streak's length, angle and width."""
         kernel = rectangle_pyramoid(self.pixel_length, self.sine_angle, self.cosine_angle, self.fwhm)
 
         return kernel
 
 
 class FrameMetadata(BaseModel):
+    """What one frame's FITS header provided, plus which capabilities it lacks."""
+
     # Optional so frames with sparse/absent headers (e.g. a raw focus frame with
     # only NAXIS) still build a FrameMetadata. Downstream features that need a
     # value gate on its presence (see FrameMetadata.missing_capabilities) rather
@@ -129,6 +171,7 @@ class FrameMetadata(BaseModel):
     observation_filter: str | None = None
 
     def to_serializable(self) -> "FrameMetadata":
+        """Return a copy whose fields are all JSON-encodable."""
         """Create a copy of this FrameMetadata with datetime converted to ISO format string."""
         data = self.dict()
         if self.observation_time:
@@ -144,49 +187,72 @@ class FrameMetadata(BaseModel):
         """
         gaps: list[tuple[str, str]] = []
         if self.observation_time is None:
-            gaps.append((
-                "observation time (e.g. DATE-OBS)",
-                "multi-frame time ordering falls back to input order; "
-                "time-based streak/rate correlation is disabled",
-            ))
+            gaps.append(
+                (
+                    "observation time (e.g. DATE-OBS)",
+                    "multi-frame time ordering falls back to input order; "
+                    "time-based streak/rate correlation is disabled",
+                )
+            )
         if self.exposure_time_seconds is None:
-            gaps.append((
-                "exposure time (e.g. EXPTIME)",
-                "exposure-normalized photometry (per-second magnitudes in "
-                "detection/forced photometry) and rate conversion (pixels/s -> "
-                "arcsec/s) are disabled; the catalog zero-point and limiting "
-                "magnitude are still computed (instrumental, count-based)",
-            ))
+            gaps.append(
+                (
+                    "exposure time (e.g. EXPTIME)",
+                    "exposure-normalized photometry (per-second magnitudes in "
+                    "detection/forced photometry) and rate conversion (pixels/s -> "
+                    "arcsec/s) are disabled; the catalog zero-point and limiting "
+                    "magnitude are still computed (instrumental, count-based)",
+                )
+            )
         if self.boresight_ra_degrees is None or self.boresight_dec_degrees is None:
-            gaps.append((
-                "boresight pointing (RA/DEC or AZ/ALT)",
-                "plate solve runs blind (no RA/Dec hint) — slower, no constrained refine tier",
-            ))
+            gaps.append(
+                (
+                    "boresight pointing (RA/DEC or AZ/ALT)",
+                    "plate solve runs blind (no RA/Dec hint) — slower, no constrained refine tier",
+                )
+            )
         if self.site is None:
-            gaps.append((
-                "observing site (lat/long/elev)",
-                "airmass / observability metrics are disabled",
-            ))
+            gaps.append(
+                (
+                    "observing site (lat/long/elev)",
+                    "airmass / observability metrics are disabled",
+                )
+            )
         if self.observation_filter is None:
-            gaps.append((
-                "filter (e.g. FILTER)",
-                "band-specific photometric calibration falls back to a generic band",
-            ))
+            gaps.append(
+                (
+                    "filter (e.g. FILTER)",
+                    "band-specific photometric calibration falls back to a generic band",
+                )
+            )
         return gaps
 
-    def log_missing_capabilities(self, logger, label: str = "frame") -> None:
-        """Emit one warning per missing-header capability gap (verbose by design)."""
+    def log_missing_capabilities(self, logger: logging.Logger, label: str = "frame") -> None:
+        """Report which header-gated capabilities this frame cannot run, once per set of gaps.
+
+        A sensor that omits a keyword omits it on every frame, so warning per frame says the same
+        thing once per frame and buries everything else: on a 134-collect benchmark run this one
+        call produced 2,880 of 4,537 warning lines, all the same two sentences. The first frame
+        with a given set of gaps warns; identical sets afterwards log at debug.
+
+        Because workers are recycled per collect, "first time" means first in this process, which
+        works out to once per collect -- the granularity that matters, since each collect's
+        degradations belong in its own log.
+        """
         gaps = self.missing_capabilities()
         if not gaps:
             return
-        logger.warning(
-            "%s: %d header value(s) missing — degrading gracefully:", label, len(gaps)
-        )
+        signature = tuple(missing for missing, _ in gaps)
+        first_time = signature not in _WARNED_CAPABILITY_GAPS
+        _WARNED_CAPABILITY_GAPS.add(signature)
+        emit = logger.warning if first_time else logger.debug
+        emit("%s: %d header value(s) missing — degrading gracefully:", label, len(gaps))
         for missing, disabled in gaps:
-            logger.warning("  - missing %s -> %s", missing, disabled)
+            emit("  - missing %s -> %s", missing, disabled)
 
     @classmethod
     def from_header(cls, header: Header) -> "FrameMetadata":
+        """Build frame metadata from a FITS header, tolerating absent keywords."""
         # avoid circular import
         from senpai.engine.utils.fits_io import (
             extract_boresight_from_header,
@@ -218,12 +284,16 @@ class FrameMetadata(BaseModel):
 
 
 class CameraMetadata(BaseModel):
+    """Detector properties read from the header."""
+
     model: str
     pixel_size: float
     binning: int
 
 
 class TelescopeMetadata(BaseModel):
+    """Optics properties read from the header."""
+
     model: str
     aperture: float
     site: SiteMetadata

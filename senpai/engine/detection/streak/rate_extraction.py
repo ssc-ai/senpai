@@ -1,6 +1,7 @@
 """Rate-track streak extraction and source detection utilities."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.signal import convolve
@@ -16,20 +17,23 @@ from senpai.engine.models.starfield import StarInImage
 from senpai.engine.models.streak_measurement import StreakMeasurement
 from senpai.engine.utils.stats import fft_workers, robust_background_stats
 
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import RateTrackFrame
+
 logger = logging.getLogger(__name__)
 
 
 def extract_rate_streak_measurement(
-    rate_frame,
+    rate_frame: "RateTrackFrame",
     *,
     n_streaks: int = 10,
     initial_fwhm: float | None = None,
 ) -> tuple[StreakMeasurement | None, np.ndarray | None, float | None]:
-    """
-    Measure the characteristic star-streak in a single rate-track frame.
+    """Measure the characteristic star-streak in a single rate-track frame.
 
     Returns:
         (measurement, psf, measured_fwhm)
+
     """
     # Work on a padded/cropped version to avoid edge artifacts.
     rate_data = prepare_rate_frame(rate_frame)
@@ -46,14 +50,17 @@ def extract_rate_streak_measurement(
 
     # Refine using the two-stage robust refiner when we have a PSF cutout.
     if psf is not None:
-        measurement, measured_fwhm = refine_robust_streak(
-            psf, measurement, frame_index=rate_frame.index
-        )
+        measurement, measured_fwhm = refine_robust_streak(psf, measurement, frame_index=rate_frame.index)
 
     return measurement, psf, measured_fwhm
 
 
 def build_streak_metadata(measurement: StreakMeasurement) -> StreakMetadata:
+    """Convert a streak measurement into the metadata model the frame carries.
+
+    Orientation is stored as its sine and cosine rather than the angle, so downstream code
+    never has to decide what 179 degrees versus -1 degree means.
+    """
     theta = float(measurement.rotation)
     return StreakMetadata(
         pixel_length=float(measurement.length),
@@ -70,8 +77,7 @@ def extract_streak_centers_as_sources(
     max_sources: int = 200,
     threshold_sigma: float = 3.0,
 ) -> list[StarInImage]:
-    """
-    Extract streak centroids using matched filtering with a rectangular kernel.
+    """Extract streak centroids using matched filtering with a rectangular kernel.
 
     Uses the measured streak parameters (length, angle, FWHM) to create a matched
     filter kernel, then finds local maxima in the convolved image.
@@ -84,6 +90,7 @@ def extract_streak_centers_as_sources(
 
     Returns:
         List of StarInImage objects representing streak centroids
+
     """
     # Use measured streak parameters if available, otherwise conservative defaults
     if streak is not None:
@@ -138,8 +145,7 @@ def extract_streak_centers_as_sources(
     # Detection threshold
     threshold = median + threshold_sigma * std
     logger.info(
-        f"Detection threshold: {threshold:.1f} (median={median:.1f}, std={std:.1f}, "
-        f"sigma={threshold_sigma:.1f})"
+        f"Detection threshold: {threshold:.1f} (median={median:.1f}, std={std:.1f}, sigma={threshold_sigma:.1f})"
     )
 
     # Find local maxima above threshold. Same predicate as a full-frame
@@ -190,9 +196,7 @@ def extract_streak_centers_as_sources(
     detections: list[StarInImage] = []
     seen_positions: list[tuple[float, float]] = []
 
-    for i in range(
-        min(len(y_coords), max_sources * 3)
-    ):  # Check more candidates than needed
+    for i in range(min(len(y_coords), max_sources * 3)):  # Check more candidates than needed
         if len(detections) >= max_sources:
             break
 

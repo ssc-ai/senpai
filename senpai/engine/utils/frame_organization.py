@@ -1,3 +1,11 @@
+"""Read a frame's identity and timestamp out of its header, tolerating sensor variation.
+
+Sensors disagree about how to spell a timestamp -- which keyword holds it, whether date and
+time are one field or two, what the fractional seconds look like. Grouping frames into collects
+depends on getting the time right, so the parsing here tries the known spellings rather than
+assuming one.
+"""
+
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -12,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_date_string(date_str: str) -> arrow.Arrow:
-    """
-    Parse a date string, trying arrow's default formats first,
-    then falling back to MM/DD/YY and MM/DD/YYYY formats.
+    """Parse a date string, trying arrow's formats before the American ones.
+
+    Falls back to MM/DD/YY and MM/DD/YYYY, which arrow does not accept but sensors write.
     """
     try:
         # First try arrow's default parsing (handles many formats)
@@ -36,12 +44,10 @@ def _parse_date_string(date_str: str) -> arrow.Arrow:
 
 
 def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
-    """
-    Parse a time string and return (hour, minute, second, microsecond) tuple.
+    """Parse a time string and return (hour, minute, second, microsecond) tuple.
+
     Returns None if parsing fails.
     """
-    from datetime import datetime
-
     # Try parsing with datetime first
     time_formats = [
         "%H:%M:%S.%f",  # 21:36:28.604000
@@ -61,19 +67,25 @@ def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
         arrow_time = arrow.get(time_str)
         return (arrow_time.hour, arrow_time.minute, arrow_time.second, arrow_time.microsecond)
     except Exception:
-        pass
+        logger.debug("Could not parse a time string with the broad parser", exc_info=True)
 
     return None
 
 
 def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
+    """Read a frame's UTC observation time from whichever header keyword carries it.
+
+    Tries the combined date-time keywords first, then a separate date and time pair, since
+    sensors split it either way. Grouping frames into collects depends on this, so a
+    mis-parsed time does not fail loudly -- it puts the frame in the wrong collect.
+    """
     for header_key in DATE_TIME_HEADERS:
         if header_key in header:
             try:
                 arrow_time = _parse_date_string(str(header[header_key]))
                 return arrow_time.datetime
-            except Exception as e:
-                logger.error(f"failed to parse time from {header_key}: {e}")
+            except Exception:
+                logger.exception("failed to parse time from")
                 continue
 
     arrow_date = None
@@ -82,8 +94,8 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
         if header_key in header:
             try:
                 arrow_date = _parse_date_string(str(header[header_key]))
-            except Exception as e:
-                logger.error(f"failed to parse time from {header_key}: {e}")
+            except Exception:
+                logger.exception("failed to parse time from")
                 continue
 
     if arrow_date is not None:
@@ -92,8 +104,8 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
                 try:
                     time_components = _parse_time_string(str(header[header_key]))
                     break
-                except Exception as e:
-                    logger.error(f"failed to parse time from {header_key}: {e}")
+                except Exception:
+                    logger.exception("failed to parse time from")
                     continue
 
     # If we have both date and time, combine them
@@ -116,7 +128,11 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
 
 
 def get_imageset_by_filename(data_directory: Path, string_match: str) -> list[str]:
-    # Get all .fits files in directory that match the regex pattern
+    """Find FITS files under a directory whose filename contains ``string_match``.
+
+    Sorted, because frame order within a collect is the order they were taken and downstream
+    registration walks them in sequence.
+    """
     fits_files = [str(f) for f in data_directory.glob("**/*.fits") if string_match in f.name]
 
     if not fits_files:
@@ -126,7 +142,7 @@ def get_imageset_by_filename(data_directory: Path, string_match: str) -> list[st
 
 
 def get_all_images_in_directory(data_directory: Path) -> list[str]:
-    # Get all .fits files in directory and subdirectories
+    """Find every FITS file under a directory, recursively, sorted by path."""
     fits_files = [str(f) for f in data_directory.glob("**/*.fits")]
 
     if not fits_files:
@@ -135,7 +151,12 @@ def get_all_images_in_directory(data_directory: Path) -> list[str]:
     return sorted(fits_files)
 
 
-def extract_id_from_header(file: Path, header_key: str) -> str:
+def extract_id_from_header(file: Path, header_key: str) -> str | None:
+    """Read a collect id from a frame's header, or None if the keyword is absent.
+
+    ``ORCHCOMM`` is special-cased: it packs the id into a longer command string
+    (``&IMAGESETID@[ukr]#[1:6]%[OPEN]``), so the id is parsed out rather than read whole.
+    """
     with fits.open(file) as hdul:
         header = hdul[0].header
 
@@ -151,6 +172,11 @@ def extract_id_from_header(file: Path, header_key: str) -> str:
 
 
 def header_key_matches(file: Path, header_key: str, value: str) -> bool:
+    """Whether a frame's header carries ``value`` under ``header_key``.
+
+    For ``ORCHCOMM`` this is a containment test against the id packed inside the command
+    string, not an equality test against the whole value.
+    """
     with fits.open(file) as hdul:
         header = hdul[0].header
 
@@ -164,8 +190,12 @@ def header_key_matches(file: Path, header_key: str, value: str) -> bool:
     return header[header_key] == value
 
 
-def get_imageset_by_id(data_directory: Path, id: str, header_id_key: str) -> list[str]:
-    # get all fits files in a directory that have the same value for the header_id_key
+def get_imageset_by_id(data_directory: Path, id: str, header_id_key: str) -> list[str]:  # noqa: A002 - `id` is the published parameter name
+    """Find every frame under a directory belonging to one collect, by header id.
+
+    This opens each candidate file's header, so it is proportional to the directory rather
+    than to the collect -- fine for a night, expensive over an archive.
+    """
     fits_files = [str(f) for f in data_directory.glob("**/*.fits") if header_key_matches(f, header_id_key, id)]
 
     if not fits_files:

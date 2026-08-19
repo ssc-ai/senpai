@@ -1,8 +1,14 @@
+"""A frame, and the record of what has been done to it.
+
+An image carries its own processing history, so each calibration step can check whether it has
+already run. That is what makes the pipeline safe to re-enter on a partly-calibrated frame --
+subtracting the same dark twice leaves a negative pedestal that every later estimate inherits.
+"""
+
 import base64
 import logging
 from enum import Enum
 from io import BytesIO
-from typing import Dict, List, Optional, Union
 
 import numpy as np
 from astropy.io import fits
@@ -14,11 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 class FitsImage(BaseModel, arbitrary_types_allowed=True):
+    """A frame straight off disk: pixels and header, nothing done to them yet."""
+
     data: np.ndarray
     header: fits.Header
 
 
 class ProcessingStep(Enum):
+    """The calibration steps a frame can have had applied.
+
+    Recorded on the frame so a step can tell whether it has already run.
+    """
+
     DARK_SUBTRACT = "dark_subtract"
     FLAT_DIVIDE = "flat_divide"
     BACKGROUND_SUBTRACT = "background_subtract"
@@ -28,11 +41,25 @@ class ProcessingStep(Enum):
 
 
 class ProcessingMetadata(BaseModel):
+    """One applied step and the parameters it ran with.
+
+    The parameters are kept because a step is only reproducible with them: a background
+    subtraction at one box size is not the same operation as at another.
+    """
+
     step_type: ProcessingStep
-    parameters: Dict[str, Union[float, str, int]]  # Store relevant parameters for each step
+    parameters: dict[str, float | str | int]  # Store relevant parameters for each step
 
 
 class ProcessedFitsImage(BaseModel):
+    """A frame partway through calibration, carrying the record of what has been done.
+
+    Holds the working pixels alongside the originals and any intermediate correction frames,
+    so a step can be inspected or undone rather than only trusted. ``processing_history`` is
+    what every calibration step checks before running, which is what makes the pipeline safe
+    to re-enter on a frame someone already partly calibrated.
+    """
+
     # The processed image data
     data: np.ndarray
 
@@ -40,17 +67,17 @@ class ProcessedFitsImage(BaseModel):
     header: fits.Header
 
     # List of processing steps applied, in order
-    processing_history: List[ProcessingMetadata] = []
+    processing_history: list[ProcessingMetadata] = []
 
     # Optional storage of intermediate data (like flat frames, background models, etc.)
     # Keys are ProcessingStep values, values are the corresponding correction arrays
-    correction_frames: Optional[Dict[ProcessingStep, np.ndarray]] = None
+    correction_frames: dict[ProcessingStep, np.ndarray] | None = None
 
     # processed data to store if FWHM_OPTIMIZATION is applied
-    processed_unscaled_data: Optional[np.ndarray] = None
+    processed_unscaled_data: np.ndarray | None = None
 
     # Original raw data (optional)
-    original_data: Optional[np.ndarray] = None
+    original_data: np.ndarray | None = None
 
     # data_type for input image
     data_type: np.dtype
@@ -65,6 +92,8 @@ class ProcessedFitsImage(BaseModel):
     processed_file_path: str | None = None
 
     class Config:
+        """Pydantic settings: numpy arrays and FITS headers are not pydantic-native."""
+
         arbitrary_types_allowed = True  # Needed for numpy arrays
 
     def scale_frame(self, scale_factor: float, method: str = "block_median") -> None:
@@ -73,6 +102,7 @@ class ProcessedFitsImage(BaseModel):
         Args:
             scale_factor: Factor to scale the image by (e.g. 2.0 means downsample by factor of 2)
             method: Scaling method to use, one of ["block_median"]
+
         """
         if scale_factor <= 0:
             raise ValueError(f"Invalid scale factor: {scale_factor}")
@@ -124,7 +154,7 @@ class ProcessedFitsImage(BaseModel):
         elif method == "median_filter":
             # Median filter reduction - apply median filter then downsample
             # Round scale factor to nearest integer for median filter
-            scale_factor_int = int(round(scale_factor))
+            scale_factor_int = round(scale_factor)
             if scale_factor_int < 1:
                 scale_factor_int = 1  # Ensure minimum scale factor of 1
 
@@ -167,6 +197,7 @@ class ProcessedFitsImage(BaseModel):
 
         Returns:
             float: The scale factor used to scale the frame. 1.0 if no scaling was applied.
+
         """
         # First check processing history
         for step in reversed(self.processing_history):
@@ -186,6 +217,13 @@ class ProcessedFitsImage(BaseModel):
     def from_fits(
         cls, fits_file: fits.ImageHDU | fits.PrimaryHDU, file_path: str | None = None
     ) -> "ProcessedFitsImage":
+        """Build a frame from an open FITS HDU.
+
+        Exposure time is looked for under several keywords, since sensors disagree on which
+        one carries it. A frame with none is still returned -- the exposure is needed to turn
+        counts into a rate, not to detect anything -- but the header keys that looked related
+        are logged, because that is what someone diagnosing the omission will want.
+        """
         # Extract exposure time from header
         exposure_time = None
         for key in ["EXPTIME", "EXPOSURE", "TELAPSE"]:
@@ -195,7 +233,7 @@ class ProcessedFitsImage(BaseModel):
 
         if exposure_time is None:
             logger.warning(f"No exposure time found in header. Available keys: {list(fits_file.header.keys())}")
-            for key in fits_file.header.keys():
+            for key in fits_file.header:
                 if "TIME" in key.upper() or "EXP" in key.upper():
                     logger.info(f"  {key}: {fits_file.header[key]}")
 
@@ -215,10 +253,12 @@ class ProcessedFitsImage(BaseModel):
 
     @classmethod
     def from_file_bytes(cls, file_bytes: bytes, file_path: str | None = None) -> "ProcessedFitsImage":
+        """Build a frame from FITS bytes, for callers holding a file they never wrote to disk."""
         hdul = fits.open(BytesIO(file_bytes))
         return cls.from_fits(hdul[0], file_path=file_path)
 
     @classmethod
     def from_base64_string(cls, base64_string: str) -> "ProcessedFitsImage":
+        """Build a frame from a base64-encoded FITS file, as the API receives them."""
         file_bytes = base64.b64decode(base64_string)
         return cls.from_file_bytes(file_bytes)

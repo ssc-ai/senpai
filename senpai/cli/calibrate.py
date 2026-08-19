@@ -1,5 +1,6 @@
-"""Build a per-night photometric + observability calibration from processed
-batches, and render the night-level plots.
+"""Build a night's photometric and observability calibration, and plot it.
+
+Runs over already-processed batches.
 
 Aggregates a night's per-batch ``senpai_*.json`` into ``night_calibration.json``
 + ``plot_data.json`` and renders the night plots (search rate, slew model, PSF
@@ -17,43 +18,39 @@ the rest still render. ``--from-plot-data`` re-renders everything from a saved
 ``plot_data.json`` with no reprocessing and no raw data.
 """
 
+import argparse
 import logging
 from pathlib import Path
+
+from senpai.engine.observability.calibration import analyze_night, load_plot_data, plot_calibration, save_calibration
 
 logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    from senpai.engine.observability.calibration import (
-        analyze_night,
-        load_plot_data,
-        plot_calibration,
-        save_calibration,
-    )
-
+    """Run the night-calibration CLI."""
     parser = argparse.ArgumentParser(
-        description="Build a per-night calibration (JSON + plots) from processed "
-                    "batches.",
+        description="Build a per-night calibration (JSON + plots) from processed batches.",
     )
     parser.add_argument(
         "processed_night_dir",
-        help="Processed-night dir (must contain manifest.json), e.g. the output "
-             "of a senpai night run.",
+        help="Processed-night dir (must contain manifest.json), e.g. the output of a senpai night run.",
     )
     parser.add_argument(
-        "-o", "--output_dir", default=None,
-        help="Output dir for calibration JSON + plots "
-             "(default: <night_dir>/calibration/).",
+        "-o",
+        "--output_dir",
+        default=None,
+        help="Output dir for calibration JSON + plots (default: <night_dir>/calibration/).",
     )
     parser.add_argument(
-        "--no-plots", action="store_true", help="Skip plot rendering.",
+        "--no-plots",
+        action="store_true",
+        help="Skip plot rendering.",
     )
     parser.add_argument(
-        "--from-plot-data", action="store_true",
-        help="Skip reprocessing: render plots from an existing "
-             "<output>/plot_data.json instead of the batch JSONs.",
+        "--from-plot-data",
+        action="store_true",
+        help="Skip reprocessing: render plots from an existing <output>/plot_data.json instead of the batch JSONs.",
     )
     args = parser.parse_args(argv)
 

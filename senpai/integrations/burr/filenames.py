@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Task strings in filenames → command verbs in run_state.executed_commands.
@@ -41,16 +41,18 @@ TASK_TO_COMMAND: dict[str, str] = {
 # token falls through to the "unrecognized" record so the caller can fall back to
 # header inspection rather than mis-splitting it.
 _TASK_ALT = "|".join(sorted(TASK_TO_COMMAND, key=len, reverse=True))
-_SEMANTIC_RE = re.compile(
-    rf"^(?P<ts>\d{{8}}T\d{{6}})_(?P<task>{_TASK_ALT})_(?P<target>.+)_f(?P<idx>\d+)$"
-)
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_SEMANTIC_RE = re.compile(rf"^(?P<ts>\d{{8}}T\d{{6}})_(?P<task>{_TASK_ALT})_(?P<target>.+)_f(?P<idx>\d+)$")
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 @dataclass(frozen=True, slots=True)
 class ParsedFilename:
+    """What a burr FITS filename encodes, once parsed.
+
+    Every field is optional because UUID-style names carry none of it -- those frames have
+    to be attributed from their headers instead.
+    """
+
     path: Path
     timestamp: datetime | None  # tz-aware UTC, or None for UUID-style names
     task: str | None  # e.g. "calsats"; None for UUID-style
@@ -60,6 +62,7 @@ class ParsedFilename:
 
     @property
     def command_verb(self) -> str | None:
+        """The scheduler command that would have produced this task, if the task is known."""
         return TASK_TO_COMMAND.get(self.task) if self.task else None
 
 
@@ -71,12 +74,11 @@ def parse_burr_filename(path: str | Path) -> ParsedFilename:
     record where every parsed field is None and is_uuid is False, so the caller
     can decide whether to skip or fall back to header inspection.
     """
-
     p = Path(path)
     stem = p.stem
 
     if m := _SEMANTIC_RE.match(stem):
-        ts = datetime.strptime(m["ts"], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+        ts = datetime.strptime(m["ts"], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
         return ParsedFilename(
             path=p,
             timestamp=ts,
@@ -87,10 +89,6 @@ def parse_burr_filename(path: str | Path) -> ParsedFilename:
         )
 
     if _UUID_RE.match(stem):
-        return ParsedFilename(
-            path=p, timestamp=None, task=None, target=None, frame_index=None, is_uuid=True
-        )
+        return ParsedFilename(path=p, timestamp=None, task=None, target=None, frame_index=None, is_uuid=True)
 
-    return ParsedFilename(
-        path=p, timestamp=None, task=None, target=None, frame_index=None, is_uuid=False
-    )
+    return ParsedFilename(path=p, timestamp=None, task=None, target=None, frame_index=None, is_uuid=False)

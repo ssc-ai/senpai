@@ -1,5 +1,4 @@
-"""
-Simple photometry utilities for extracting basic photometric information from astronomical images.
+"""Simple photometry utilities for extracting basic photometric information from astronomical images.
 
 This module provides basic photometry tools for:
 - Simple aperture photometry with fixed aperture size
@@ -9,9 +8,18 @@ This module provides basic photometry tools for:
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from astropy.stats import mad_std, sigma_clip
+
+from senpai.engine.models.metadata import StreakMetadata
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from photutils.aperture import Aperture
+
     from senpai.engine.models.metadata import StreakMetadata
     from senpai.engine.photometry.color_terms import MultiBandCalibration
 
@@ -25,7 +33,7 @@ from photutils.aperture import (
 )
 from scipy.spatial import cKDTree
 
-from senpai.core.config import PhotometryConfig, get_config, settings
+from senpai.core.config import PhotometryConfig, settings
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.starfield import SatelliteListImage, StarField, StarInSpace
@@ -37,7 +45,6 @@ def _normalize_photometry_config(
     config: PhotometryConfig | None = None,
 ) -> PhotometryConfig:
     """Return the given PhotometryConfig, or a default one if None."""
-
     if isinstance(config, PhotometryConfig):
         return config
     return PhotometryConfig()
@@ -73,7 +80,8 @@ class SimplePhotometryResult:
     # Additional info
     instrumental_magnitude: float | None = None  # Instrumental magnitude
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the measured quantities to the precision the values actually carry."""
         self.flux = round(self.flux, 2)
         self.flux_err = round(self.flux_err, 2)
         self.snr = round(self.snr, 2)
@@ -109,7 +117,7 @@ class SimplePhotometrySummary:
     # them None.
     stars_mag: list[float] | None = None
     stars_snr: list[float] | None = None
-    # Per-star zero-point offset (m_cat − m_inst), parallel to stars_mag.
+    # Per-star zero-point offset (m_cat - m_inst), parallel to stars_mag.
     # Feeds the per-star extinction curve (offset vs airmass); None entries
     # mark stars whose instrumental magnitude couldn't be measured.
     stars_zp_offset: list[float | None] | None = None
@@ -125,14 +133,15 @@ class SimplePhotometrySummary:
     stars_catalog_id: list[str | None] | None = None
     # Literal aperture/annulus geometry (pixels) actually used on this frame —
     # the PSF-factor policy resolved against this frame's measured FWHM, kept so
-    # a reader needn't re-derive it from FWHM × factors (lossy for rate frames).
+    # a reader needn't re-derive it from FWHM x factors (lossy for rate frames).
     # 'circle' (sidereal): aperture_radius_px + bg_inner_px/bg_outer_px.
     # 'rectangle' (rate): width_px/length_px + bg_width/length_in/out_px + theta_rad.
     # None on the no-photometry early-return paths. The constant factors behind
     # these are recorded once per run in the result's top-level `photometry` block.
     aperture_geometry: dict | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Round the summary statistics to the precision the values actually carry."""
         self.median_snr = round(self.median_snr, 2)
         self.median_background = round(self.median_background, 2)
         self.limiting_magnitude = round(self.limiting_magnitude, 3)
@@ -152,11 +161,11 @@ def empirical_background_std_adu(image_data: np.ndarray) -> float:
     Frames are background-subtracted upstream (row/col median), so the
     background *level* near any star is ~0 and carries no noise information:
     a level-based Poisson model collapses flux_err to sqrt(source) and
-    inflates faint-star SNR ~8× (mag-20 "SNR 7" on frames whose detection
+    inflates faint-star SNR ~8x (mag-20 "SNR 7" on frames whose detection
     limit is mag 18). The empirical pixel std already contains sky Poisson +
     read noise, so noise models built on it must not add those terms again.
 
-    MAD over an 8×-strided subsample is robust to stars and matches the
+    MAD over an 8x-strided subsample is robust to stars and matches the
     full-frame robust std to ~1% at 1/64 the cost. Returns 0.0 for degenerate
     (constant/empty) images — callers should fall back to a level model.
     """
@@ -173,8 +182,7 @@ def measure_simple_star_photometry(
     fwhm: float,
     config: SimplePhotometryConfig | None = None,
 ) -> SimplePhotometryResult | None:
-    """
-    Perform simple photometry on a single star.
+    """Perform simple photometry on a single star.
 
     Parameters
     ----------
@@ -191,6 +199,7 @@ def measure_simple_star_photometry(
     -------
     SimplePhotometryResult or None
         Photometry results if successful, None if failed
+
     """
     config = _normalize_photometry_config(config)
 
@@ -240,10 +249,7 @@ def measure_simple_star_photometry(
                 for mask in bg_masks:
                     data_sub = mask.multiply(image.data)
                     bg_pixels_list.append(data_sub[mask.data > 0])
-                if bg_pixels_list:
-                    bg_pixels = np.concatenate(bg_pixels_list)
-                else:
-                    bg_pixels = np.array([])
+                bg_pixels = np.concatenate(bg_pixels_list) if bg_pixels_list else np.array([])
             else:
                 data_sub = bg_masks.multiply(image.data)
                 bg_pixels = data_sub[bg_masks.data > 0]
@@ -330,6 +336,7 @@ def _guard_aperture_mask_footprint(n_apertures: int, mask_side_px: float, detail
 
     Raises:
         ValueError: If the cached masks would exceed ``MAX_APERTURE_MASK_ELEMENTS``.
+
     """
     cached_masks = min(n_apertures, _APERTURE_MASK_CACHE_LIMIT)
     total = cached_masks * mask_side_px * mask_side_px
@@ -341,7 +348,12 @@ def _guard_aperture_mask_footprint(n_apertures: int, mask_side_px: float, detail
         )
 
 
-def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
+def _shared_shape_aperture_sums(
+    data: np.ndarray,
+    positions: np.ndarray,
+    build_apertures: "Callable[[np.ndarray], list[Aperture]]",
+    subpixels: int = 5,
+) -> list[np.ndarray]:
     """Aperture sums for many apertures that share one shape.
 
     Every caller measures thousands of apertures with identical shape
@@ -392,7 +404,7 @@ def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
             y0, x0 = iy + by, ix + bx
             my, mx = mdata.shape
             if y0 >= 0 and x0 >= 0 and y0 + my <= h and x0 + mx <= w:
-                out[i] = float((data[y0:y0 + my, x0:x0 + mx] * mdata).sum())
+                out[i] = float((data[y0 : y0 + my, x0 : x0 + mx] * mdata).sum())
                 continue
             # Partially off-frame (callers margin-filter, so this is
             # belt-and-braces): use only the overlapping region, as
@@ -402,12 +414,7 @@ def _shared_shape_aperture_sums(data, positions, build_apertures, subpixels=5):
             if cy0 >= cy1 or cx0 >= cx1:
                 out[i] = 0.0
                 continue
-            out[i] = float(
-                (
-                    data[cy0:cy1, cx0:cx1]
-                    * mdata[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
-                ).sum()
-            )
+            out[i] = float((data[cy0:cy1, cx0:cx1] * mdata[cy0 - y0 : cy1 - y0, cx0 - x0 : cx1 - x0]).sum())
     return sums
 
 
@@ -417,8 +424,7 @@ def measure_simple_starfield_photometry(
     config: SimplePhotometryConfig | None = None,
     frame_index: int | None = None,
 ) -> tuple[list[SimplePhotometryResult], SimplePhotometrySummary]:
-    """
-    Perform simple photometry on all stars in a starfield.
+    """Perform simple photometry on all stars in a starfield.
 
     Parameters
     ----------
@@ -428,11 +434,15 @@ def measure_simple_starfield_photometry(
         Starfield with detected and catalog stars
     config : SimplePhotometryConfig, optional
         Photometry configuration
+    frame_index : int, optional
+        Index of the frame within its collect. Only used to name the diagnostic plot, so
+        passing None simply suppresses it.
 
     Returns
     -------
     tuple
         (photometry_results, summary_statistics)
+
     """
     config = _normalize_photometry_config(config)
 
@@ -591,14 +601,8 @@ def measure_simple_starfield_photometry(
     # Areas can be scalar or array depending on photutils version / usage
     aper_area = aperture.area
     bg_area = bg_aperture.area
-    if hasattr(aper_area, "__len__"):
-        aper_area = np.asarray(aper_area, dtype=float)
-    else:
-        aper_area = float(aper_area)
-    if hasattr(bg_area, "__len__"):
-        bg_area = np.asarray(bg_area, dtype=float)
-    else:
-        bg_area = float(bg_area)
+    aper_area = np.asarray(aper_area, dtype=float) if hasattr(aper_area, "__len__") else float(aper_area)
+    bg_area = np.asarray(bg_area, dtype=float) if hasattr(bg_area, "__len__") else float(bg_area)
 
     # Broadcast areas if needed
     aper_area_arr = aper_area if isinstance(aper_area, np.ndarray) else np.full_like(flux_sum, aper_area, dtype=float)
@@ -609,8 +613,7 @@ def measure_simple_starfield_photometry(
     flux = flux_sum - background_level * aper_area_arr
 
     # Noise model: gain/read noise from config, background noise EMPIRICAL.
-    cfg = get_config()
-    phot_cfg = getattr(cfg, "photometry", None)
+    phot_cfg = getattr(settings, "photometry", None)
     if phot_cfg is not None:
         gain = float(getattr(phot_cfg, "gain", 1.0))  # e-/ADU
         include_read_noise = bool(getattr(phot_cfg, "include_read_noise", False))
@@ -685,7 +688,7 @@ def measure_simple_starfield_photometry(
     summary = _calculate_simple_photometry_summary(results, starfield, config, frame_index=frame_index)
 
     # Record the literal circular aperture/annulus pixel dims used here, so the
-    # geometry is recoverable per frame without re-deriving FWHM × factors.
+    # geometry is recoverable per frame without re-deriving FWHM x factors.
     summary.aperture_geometry = {
         "shape": "circle",
         "fwhm_px": round(float(fwhm), 3),
@@ -701,17 +704,13 @@ def measure_simple_starfield_photometry(
     # (estimate_limiting_magnitude_from_photometry); sidereal frames never go
     # through that path, so without this they'd silently skip the plot even
     # with ``plotting.photometry`` on. Same axes/lines as the rate version.
-    if (
-        frame_index is not None
-        and get_config().plotting.photometry
-        and summary.stars_mag and summary.stars_snr
-    ):
+    if frame_index is not None and settings.plotting.photometry and summary.stars_mag and summary.stars_snr:
         _save_simple_limiting_mag_plot(
-            mags=summary.stars_mag, snrs=summary.stars_snr,
+            mags=summary.stars_mag,
+            snrs=summary.stars_snr,
             limiting_mag=summary.limiting_magnitude_50 or summary.limiting_magnitude,
-            min_snr=float(get_config().photometry.limiting_snr or 3.0),
-            output_path=get_config().runtime.output_dir
-                       / f"frame_{frame_index}_limiting_mag.png",
+            min_snr=float(settings.photometry.limiting_snr or 3.0),
+            output_path=settings.runtime.output_dir / f"frame_{frame_index}_limiting_mag.png",
         )
 
     return results, summary
@@ -722,13 +721,13 @@ def _save_simple_limiting_mag_plot(
     snrs: list[float],
     limiting_mag: float | None,
     min_snr: float,
-    output_path,
+    output_path: str | Path,
 ) -> None:
     """Sidereal counterpart to the rate-track limiting-mag diagnostic.
-    Same axes (mag vs log10 SNR) + threshold and limit reference lines."""
 
+    Same axes (mag vs log10 SNR) + threshold and limit reference lines.
+    """
     import matplotlib.pyplot as plt
-    import numpy as np
 
     mags_arr = np.asarray(mags, dtype=float)
     snrs_arr = np.asarray(snrs, dtype=float)
@@ -736,14 +735,13 @@ def _save_simple_limiting_mag_plot(
     if not np.any(valid):
         return
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(mags_arr[valid], np.log10(snrs_arr[valid]),
-               c="blue", alpha=0.4, s=14, label=f"Stars (n={int(valid.sum())})")
-    ax.axhline(y=np.log10(min_snr), color="g", linestyle=":",
-               label=f"SNR={min_snr} threshold")
+    _fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(
+        mags_arr[valid], np.log10(snrs_arr[valid]), c="blue", alpha=0.4, s=14, label=f"Stars (n={int(valid.sum())})"
+    )
+    ax.axhline(y=np.log10(min_snr), color="g", linestyle=":", label=f"SNR={min_snr} threshold")
     if limiting_mag is not None:
-        ax.axvline(x=limiting_mag, color="k", linestyle="--",
-                   label=f"Limiting mag = {limiting_mag:.2f}")
+        ax.axvline(x=limiting_mag, color="k", linestyle="--", label=f"Limiting mag = {limiting_mag:.2f}")
     ax.set_xlabel("magnitude")
     ax.set_ylabel("log10(SNR)")
     ax.set_title("Sidereal limiting magnitude estimation")
@@ -761,8 +759,7 @@ def measure_rate_starfield_photometry(
     config: SimplePhotometryConfig | None = None,
     frame_index: int | None = None,
 ) -> tuple[list[SimplePhotometryResult], SimplePhotometrySummary]:
-    """
-    Perform photometry on rate-track starfield using rectangular apertures.
+    """Perform photometry on rate-track starfield using rectangular apertures.
 
     Uses rectangular apertures aligned with the streak orientation to properly
     measure flux from streaked stars.
@@ -777,14 +774,16 @@ def measure_rate_starfield_photometry(
         Measured streak parameters (length, angle, FWHM)
     config : SimplePhotometryConfig, optional
         Photometry configuration
+    frame_index : int, optional
+        Index of the frame within its collect. Only used to name the diagnostic plot, so
+        passing None simply suppresses it.
 
     Returns
     -------
     tuple
         (photometry_results, summary_statistics)
-    """
-    from senpai.engine.models.metadata import StreakMetadata
 
+    """
     if not isinstance(streak, StreakMetadata):
         raise TypeError(f"streak must be StreakMetadata, got {type(streak)}")
 
@@ -795,7 +794,7 @@ def measure_rate_starfield_photometry(
         fwhm = starfield.fwhm_stats.median_fwhm
     else:
         fwhm = streak.fwhm
-        logger.warning("No FWHM stats in starfield, using streak FWHM")
+        logger.debug("No FWHM stats in starfield, using streak FWHM")
 
     # Only use catalog stars
     catalog_stars = starfield.catalog_stars or []
@@ -945,14 +944,8 @@ def measure_rate_starfield_photometry(
     # Get areas (can be scalar or array)
     aper_area = apertures.area
     bg_area = bg_apertures.area
-    if hasattr(aper_area, "__len__"):
-        aper_area = np.asarray(aper_area, dtype=float)
-    else:
-        aper_area = float(aper_area)
-    if hasattr(bg_area, "__len__"):
-        bg_area = np.asarray(bg_area, dtype=float)
-    else:
-        bg_area = float(bg_area)
+    aper_area = np.asarray(aper_area, dtype=float) if hasattr(aper_area, "__len__") else float(aper_area)
+    bg_area = np.asarray(bg_area, dtype=float) if hasattr(bg_area, "__len__") else float(bg_area)
 
     # Broadcast areas if needed
     aper_area_arr = aper_area if isinstance(aper_area, np.ndarray) else np.full_like(flux_sum, aper_area, dtype=float)
@@ -963,8 +956,7 @@ def measure_rate_starfield_photometry(
     flux = flux_sum - background_level * aper_area_arr
 
     # Noise model (same as circular version: empirical background std).
-    cfg = get_config()
-    phot_cfg = getattr(cfg, "photometry", None)
+    phot_cfg = getattr(settings, "photometry", None)
     if phot_cfg is not None:
         gain = float(getattr(phot_cfg, "gain", 1.0))
         include_read_noise = bool(getattr(phot_cfg, "include_read_noise", False))
@@ -1041,7 +1033,7 @@ def measure_rate_starfield_photometry(
 
     # Record the literal rectangular aperture/annulus pixel dims used here. The
     # rate box is streak-aligned (theta_rad) and can't be reconstructed from
-    # FWHM × factors alone, so the resolved values are kept per frame.
+    # FWHM x factors alone, so the resolved values are kept per frame.
     summary.aperture_geometry = {
         "shape": "rectangle",
         "fwhm_px": round(float(fwhm), 3),
@@ -1071,8 +1063,7 @@ def measure_detection_photometry(
     multiband_calibration: "MultiBandCalibration | None" = None,
     observation_filter: str | None = None,
 ) -> None:
-    """
-    Perform aperture photometry on satellite/object detections and assign calibrated magnitudes.
+    """Perform aperture photometry on satellite/object detections and assign calibrated magnitudes.
 
     Uses the zero point derived from streaked catalog star photometry to calibrate
     instrumental magnitudes into the catalog system. Updates detection fields in-place.
@@ -1098,6 +1089,7 @@ def measure_detection_photometry(
         Multi-band calibration with per-band ZPs and color terms
     observation_filter : str, optional
         Observation filter name (e.g. "Clear", "V")
+
     """
     config = _normalize_photometry_config(config)
 
@@ -1131,8 +1123,7 @@ def measure_detection_photometry(
         return
 
     # Get gain and read noise from config
-    cfg = get_config()
-    phot_cfg = getattr(cfg, "photometry", None)
+    phot_cfg = getattr(settings, "photometry", None)
     if phot_cfg is not None:
         gain = float(getattr(phot_cfg, "gain", 1.0))
         include_read_noise = bool(getattr(phot_cfg, "include_read_noise", False))
@@ -1149,7 +1140,7 @@ def measure_detection_photometry(
 
     # Process each detection individually (different FWHM -> different aperture sizes)
     n_measured = 0
-    for idx, pos, fwhm in zip(valid_indices, positions, fwhms):
+    for idx, pos, fwhm in zip(valid_indices, positions, fwhms, strict=True):
         det = detections.detections[idx]
         try:
             aperture_radius = config.aperture_radius_factor * fwhm
@@ -1236,7 +1227,6 @@ def _calculate_simple_crowding(
     radius: float,
 ) -> float:
     """Calculate simple crowding factor."""
-
     # Check a region 3x the aperture radius
     check_radius = radius * 3
 
@@ -1273,7 +1263,6 @@ def _assess_simple_quality(
     config: SimplePhotometryConfig,
 ) -> bool:
     """Assess simple quality of photometric measurement."""
-
     # Reject negative flux
     if flux <= 0:
         return False
@@ -1286,10 +1275,7 @@ def _assess_simple_quality(
     if snr < config.min_snr:
         return False
     # Reject too crowded
-    if crowding_factor > config.max_crowding:
-        return False
-
-    return True
+    return not crowding_factor > config.max_crowding
 
 
 def _has_bright_neighbor(
@@ -1301,8 +1287,7 @@ def _has_bright_neighbor(
     mag_cache: dict[int, float | None] | None = None,
     kdtree: tuple[cKDTree, list[int]] | None = None,
 ) -> bool:
-    """
-    Check if a star has a significantly brighter neighbor within a given radius.
+    """Check if a star has a significantly brighter neighbor within a given radius.
 
     This is used to avoid using severely blended stars (e.g., a faint catalog
     star nearly coincident with a much brighter star) for zero-point and
@@ -1332,10 +1317,7 @@ def _has_bright_neighbor(
                 continue
 
             # Get magnitude from cache if available, otherwise compute
-            if mag_cache is not None:
-                other_mag = mag_cache.get(id(other))
-            else:
-                other_mag = _get_best_magnitude(other)
+            other_mag = mag_cache.get(id(other)) if mag_cache is not None else _get_best_magnitude(other)
 
             if other_mag is None:
                 continue
@@ -1358,10 +1340,7 @@ def _has_bright_neighbor(
             continue
 
         # Get magnitude from cache if available, otherwise compute
-        if mag_cache is not None:
-            other_mag = mag_cache.get(id(other))
-        else:
-            other_mag = _get_best_magnitude(other)
+        other_mag = mag_cache.get(id(other)) if mag_cache is not None else _get_best_magnitude(other)
 
         if other_mag is None:
             continue
@@ -1378,7 +1357,7 @@ def _has_bright_neighbor(
     return False
 
 
-def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] = None) -> float | None:
+def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] | None = None) -> float | None:
     """Get the best available magnitude for a star."""
     # Use a simple cache key based on star's magnitude attributes
     # Since stars are objects, we can't use lru_cache directly, but we can
@@ -1411,9 +1390,8 @@ def _get_best_magnitude(star: StarInSpace, preferred_filters: list[str] = None) 
     return None
 
 
-def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: list[str] = None) -> str | None:
-    """
-    Find the best magnitude system with the most star coverage.
+def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: list[str] | None = None) -> str | None:
+    """Find the best magnitude system with the most star coverage.
 
     Tries each preferred filter in order and picks the first one that covers
     at least 50% of stars.  Among filters that meet the threshold, the
@@ -1442,9 +1420,7 @@ def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: l
     for filter_name in preferred_filters:
         count = 0
         for star in stars:
-            has_dict = (
-                hasattr(star, "magnitudes") and star.magnitudes is not None and len(star.magnitudes) > 0
-            )
+            has_dict = hasattr(star, "magnitudes") and star.magnitudes is not None and len(star.magnitudes) > 0
             if has_dict and filter_name in star.magnitudes:
                 count += 1
         coverage = count / n_stars
@@ -1481,7 +1457,7 @@ def _find_common_magnitude_system(stars: list[StarInSpace], preferred_filters: l
 
 
 def _precompute_star_magnitudes(
-    stars: list[StarInSpace], preferred_filters: list[str] = None
+    stars: list[StarInSpace], preferred_filters: list[str] | None = None
 ) -> dict[int, float | None]:
     """Pre-compute magnitudes for all stars using a consistent magnitude system.
 
@@ -1529,14 +1505,15 @@ def _precompute_star_magnitudes(
     return mag_cache
 
 
-def _isotonic_completeness(comp_mag, comp_pct):
+def _isotonic_completeness(comp_mag: list[float], comp_pct: list[float]) -> tuple[np.ndarray, np.ndarray]:
     """Monotonic-decreasing (isotonic) smoothing of a completeness curve.
 
     Completeness is physically non-increasing with magnitude, so isotonic
     regression de-spikes the (often noisy) binned curve without imposing a
     parametric shape — unlike a logistic, whose forced 0/1 asymptotes bias the
     50% point when a contaminated faint tail flattens above 0. Returns
-    (x_sorted, y_isotonic)."""
+    (x_sorted, y_isotonic).
+    """
     x = np.asarray(comp_mag, dtype=float)
     y = np.asarray(comp_pct, dtype=float) / 100.0
     order = np.argsort(x)
@@ -1555,8 +1532,9 @@ def _completeness_limits(
     comp_pct: list[float],
     target: float = 0.5,
 ) -> tuple[float | None, float | None, float | None]:
-    """Limiting magnitudes from a completeness curve via isotonic smoothing +
-    threshold crossing (no parametric fit).
+    """Read limiting magnitudes off a completeness curve, without fitting a shape to it.
+
+    Isotonic smoothing plus a threshold crossing.
 
     The curve is de-spiked with a monotonic-decreasing regression, then we read
     the faint-most magnitude where it crosses each level. This ignores a flat
@@ -1587,30 +1565,30 @@ def _isolated_result_mask(
     starfield: StarField,
     pad: float = 2.0,
 ) -> list[bool]:
-    """True for results with no *brighter* catalog star within the aperture
-    footprint.
+    """Mark the results with no *brighter* catalog star inside the aperture footprint.
 
-    A faint star whose aperture overlaps a brighter neighbor picks up that
-    neighbor's flux and reports a spuriously high SNR — which inflates the
-    faint-end completeness into a fake floor (and reads as "recovering" stars
-    well past the real limit). Restricting the completeness sample to isolated
-    stars removes that, so the curve actually rolls to ~0. The footprint is
-    ``pad x aperture_radius`` (apertures of the two stars overlap within ~2x a
-    radius). Comparison uses each star's primary magnitude for consistency.
+    A faint star whose aperture overlaps a brighter neighbor picks up that neighbor's flux and
+    reports a spuriously high SNR — which inflates the faint-end completeness into a fake floor
+    (and reads as "recovering" stars well past the real limit). Restricting the completeness
+    sample to isolated stars removes that, so the curve actually rolls to ~0. The footprint is
+    ``pad x aperture_radius`` (apertures of the two stars overlap within ~2x a radius).
+    Comparison uses each star's primary magnitude for consistency.
     """
     catalog = getattr(starfield, "catalog_stars", None) or []
     cx, cy, cm = [], [], []
     for s in catalog:
         if s.x is None or s.y is None or s.magnitude is None:
             continue
-        cx.append(s.x); cy.append(s.y); cm.append(s.magnitude)
+        cx.append(s.x)
+        cy.append(s.y)
+        cm.append(s.magnitude)
     n = len(results)
     if len(cx) < 2:
         return [True] * n
 
-    from scipy.spatial import cKDTree
-
-    cx = np.asarray(cx); cy = np.asarray(cy); cm = np.asarray(cm)
+    cx = np.asarray(cx)
+    cy = np.asarray(cy)
+    cm = np.asarray(cm)
     tree = cKDTree(np.column_stack([cx, cy]))
 
     keep: list[bool] = []
@@ -1627,9 +1605,18 @@ def _isolated_result_mask(
     return keep
 
 
-def _save_completeness_plot(comp_mag, comp_pct, m_target, m50, m90, output_path) -> None:
-    """Plot the completeness curve, its isotonic smooth, and the limiting-mag
-    crossings — the diagnostic for what the limiting-mag readout is doing."""
+def _save_completeness_plot(
+    comp_mag: list[float],
+    comp_pct: list[float],
+    m_target: float | None,
+    m50: float | None,
+    m90: float | None,
+    output_path: str | Path,
+) -> None:
+    """Plot the completeness curve with its isotonic smooth and the limiting-mag crossings.
+
+    This is the diagnostic for what the limiting-mag readout is doing.
+    """
     import matplotlib.pyplot as plt
 
     try:
@@ -1637,7 +1624,7 @@ def _save_completeness_plot(comp_mag, comp_pct, m_target, m50, m90, output_path)
         y = np.asarray(comp_pct, dtype=float) / 100.0
         xs, ys = _isotonic_completeness(comp_mag, comp_pct)
 
-        fig, ax = plt.subplots(figsize=(8, 5))
+        _fig, ax = plt.subplots(figsize=(8, 5))
         ax.plot(x, y, "o-", color="orange", alpha=0.7, label="completeness (isolated)")
         ax.plot(xs, ys, "r-", label="isotonic smooth")
         ax.axhline(0.5, ls=":", color="k", alpha=0.5)
@@ -1681,11 +1668,15 @@ def compute_completeness_curve(
         config: Photometry config (uses limiting_snr for threshold).
         bin_width: Magnitude bin width (default 0.5 mag).
         min_stars_per_bin: Minimum stars in a bin for meaningful statistics.
+        isolate: Restrict the sample to stars with no brighter catalog neighbour inside
+            the aperture footprint. A blended faint star reports a borrowed SNR, which
+            flattens the faint end into a floor the curve never rolls off from.
 
     Returns:
         (completeness_mag, completeness_pct) — parallel arrays sorted bright
         to faint. completeness_pct[i] is the detection percentage at magnitude
         completeness_mag[i].
+
     """
     config = _normalize_photometry_config(config)
     snr_threshold = float(config.limiting_snr)
@@ -1710,14 +1701,15 @@ def compute_completeness_curve(
         isolated = _isolated_result_mask(results, starfield)
         logger.info(
             "Completeness sample: %d/%d isolated stars (brighter-neighbor cut)",
-            int(np.sum(isolated)), len(results),
+            int(np.sum(isolated)),
+            len(results),
         )
     else:
         isolated = [True] * len(results)
 
     mags_list: list[float] = []
     snrs_list: list[float] = []
-    for r, keep in zip(results, isolated):
+    for r, keep in zip(results, isolated, strict=True):
         if not keep:
             continue
         mag = mag_cache.get(id(r.star))
@@ -1762,7 +1754,6 @@ def _calculate_simple_photometry_summary(
     frame_index: int | None = None,
 ) -> SimplePhotometrySummary:
     """Calculate summary statistics from simple photometry results."""
-
     config = _normalize_photometry_config(config)
 
     if not results:
@@ -1809,43 +1800,43 @@ def _calculate_simple_photometry_summary(
     # an isotonic smooth + threshold crossing — robust to spiky bins and to a
     # residual faint tail (no parametric shape imposed). The crossing happens on
     # the roll-off, before any contamination floor.
-    comp_mag, comp_pct = compute_completeness_curve(
-        results, starfield, config, isolate=config.completeness_isolate
-    )
+    comp_mag, comp_pct = compute_completeness_curve(results, starfield, config, isolate=config.completeness_isolate)
     completeness_target = float(config.limiting_completeness_fraction)
-    lim_target, lim_50, lim_90 = _completeness_limits(
-        comp_mag, comp_pct, target=completeness_target
-    )
+    lim_target, lim_50, lim_90 = _completeness_limits(comp_mag, comp_pct, target=completeness_target)
     if lim_50 is not None:
         limiting_magnitude = round(lim_target, 3)
         limiting_magnitude_50 = round(lim_50, 3)
         limiting_magnitude_90 = round(lim_90, 3) if lim_90 is not None else None
         logger.info(
-            "Limiting mag from completeness curve (isotonic crossing): "
-            "target(%.2f)=%.2f, 50%%=%.2f, 90%%=%s",
-            completeness_target, lim_target, lim_50,
+            "Limiting mag from completeness curve (isotonic crossing): target(%.2f)=%.2f, 50%%=%.2f, 90%%=%s",
+            completeness_target,
+            lim_target,
+            lim_50,
             f"{lim_90:.2f}" if lim_90 is not None else "n/a",
         )
     else:
         logger.info(
-            "Completeness curve never crosses target; keeping scan/SNR-fit "
-            "limiting mag (50%%=%s)", limiting_magnitude_50,
+            "Completeness curve never crosses target; keeping scan/SNR-fit limiting mag (50%%=%s)",
+            limiting_magnitude_50,
         )
 
     # Always emit the completeness diagnostic when we have a curve — so the
     # readout is visible even when it falls back. Uses the GLOBAL config for the
     # plotting flag (the photometry `config` here has no `.plotting`).
-    if comp_mag and frame_index is not None and get_config().plotting.photometry:
+    if comp_mag and frame_index is not None and settings.plotting.photometry:
         _save_completeness_plot(
-            comp_mag, comp_pct,
-            lim_target, lim_50 or limiting_magnitude_50, lim_90 or limiting_magnitude_90,
-            get_config().runtime.output_dir / f"frame_{frame_index}_completeness.png",
+            comp_mag,
+            comp_pct,
+            lim_target,
+            lim_50 or limiting_magnitude_50,
+            lim_90 or limiting_magnitude_90,
+            settings.runtime.output_dir / f"frame_{frame_index}_completeness.png",
         )
 
     # Compact per-star (catalog_mag, snr, zp_offset) arrays for downstream
     # observability. Only stars with both a known catalog magnitude AND a
     # positive SNR are retained; that filter keeps the arrays useful for
-    # binned aggregates. zp_offset = m_cat − m_inst (per-star zero point) is
+    # binned aggregates. zp_offset = m_cat - m_inst (per-star zero point) is
     # None where the instrumental magnitude couldn't be measured.
     stars_mag: list[float] = []
     stars_snr: list[float] = []
@@ -1853,15 +1844,14 @@ def _calculate_simple_photometry_summary(
     stars_isolated: list[bool] = []
     stars_catalog_id: list[str | None] = []
     iso_mask = _isolated_result_mask(results, starfield)
-    for r, iso in zip(results, iso_mask):
+    for r, iso in zip(results, iso_mask, strict=True):
         mag = getattr(r.star, "magnitude", None)
         if mag is None or r.snr is None or r.snr <= 0:
             continue
         stars_mag.append(round(float(mag), 3))
         stars_snr.append(round(float(r.snr), 3))
         stars_zp_offset.append(
-            round(float(mag) - r.instrumental_magnitude, 3)
-            if r.instrumental_magnitude is not None else None
+            round(float(mag) - r.instrumental_magnitude, 3) if r.instrumental_magnitude is not None else None
         )
         stars_isolated.append(bool(iso))
         stars_catalog_id.append(getattr(r.star, "catalog_id", None))
@@ -1894,12 +1884,12 @@ def _estimate_simple_limiting_magnitude(
     zero_point: float | None = None,
     config: SimplePhotometryConfig | None = None,
 ) -> tuple[float, float | None, float | None]:
-    """
-    Estimate limiting magnitude at multiple completeness levels.
+    """Estimate limiting magnitude at multiple completeness levels.
 
     Returns:
         Tuple of (limiting_magnitude, limiting_magnitude_50, limiting_magnitude_90)
         where limiting_magnitude is at the configured completeness target.
+
     """
     """
     Estimate limiting magnitude from simple photometry results.
@@ -2005,13 +1995,15 @@ def _estimate_simple_limiting_magnitude(
         mags_all_list.append(mag)
         snrs_all_list.append(snr_floor)
 
-        # Only quality, isolated stars contribute to the SNR–mag fit
+        # Only quality, isolated stars contribute to the SNR-mag fit
         # Use original SNR (not floored) for the fit
         if not r.quality_flag:
             continue
 
-        if iso_radius_pix is not None and catalog_stars:
-            if _has_bright_neighbor(
+        if (
+            iso_radius_pix is not None
+            and catalog_stars
+            and _has_bright_neighbor(
                 r.star,
                 mag,
                 catalog_stars,
@@ -2019,8 +2011,9 @@ def _estimate_simple_limiting_magnitude(
                 config.isolation_delta_mag,
                 mag_cache=mag_cache,
                 kdtree=kdtree,
-            ):
-                continue
+            )
+        ):
+            continue
 
         # Use original SNR for fit (not floored)
         empirical_points.append((mag, r.snr))
@@ -2049,7 +2042,7 @@ def _estimate_simple_limiting_magnitude(
         completeness_limit_90: float | None = None
 
         def find_completeness_limit(target_completeness: float) -> float | None:
-            """Helper function to find limiting magnitude at a given completeness level."""
+            """Find the limiting magnitude at a given completeness level."""
             try:
                 # Use same bin width as plotting code for consistency (0.25 mag)
                 bin_width = 0.25
@@ -2196,7 +2189,7 @@ def _estimate_simple_limiting_magnitude(
                     # Don't use the edge case checks - they might be wrong if bins are sparse
                     # Instead, if we scanned through all bins and didn't find a crossing,
                     # it means there really isn't one (or the bins aren't adjacent)
-                    logger.warning(
+                    logger.debug(
                         f"Could not find crossing for {target_completeness:.2f} completeness "
                         f"after scanning {len(valid_bins)} bins. "
                         f"Faintest: {faintest_bin_center:.2f} ({faintest_frac:.3f}), "
@@ -2204,10 +2197,11 @@ def _estimate_simple_limiting_magnitude(
                     )
                     return None
 
-                logger.warning(f"No valid bins found for {target_completeness:.2f} completeness calculation")
-                return None
+                logger.debug(f"No valid bins found for {target_completeness:.2f} completeness calculation")
             except Exception as e:
                 logger.debug(f"Completeness limit calculation failed for target {target_completeness}: {e}")
+                return None
+            else:
                 return None
 
         # Calculate limits at different completeness levels
@@ -2252,7 +2246,7 @@ def _estimate_simple_limiting_magnitude(
             if completeness_limit_90 is not None:
                 logger.info(f"Limiting magnitude at 90% completeness: {completeness_limit_90:.2f}")
             if completeness_limit is None:
-                logger.warning(
+                logger.info(
                     "Completeness-based limiting magnitude could not be determined "
                     f"(no crossing found, completeness never dropped below {completeness_target:.2f})"
                 )
@@ -2305,7 +2299,7 @@ def _estimate_simple_limiting_magnitude(
             # Check if SNR-fit limit is extrapolated beyond actual data range
             max_mag_actual = float(np.max(mags_all)) if len(mags_all) > 0 else None
             if max_mag_actual is not None and snr_fit_limit > max_mag_actual:
-                logger.warning(
+                logger.info(
                     f"SNR-fit limiting magnitude ({snr_fit_limit:.2f}) is extrapolated "
                     f"beyond actual data range (max sampled mag={max_mag_actual:.2f}). "
                     f"This may be unreliable."
@@ -2404,7 +2398,6 @@ def _calculate_simple_zero_point(
     config: SimplePhotometryConfig | None = None,
 ) -> tuple[float | None, float | None]:
     """Calculate simple photometric zero point."""
-
     # Normalize config so we always have SimplePhotometryConfig
     config = _normalize_photometry_config(config)
 
@@ -2450,8 +2443,11 @@ def _calculate_simple_zero_point(
             result_mag_cache[star_id] = _get_best_magnitude(r.star, config.preferred_filters if config else None)
 
     def _select(min_snr: float) -> list[tuple[float, float]]:
-        """Catalog (mag, flux) pairs from clean, well-measured stars at/above
-        ``min_snr``, excluding crowded and bright-neighbour-blended sources."""
+        """Select catalog (mag, flux) pairs from clean, well-measured stars.
+
+        Takes stars at or above ``min_snr``, excluding crowded and
+        bright-neighbour-blended sources.
+        """
         sel: list[tuple[float, float]] = []
         for r in results:
             if not r.quality_flag or r.flux <= 0 or r.snr < min_snr:
@@ -2461,12 +2457,20 @@ def _calculate_simple_zero_point(
             mag = result_mag_cache[id(r.star)]
             if mag is None:
                 continue
-            if iso_radius_pix is not None and catalog_stars:
-                if _has_bright_neighbor(
-                    r.star, mag, catalog_stars, iso_radius_pix,
-                    config.isolation_delta_mag, mag_cache=mag_cache, kdtree=kdtree,
-                ):
-                    continue
+            if (
+                iso_radius_pix is not None
+                and catalog_stars
+                and _has_bright_neighbor(
+                    r.star,
+                    mag,
+                    catalog_stars,
+                    iso_radius_pix,
+                    config.isolation_delta_mag,
+                    mag_cache=mag_cache,
+                    kdtree=kdtree,
+                )
+            ):
+                continue
             sel.append((mag, r.flux))
         return sel
 
@@ -2494,7 +2498,6 @@ def _calculate_simple_zero_point(
 
     # Median + sigma-clip: robust to any residual blend/saturation outliers on
     # either tail (median, not mean; the old mean let the faint tail pull the ZP).
-    from astropy.stats import mad_std, sigma_clip
 
     clipped = sigma_clip(zps, sigma=config.zp_sigma_clip, maxiters=5, masked=True)
     kept = zps[~clipped.mask] if np.ma.is_masked(clipped) else zps
@@ -2515,13 +2518,6 @@ def calculate_star_snrs_with_aperture_photometry(
     This is a shared photometry utility used by both sidereal and rate-track
     pipelines as well as WCS refinement code.
     """
-    from photutils.aperture import (
-        CircularAnnulus,
-        CircularAperture,
-        RectangularAnnulus,
-        RectangularAperture,
-    )
-
     # Determine frame type
     is_sidereal = isinstance(frame, SiderealFrame)
 
@@ -2546,10 +2542,14 @@ def calculate_star_snrs_with_aperture_photometry(
     positions: list[tuple[float, float]] = []
 
     for star in catalog_stars:
-        if star.x is not None and star.y is not None:
-            if margin <= star.x < width - margin and margin <= star.y < height - margin:
-                valid_stars.append(star)
-                positions.append((star.x, star.y))
+        if (
+            star.x is not None
+            and star.y is not None
+            and margin <= star.x < width - margin
+            and margin <= star.y < height - margin
+        ):
+            valid_stars.append(star)
+            positions.append((star.x, star.y))
 
     if not valid_stars:
         return []
@@ -2565,7 +2565,8 @@ def calculate_star_snrs_with_aperture_photometry(
         # (a bulk photutils call here peaked ~42 GB → OOM, _full7) and one
         # cached mask per fractional offset across all catalog stars.
         aper_sum_0, aper_sum_1 = _shared_shape_aperture_sums(
-            counts_array, positions,
+            counts_array,
+            positions,
             lambda p: [
                 CircularAperture(p, r=radius),
                 CircularAnnulus(p, r_in=radius * 1.5, r_out=radius * 2.5),
@@ -2619,7 +2620,8 @@ def calculate_star_snrs_with_aperture_photometry(
         # otherwise materialize tens of GB of masks at once) and one cached
         # mask per fractional offset.
         aper_sum_0, aper_sum_1 = _shared_shape_aperture_sums(
-            counts_array, positions,
+            counts_array,
+            positions,
             lambda p: [
                 RectangularAperture(p, w=width_pixels, h=length_pixels, theta=theta),
                 RectangularAnnulus(
@@ -2680,18 +2682,18 @@ def calculate_star_snrs_with_aperture_photometry(
     # rate-track (rectangular apertures) — previously only the rate branch
     # produced this, so sidereal frames had no aperture overlay despite the
     # config flag being on.
-    if plot and get_config().plotting.photometry:
+    if plot and settings.plotting.photometry:
         from senpai.engine.plotting.images import plot_photometry_frame
 
         plot_photometry_frame(
             counts_array,
             apertures=apertures,
             annuli=bg_apertures,
-            output_file=get_config().runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
+            output_file=settings.runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
         )
         logger.info(
             "Saved aperture photometry plot to %s",
-            get_config().runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
+            settings.runtime.output_dir / f"frame_{frame.index}_aperture_photometry_stars.png",
         )
 
     return results
@@ -2705,11 +2707,9 @@ def estimate_limiting_magnitude_from_photometry(
     """Estimate limiting magnitude using proper photometry results.
 
     This implementation is shared between sidereal and rate-track pipelines,
-    and is used by WCS refinement code. The default SNR threshold is 3σ,
+    and is used by WCS refinement code. The default SNR threshold is 3 sigma,
     configurable via the min_snr parameter.
     """
-    from senpai.engine.models.senpai import RateTrackFrame
-
     # Determine frame type
     is_rate_track = isinstance(frame, RateTrackFrame)
 
@@ -2737,8 +2737,7 @@ def estimate_limiting_magnitude_from_photometry(
 
     # Simple linear regression + completeness hybrid
     try:
-        cfg = get_config()
-        completeness_target = float(getattr(cfg.photometry, "limiting_completeness_fraction", 0.5))
+        completeness_target = float(getattr(settings.photometry, "limiting_completeness_fraction", 0.5))
 
         # Group stars by magnitude bins to calculate completeness and weights
         bin_width = 0.5  # magnitude bin width
@@ -2816,17 +2815,15 @@ def estimate_limiting_magnitude_from_photometry(
         # (default) prefers a completeness roll-over within the data, falling back to the
         # SNR-fit crossing when completeness sits at the faint edge (catalog truncation, not a
         # real limit); 'linear_fit' always uses the SNR-fit crossing.
-        if cfg.photometry.refinement_limiting_magnitude_method == "completeness_hybrid":
+        if settings.photometry.refinement_limiting_magnitude_method == "completeness_hybrid":
             data_faint_edge = float(np.max(filtered_magnitudes))
             comp = completeness_limit
-            limiting_mag = (
-                comp if comp is not None and comp < data_faint_edge - 0.5 else fit_limiting_mag
-            )
+            limiting_mag = comp if comp is not None and comp < data_faint_edge - 0.5 else fit_limiting_mag
         else:
             limiting_mag = fit_limiting_mag
 
         # Optional diagnostic plot
-        if cfg.plotting.photometry:
+        if settings.plotting.photometry:
             import matplotlib.pyplot as plt
 
             _fig, ax = plt.subplots(figsize=(8, 6))
@@ -2862,7 +2859,7 @@ def estimate_limiting_magnitude_from_photometry(
             ax.grid(True, alpha=0.3)
             ax.legend()
 
-            output_path = cfg.runtime.output_dir / f"frame_{frame.index}_limiting_mag.png"
+            output_path = settings.runtime.output_dir / f"frame_{frame.index}_limiting_mag.png"
             plt.savefig(output_path)
             plt.close()
             logger.info("Saved limiting magnitude diagnostic to %s", output_path)

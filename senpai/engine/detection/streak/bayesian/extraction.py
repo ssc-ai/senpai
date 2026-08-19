@@ -5,11 +5,15 @@ helpers shared by the rate/sidereal streak shift solvers.
 """
 
 import logging
+import weakref
 
 import numpy as np
 from numpy.fft import fft2, ifft2
-from scipy import ndimage
-from scipy.ndimage import median_filter, rotate
+from scipy import fft as sfft
+from scipy import ndimage, signal
+from scipy.ndimage import center_of_mass, gaussian_filter1d, label, median_filter, rotate
+from scipy.ndimage import gaussian_filter1d as _g1d
+from scipy.ndimage import median_filter as _medfilt
 from scipy.optimize import curve_fit
 from scipy.signal import convolve
 
@@ -28,6 +32,7 @@ from senpai.engine.models.metadata import FrameMetadata
 from senpai.engine.models.senpai import RateTrackFrame, SiderealFrame
 from senpai.engine.models.streak_measurement import StreakMeasurement
 from senpai.engine.utils.simulation import simulated_sidereal_frame
+from senpai.engine.utils.stats import fft_workers
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,7 @@ def prepare_rate_frame(rate_frame: RateTrackFrame, padding: float = 0.1) -> np.n
 
     Returns:
         The cropped, median-filtered, minimum-subtracted image data as float32.
+
     """
     p10w = int(rate_frame.frame.data.shape[0] * padding)
     p10h = int(rate_frame.frame.data.shape[1] * padding)
@@ -72,15 +78,14 @@ def prepare_sidereal_frame(
     Returns:
         A tuple of the prepared float32 image data and a boolean flag indicating whether
         a (non-empty) synthetic frame was produced.
+
     """
     p10w = int(sidereal_frame.frame.data.shape[0] * padding)
     p10h = int(sidereal_frame.frame.data.shape[1] * padding)
 
     if allow_synthetic and sidereal_frame.starfield and sidereal_frame.starfield.fit:
         # generate a very narrow pseudo sidereal frame
-        sidereal_data = simulated_sidereal_frame(sidereal_frame.starfield)[
-            p10w:-p10w, p10h:-p10h
-        ].astype(np.float32)
+        sidereal_data = simulated_sidereal_frame(sidereal_frame.starfield)[p10w:-p10w, p10h:-p10h].astype(np.float32)
         is_synthetic = np.max(sidereal_data) != 0
     else:
         sidereal_data = sidereal_frame.frame.data.copy()[p10w:-p10w, p10h:-p10h].astype(np.float32)
@@ -107,6 +112,7 @@ def refine_streak_len(
 
     Returns:
         float: refined estimate of streak length
+
     """
     rotated_psf = rotate(psf, angle=rotation, mode="constant", cval=np.min(psf))
     rotated_psf /= np.max(rotated_psf)
@@ -115,9 +121,7 @@ def refine_streak_len(
         pixel_fwhm = streak_fwhm_from_cutout(rotated_psf, 0)
 
     start_point = np.unravel_index(np.argmax(rotated_psf), rotated_psf.shape)
-    cutout = rotated_psf[
-        int(start_point[0] - pixel_fwhm) : int(start_point[0] + pixel_fwhm), :
-    ]
+    cutout = rotated_psf[int(start_point[0] - pixel_fwhm) : int(start_point[0] + pixel_fwhm), :]
 
     valids = np.where(np.max(cutout, 0) > half_max_value)
 
@@ -152,6 +156,7 @@ def extract_streak_dims_robust(
 
     Raises:
         ValueError: If ``length`` is negative.
+
     """
     # Get maximum FWHM from config
     max_fwhm = settings.streak.max_fwhm_for_streak_extraction
@@ -237,9 +242,7 @@ def extract_streak_dims_robust(
             or x_max >= working_data.shape[1] - cutout_size
         ):
             # Mark this region as processed and mask the working data
-            processed_mask, working_data = mask_streak_region(
-                processed_mask, working_data, y_max, x_max, mask_kernel
-            )
+            processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
             continue
 
         # Extract cutout from original data
@@ -250,9 +253,7 @@ def extract_streak_dims_robust(
         # Check if the cutout overlaps with previously masked regions
         if not is_valid_psf(cutout, processed_mask, y_max, x_max, cutout_size):
             # Mark this region as processed and mask the working data
-            processed_mask, working_data = mask_streak_region(
-                processed_mask, working_data, y_max, x_max, mask_kernel
-            )
+            processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
             continue
 
         # Calculate SNR and other metrics
@@ -264,9 +265,7 @@ def extract_streak_dims_robust(
         # Skip low SNR detections
         if snr < 3.0:
             # Mark this region as processed and mask the working data
-            processed_mask, working_data = mask_streak_region(
-                processed_mask, working_data, y_max, x_max, mask_kernel
-            )
+            processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
             continue
 
         # Normalize cutout for analysis
@@ -281,9 +280,7 @@ def extract_streak_dims_robust(
         # Skip if no pixels above threshold
         if not np.any(binary_cutout):
             # Mark this region as processed and mask the working data
-            processed_mask, working_data = mask_streak_region(
-                processed_mask, working_data, y_max, x_max, mask_kernel
-            )
+            processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
             continue
 
         # Find connected component containing peak
@@ -293,9 +290,7 @@ def extract_streak_dims_robust(
 
         if peak_label == 0:  # No label at peak (shouldn't happen)
             # Mark this region as processed and mask the working data
-            processed_mask, working_data = mask_streak_region(
-                processed_mask, working_data, y_max, x_max, mask_kernel
-            )
+            processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
             continue
 
         # Extract just the connected component containing the peak
@@ -307,9 +302,7 @@ def extract_streak_dims_robust(
         # Skip if too few pixels
         if len(y_indices) < 5:
             # Mark this region as processed and mask the working data
-            processed_mask, working_data = mask_streak_region(
-                processed_mask, working_data, y_max, x_max, mask_kernel
-            )
+            processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
             continue
 
         # Calculate covariance matrix for shape analysis
@@ -361,10 +354,7 @@ def extract_streak_dims_robust(
             # Calculate overall quality score
             # Higher for: high SNR, high aspect ratio, angle close to expected, length close to expected
             quality_score = (
-                snr
-                * aspect_ratio
-                * (1.0 / (1.0 + angle_diff / 10))
-                * (1.0 / (1.0 + abs(length_ratio - 1.0)))
+                snr * aspect_ratio * (1.0 / (1.0 + angle_diff / 10)) * (1.0 / (1.0 + abs(length_ratio - 1.0)))
             )
 
             # Store candidate and metrics
@@ -391,9 +381,7 @@ def extract_streak_dims_robust(
             pass
 
         # After processing, mark this region as processed and mask the working data
-        processed_mask, working_data = mask_streak_region(
-            processed_mask, working_data, y_max, x_max, mask_kernel
-        )
+        processed_mask, working_data = mask_streak_region(processed_mask, working_data, y_max, x_max, mask_kernel)
 
     # Step 6: Select best candidates and create PSF
     if not streak_candidates:
@@ -446,9 +434,7 @@ def extract_streak_dims_robust(
     final_angle = np.median([m["angle"] for m in selected_metrics])
 
     # Log both raw and corrected measurements
-    logger.info(
-        f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction"
-    )
+    logger.info(f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction")
 
     # Sanity check on length
     if final_length < fwhm:
@@ -468,9 +454,7 @@ def extract_streak_dims_robust(
         for m in selected_metrics
     ]
     if np.median(angle_diffs) > 20:  # If median angle differs by more than 20 degrees
-        logger.warning(
-            f"Measured angle ({final_angle:.1f}°) differs significantly from expected ({rotation:.1f}°)"
-        )
+        logger.warning(f"Measured angle ({final_angle:.1f}°) differs significantly from expected ({rotation:.1f}°)")
         # Fall back to original estimate
         if rotation is not None:
             logger.info(f"Using original angle estimate: {rotation:.1f}°")
@@ -478,9 +462,7 @@ def extract_streak_dims_robust(
             logger.info(f"Using original length estimate: {length:.1f}")
             final_length = length
             # Skip further length corrections since we're using the original length
-            logger.info(
-                f"Final streak parameters: length={final_length:.1f}, angle={final_angle:.1f}°"
-            )
+            logger.info(f"Final streak parameters: length={final_length:.1f}, angle={final_angle:.1f}°")
             return final_angle, final_length, psf, fwhm
 
     logger.info(f"Final streak parameters: length={final_length:.1f}, angle={final_angle:.1f}°")
@@ -492,10 +474,7 @@ def extract_streak_dims_robust(
         if measured_fwhm > max_fwhm:
             # A degraded streak can yield an implausibly large measured FWHM, which then bloats
             # downstream aperture photometry. Cap it like the initial estimate above.
-            logger.warning(
-                f"Measured PSF FWHM ({measured_fwhm:.1f}) exceeds the maximum ({max_fwhm}); "
-                "capping it."
-            )
+            logger.warning(f"Measured PSF FWHM ({measured_fwhm:.1f}) exceeds the maximum ({max_fwhm}); capping it.")
             measured_fwhm = max_fwhm
         logger.info(f"Measured PSF FWHM: {measured_fwhm:.1f} pixels")
         # Use the measured FWHM for length correction
@@ -514,9 +493,7 @@ def extract_streak_dims_robust(
     # Ensure the corrected length is not negative or too small
     final_length = max(corrected_length, fwhm_for_correction * 0.5)
 
-    logger.info(
-        f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction"
-    )
+    logger.info(f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction")
 
     # Sanity checks and fallbacks as before...
 
@@ -533,6 +510,7 @@ def streak_fwhm_from_cutout(cutout_frame: np.ndarray, rotation: float) -> float:
 
     Returns:
         float: FWHM in pixels, or None if measurement fails
+
     """
     if rotation != 0:
         rotated_cutout = rotate(cutout_frame, angle=rotation, mode="constant", cval=np.nan)
@@ -587,6 +565,7 @@ def streak_length_from_cutout(cutout_frame: np.ndarray, plot: bool = True) -> fl
 
     Returns:
         The estimated streak length in pixels.
+
     """
     subcc = cutout_frame.copy()
     subcc = subcc.copy() - np.median(subcc)
@@ -628,6 +607,7 @@ def streak_parameters_from_xcorr(
         windowed, normalized correlation sub-image, or ``None`` if the correlation has no
         extended cluster (no measurable streak). Callers route around a ``None`` rather than
         catching an exception.
+
     """
     cutout_frame = (cutout_frame.copy() - np.min(cutout_frame)) / np.max(cutout_frame)
 
@@ -726,6 +706,7 @@ def measure_gaussian_shift(centered_cutout: np.ndarray) -> tuple[np.ndarray, flo
     Returns:
         tuple: (shift_vector, fwhm) where shift_vector is the offset from center and fwhm is the
                full width at half maximum of the fitted Gaussian in pixels
+
     """
     # Find the peak location
     psf_center = np.unravel_index(np.argmax(centered_cutout), centered_cutout.shape)
@@ -780,9 +761,7 @@ def measure_gaussian_shift(centered_cutout: np.ndarray) -> tuple[np.ndarray, flo
     return shift, fwhm
 
 
-def estimate_fwhm_from_profiles(
-    x_profile: np.ndarray, y_profile: np.ndarray
-) -> tuple[float, float, float]:
+def estimate_fwhm_from_profiles(x_profile: np.ndarray, y_profile: np.ndarray) -> tuple[float, float, float]:
     """Estimate FWHM from profiles when curve fitting fails.
 
     Args:
@@ -791,6 +770,7 @@ def estimate_fwhm_from_profiles(
 
     Returns:
         The x, y and mean FWHM in pixels.
+
     """
     # Find half-maximum points in both profiles
     half_max = 0.5
@@ -816,9 +796,7 @@ def estimate_fwhm_from_profiles(
     return (fwhm_x + fwhm_y) / 2
 
 
-def measure_psf_shift(
-    centered_cutout: np.ndarray, length: float, rotation: float, pixel_fwhm: float
-) -> np.ndarray:
+def measure_psf_shift(centered_cutout: np.ndarray, length: float, rotation: float, pixel_fwhm: float) -> np.ndarray:
     """Measure a PSF's offset from center by matched-filtering a streak kernel.
 
     Convolves the cutout with a rectangle-pyramid streak kernel of the given geometry and
@@ -832,6 +810,7 @@ def measure_psf_shift(
 
     Returns:
         The (row, column) offset of the convolution peak from the cutout center.
+
     """
     kernel = rectangle_pyramoid(
         length,
@@ -857,6 +836,7 @@ def cross_corr(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
 
     Returns:
         np.ndarray: Cross correlated image
+
     """
     ccf = np.roll(
         ifft2(fft2(img1).conj() * fft2(img2)).real,
@@ -876,6 +856,7 @@ def measure_psf_fwhm(data: np.ndarray, rotation: float | None = None) -> float:
 
     Returns:
         float: FWHM in pixels
+
     """
     # If rotation is not provided, try to determine it
     if rotation is None:
@@ -985,9 +966,9 @@ def mask_streak_region(
 
     Returns:
         A tuple of the updated processed mask and updated working data.
+
     """
     # Convolve the kernel with itself to get the effective area
-    from scipy import signal
 
     effective_kernel = signal.convolve2d(kernel, kernel, mode="full")
 
@@ -1046,6 +1027,7 @@ def is_valid_psf(
 
     Returns:
         bool: True if the PSF is valid, False otherwise
+
     """
     # Extract the corresponding region from the processed mask
     y_start = max(0, y_max - cutout_size)
@@ -1075,11 +1057,9 @@ def extract_streak_from_metadata(
 
     Returns:
         The predicted streak, or None when the frame carries no track rates.
+
     """
-    if (
-        not metadata.track_rate_dec_arcsec_per_second
-        and not metadata.track_rate_ra_arcsec_per_second
-    ):
+    if not metadata.track_rate_dec_arcsec_per_second and not metadata.track_rate_ra_arcsec_per_second:
         return None
 
     if not metadata.exposure_time_seconds:
@@ -1087,10 +1067,7 @@ def extract_streak_from_metadata(
 
     # Calculate streak length in arcseconds
     streak_length_arcsec = (
-        np.sqrt(
-            metadata.track_rate_ra_arcsec_per_second**2
-            + metadata.track_rate_dec_arcsec_per_second**2
-        )
+        np.sqrt(metadata.track_rate_ra_arcsec_per_second**2 + metadata.track_rate_dec_arcsec_per_second**2)
         * metadata.exposure_time_seconds
     )
     streak_length_pixels = streak_length_arcsec / plate_scale_arcsec
@@ -1125,9 +1102,7 @@ def extract_streak_from_metadata(
     if streak_rotation >= 180:
         streak_rotation -= 180
 
-    logger.info(
-        f"Calculated streak rotation: {streak_rotation:.2f}° from RA/Dec track rates using PC matrix"
-    )
+    logger.info(f"Calculated streak rotation: {streak_rotation:.2f}° from RA/Dec track rates using PC matrix")
     logger.info(f"Calculated streak length: {streak_length_pixels:.2f} pixels")
 
     return StreakMeasurement(
@@ -1147,10 +1122,11 @@ def prepare_rate_frame_v26(rate_frame: RateTrackFrame, padding: float = 0.05) ->
     padding : float
         Fraction of image to remove from edges (default: 0.1)
 
-    Returns:
+    Returns
     -------
     np.ndarray
         Prepared frame data
+
     """
     # Get the data after any scaling has been applied
     rate_data = rate_frame.frame.data.copy().astype(np.float32)
@@ -1172,9 +1148,7 @@ def prepare_rate_frame_v26(rate_frame: RateTrackFrame, padding: float = 0.05) ->
     return rate_data
 
 
-def prepare_sidereal_frame_v26(
-    sidereal_frame: SiderealFrame, padding: float = 0.05
-) -> tuple[np.ndarray, bool]:
+def prepare_sidereal_frame_v26(sidereal_frame: SiderealFrame, padding: float = 0.05) -> tuple[np.ndarray, bool]:
     """Prepare sidereal frame for cross-correlation.
 
     Parameters
@@ -1184,10 +1158,11 @@ def prepare_sidereal_frame_v26(
     padding : float
         Fraction of image to remove from edges (default: 0.1)
 
-    Returns:
+    Returns
     -------
     tuple[np.ndarray, bool]
         Prepared frame data and whether synthetic frame was used
+
     """
     # Check if we should use synthetic frame
     if sidereal_frame.starfield and sidereal_frame.starfield.wcs:
@@ -1250,21 +1225,19 @@ def refine_robust_streak(
 
     Returns:
         tuple: (refined StreakMeasurement, measured_fwhm)
+
     """
     if psf is None or seed is None:
         logger.warning("Invalid inputs to refine_robust_streak")
         return seed, seed.fwhm if seed else None
 
-    logger.info(
-        f"Refining streak: seed L={seed.length:.1f}, θ={seed.rotation:.1f}°, W={seed.fwhm:.1f}"
-    )
+    logger.info(f"Refining streak: seed L={seed.length:.1f}, θ={seed.rotation:.1f}°, W={seed.fwhm:.1f}")
 
     # Normalize PSF against a *stable* max, not the single brightest pixel.
     # A lone hot/cosmic pixel inflates np.max → every fractional threshold (0.5
     # FWHM included) lands too low → length is over-measured. A 3x3 median
     # rejects single-pixel spikes while preserving the streak, so its max is the
     # true peak scale.
-    from scipy.ndimage import median_filter
 
     psf_norm = psf.copy().astype(float)
     psf_norm -= np.min(psf_norm)
@@ -1288,8 +1261,6 @@ def refine_robust_streak(
 
         if not np.any(mask):
             continue
-
-        from scipy.ndimage import label
 
         labeled_mask, num_features = label(mask)
 
@@ -1327,19 +1298,14 @@ def refine_robust_streak(
     wing_threshold = 0.15
 
     # Use flood fill to get connected region starting from the brightest point
-    full_mask = map_cluster_v26(
-        rotated_psf, (center_y, center_x), wing_threshold, pad_size=0
-    )
+    full_mask = map_cluster_v26(rotated_psf, (center_y, center_x), wing_threshold, pad_size=0)
 
     # Flood-fill extent is a diagnostic only now (the 1D-FWHM below is
     # authoritative), so a failed/tiny fill must NOT abort — e.g. when the
     # brightest pixel is a hot pixel the fill captures nothing.
     if np.any(full_mask):
         y_coords_all, x_coords_all = np.where(full_mask)
-        flood_fill_length = (
-            float(np.max(x_coords_all) - np.min(x_coords_all))
-            if len(y_coords_all) >= 5 else 0.0
-        )
+        flood_fill_length = float(np.max(x_coords_all) - np.min(x_coords_all)) if len(y_coords_all) >= 5 else 0.0
     else:
         flood_fill_length = 0.0
 
@@ -1390,54 +1356,36 @@ def refine_robust_streak(
         min_core_length = min(core_length_values)
         max_core_length = max(core_length_values)
 
-        logger.info(
-            f"Core length range: [{min_core_length:.1f}, {max_core_length:.1f}] pixels"
-        )
+        logger.info(f"Core length range: [{min_core_length:.1f}, {max_core_length:.1f}] pixels")
 
         # Calculate how much the length drops from lowest (0.25) to highest (0.55) threshold
         # A big drop indicates faint wings are being cut off at higher thresholds
-        length_drop_ratio = (
-            (max_core_length - min_core_length) / max_core_length
-            if max_core_length > 0
-            else 0
-        )
+        length_drop_ratio = (max_core_length - min_core_length) / max_core_length if max_core_length > 0 else 0
 
         logger.info(
-            f"Length drop across thresholds: {length_drop_ratio:.2%} "
-            f"({max_core_length:.1f} → {min_core_length:.1f})"
+            f"Length drop across thresholds: {length_drop_ratio:.2%} ({max_core_length:.1f} → {min_core_length:.1f})"
         )
 
         # Strategy: Only use flood fill when there's a SIGNIFICANT drop (>30%) across thresholds
         # This indicates the thresholds are cutting off faint wings
         if length_drop_ratio > 0.30:
             # Significant drop - wings are being cut off, flood fill can help
-            logger.info(
-                f"Large threshold drop ({length_drop_ratio:.1%}), considering flood fill"
-            )
+            logger.info(f"Large threshold drop ({length_drop_ratio:.1%}), considering flood fill")
 
-            if (
-                flood_fill_length >= min_core_length
-                and flood_fill_length <= max_core_length
-            ):
+            if flood_fill_length >= min_core_length and flood_fill_length <= max_core_length:
                 # Flood fill within bounds - use it to capture wings
                 refined_length = flood_fill_length
-                logger.info(
-                    f"Using flood fill ({flood_fill_length:.1f}) to capture faint wings"
-                )
+                logger.info(f"Using flood fill ({flood_fill_length:.1f}) to capture faint wings")
             elif flood_fill_length > max_core_length:
                 # Flood fill too long - cap at max core
                 refined_length = max_core_length
                 logger.info(
-                    f"Flood fill ({flood_fill_length:.1f}) exceeds max core, "
-                    f"using max core: {refined_length:.1f}"
+                    f"Flood fill ({flood_fill_length:.1f}) exceeds max core, using max core: {refined_length:.1f}"
                 )
             else:
                 # Flood fill failed - use max core
                 refined_length = max_core_length
-                logger.info(
-                    f"Flood fill ({flood_fill_length:.1f}) too short, "
-                    f"using max core: {refined_length:.1f}"
-                )
+                logger.info(f"Flood fill ({flood_fill_length:.1f}) too short, using max core: {refined_length:.1f}")
         else:
             # Small drop - core measurements are stable
             # Use measurement closest to FWHM (0.5) or 0.45 threshold, not the longest (0.25)
@@ -1445,11 +1393,7 @@ def refine_robust_streak(
             target_thresholds = [0.45, 0.55]  # Prioritize these for stable cases
 
             # Filter core_lengths to those in our target range
-            target_measurements = [
-                (thresh, length)
-                for thresh, length in core_lengths
-                if thresh in target_thresholds
-            ]
+            target_measurements = [(thresh, length) for thresh, length in core_lengths if thresh in target_thresholds]
 
             if target_measurements:
                 # Use the measurement from 0.45 or 0.55 threshold
@@ -1462,8 +1406,7 @@ def refine_robust_streak(
                 # Fallback: use the median of available measurements
                 refined_length = np.median(core_length_values)
                 logger.info(
-                    f"Stable core measurements (drop={length_drop_ratio:.1%}), "
-                    f"using median: {refined_length:.1f}"
+                    f"Stable core measurements (drop={length_drop_ratio:.1%}), using median: {refined_length:.1f}"
                 )
     else:
         # No valid core measurements, have to trust flood fill
@@ -1500,14 +1443,12 @@ def refine_robust_streak(
         # Absolutely enforce core bounds - no seed validation can override this
         if refined_length < min_core_length:
             logger.warning(
-                f"Refined length ({refined_length:.1f}) below min core ({min_core_length:.1f}), "
-                f"clamping to min core"
+                f"Refined length ({refined_length:.1f}) below min core ({min_core_length:.1f}), clamping to min core"
             )
             refined_length = min_core_length
         elif refined_length > max_core_length:
             logger.warning(
-                f"Refined length ({refined_length:.1f}) above max core ({max_core_length:.1f}), "
-                f"clamping to max core"
+                f"Refined length ({refined_length:.1f}) above max core ({max_core_length:.1f}), clamping to max core"
             )
             refined_length = max_core_length
 
@@ -1518,9 +1459,7 @@ def refine_robust_streak(
                 f"trusting core measurements"
             )
         else:
-            logger.info(
-                f"Using core-based measurement: {refined_length:.1f} (seed was {seed.length:.1f})"
-            )
+            logger.info(f"Using core-based measurement: {refined_length:.1f} (seed was {seed.length:.1f})")
     else:
         # No core measurements - fall back to stricter seed validation
         if refined_length < seed.length * 0.7:
@@ -1540,8 +1479,6 @@ def refine_robust_streak(
     # whole trail because the outer points stay above the half level. The stable
     # peak (95th pct of the smoothed profile) keeps a lone hot pixel from setting
     # the scale.
-    from scipy.ndimage import gaussian_filter1d as _g1d
-    from scipy.ndimage import median_filter as _medfilt
 
     def _stable_half_extent(prof: np.ndarray, frac: float = 0.5) -> float:
         if prof.size == 0:
@@ -1587,7 +1524,9 @@ def refine_robust_streak(
     if refined_width > max_width:
         logger.info(
             "Clamping streak width %.1f -> %.1f (> 2.5x seed FWHM %.1f)",
-            refined_width, max_width, seed.fwhm or 4.0,
+            refined_width,
+            max_width,
+            seed.fwhm or 4.0,
         )
         refined_width = max_width
 
@@ -1617,14 +1556,10 @@ def refine_robust_streak(
 
         # Show core thresholds in red
         for thresh in core_thresholds:
-            axes[0].contour(
-                rotated_psf, levels=[thresh], colors="red", linewidths=1, alpha=0.5
-            )
+            axes[0].contour(rotated_psf, levels=[thresh], colors="red", linewidths=1, alpha=0.5)
 
         # Show wing threshold in cyan
-        axes[0].contour(
-            rotated_psf, levels=[wing_threshold], colors="cyan", linewidths=2, alpha=0.8
-        )
+        axes[0].contour(rotated_psf, levels=[wing_threshold], colors="cyan", linewidths=2, alpha=0.8)
 
         plt.colorbar(im0, ax=axes[0], label="Normalized Intensity")
 
@@ -1641,9 +1576,7 @@ def refine_robust_streak(
                 color="orange",
             )
 
-        axes[1].axhline(
-            seed.length, color="r", linestyle="--", label="Seed Length", linewidth=2
-        )
+        axes[1].axhline(seed.length, color="r", linestyle="--", label="Seed Length", linewidth=2)
         axes[1].axhline(
             flood_fill_length,
             color="cyan",
@@ -1706,6 +1639,7 @@ def refine_streak_len_v26(
 
     Returns:
         float: refined estimate of streak length
+
     """
     rotated_psf = rotate(psf, angle=rotation, mode="constant", cval=np.min(psf))
     rotated_psf /= np.max(rotated_psf)
@@ -1714,9 +1648,7 @@ def refine_streak_len_v26(
         pixel_fwhm = streak_fwhm_from_cutout_v26(rotated_psf, 0)
 
     start_point = np.unravel_index(np.argmax(rotated_psf), rotated_psf.shape)
-    cutout = rotated_psf[
-        int(start_point[0] - pixel_fwhm) : int(start_point[0] + pixel_fwhm), :
-    ]
+    cutout = rotated_psf[int(start_point[0] - pixel_fwhm) : int(start_point[0] + pixel_fwhm), :]
 
     valids = np.where(np.max(cutout, 0) > half_max_value)
 
@@ -1743,6 +1675,7 @@ def extract_streak_dims_mapping(
         A tuple of the consensus ``StreakMeasurement`` (median rotation, length, and
         minor-axis FWHM of the characteristic streaks) and the image copy with round
         outliers removed.
+
     """
     # Make a copy of the data for streak detection
     data_mapped = data.copy()
@@ -1768,9 +1701,7 @@ def extract_streak_dims_mapping(
         x_max, y_max = np.unravel_index(np.argmax(data_mapped), data_mapped.shape)
 
         # Extract the streak and get its metadata
-        data_mapped, metadata = remove_streak_at_point_enriched(
-            data_mapped, (x_max, y_max), fill_min
-        )
+        data_mapped, metadata = remove_streak_at_point_enriched(data_mapped, (x_max, y_max), fill_min)
 
         # Skip streaks with very few pixels (likely noise)
         if metadata["num_pixels"] < 5:
@@ -1794,11 +1725,7 @@ def extract_streak_dims_mapping(
 
     for streak in all_streaks:
         # Calculate roundness ratio
-        roundness_ratio = (
-            streak["fwhm_major"] / streak["fwhm_minor"]
-            if streak["fwhm_minor"] > 0
-            else float("inf")
-        )
+        roundness_ratio = streak["fwhm_major"] / streak["fwhm_minor"] if streak["fwhm_minor"] > 0 else float("inf")
 
         # Keep only elongated objects (ratio > 1.3)
         if roundness_ratio >= 1.3:
@@ -1873,17 +1800,13 @@ def extract_streak_dims_mapping(
 
         for seed in potential_seeds:
             # Get all streaks similar to this seed
-            similar_to_seed = np.where(similarity_matrix[seed] > similarity_threshold)[
-                0
-            ]
+            similar_to_seed = np.where(similarity_matrix[seed] > similarity_threshold)[0]
 
             # Calculate the average pairwise similarity within this cluster
             cluster_similarities = []
             for i in range(len(similar_to_seed)):
                 for j in range(i + 1, len(similar_to_seed)):
-                    cluster_similarities.append(
-                        similarity_matrix[similar_to_seed[i], similar_to_seed[j]]
-                    )
+                    cluster_similarities.append(similarity_matrix[similar_to_seed[i], similar_to_seed[j]])
 
             # Cluster score is the product of size and average similarity
             if cluster_similarities:
@@ -1900,18 +1823,10 @@ def extract_streak_dims_mapping(
             characteristic_mask[best_cluster] = True
 
             # Select streaks
-            characteristic_streaks = [
-                s for i, s in enumerate(filtered_streaks) if characteristic_mask[i]
-            ]
+            characteristic_streaks = [s for i, s in enumerate(filtered_streaks) if characteristic_mask[i]]
             # We already have outlier_streaks from the roundness filtering
             # Add any filtered streaks that weren't in the best cluster
-            outlier_streaks.extend(
-                [
-                    s
-                    for i, s in enumerate(filtered_streaks)
-                    if not characteristic_mask[i]
-                ]
-            )
+            outlier_streaks.extend([s for i, s in enumerate(filtered_streaks) if not characteristic_mask[i]])
         else:
             # Fallback if no good cluster found
             characteristic_streaks = filtered_streaks
@@ -1976,35 +1891,20 @@ def extract_streak_dims_mapping(
                     characteristic_mask = np.zeros(n_streaks, dtype=bool)
                     characteristic_mask[largest_orient_group] = True
 
-                    characteristic_streaks = [
-                        s
-                        for i, s in enumerate(filtered_streaks)
-                        if characteristic_mask[i]
-                    ]
-                    outlier_streaks = [
-                        s
-                        for i, s in enumerate(filtered_streaks)
-                        if not characteristic_mask[i]
-                    ]
+                    characteristic_streaks = [s for i, s in enumerate(filtered_streaks) if characteristic_mask[i]]
+                    outlier_streaks = [s for i, s in enumerate(filtered_streaks) if not characteristic_mask[i]]
 
     # Remove only round objects from the second copy of the data
     # These are the objects we filtered out earlier based on roundness ratio
     round_objects = [
         streak
         for streak in all_streaks
-        if (
-            streak["fwhm_major"] / streak["fwhm_minor"]
-            if streak["fwhm_minor"] > 0
-            else float("inf")
-        )
-        < 1.4
+        if (streak["fwhm_major"] / streak["fwhm_minor"] if streak["fwhm_minor"] > 0 else float("inf")) < 1.4
     ]
 
     for round_obj in round_objects:
         center = np.array(round_obj["center"]).astype(int)
-        data_outliers_removed = remove_streak_at_point_v26(
-            data_outliers_removed, center, fill_min
-        )
+        data_outliers_removed = remove_streak_at_point_v26(data_outliers_removed, center, fill_min)
 
     # Limit to exactly n_streaks if we have more
     characteristic_streaks = characteristic_streaks[:n_streaks]
@@ -2014,7 +1914,7 @@ def extract_streak_dims_mapping(
         length=np.median([s["length"] for s in characteristic_streaks]),
         fwhm=np.median([s["fwhm_minor"] for s in characteristic_streaks]),
     )
-    print(streak_measurement)
+    logger.debug(f"streak measurement from mapping: {streak_measurement}")
 
     # Create and return the StreakMeasurement object
 
@@ -2041,6 +1941,7 @@ def refine_streak_length_by_overhang(
 
     Returns:
         float: Refined length estimate
+
     """
     # Get coordinates of streak pixels
     y_coords, x_coords = np.where(streak_mask)
@@ -2069,7 +1970,6 @@ def refine_streak_length_by_overhang(
     intensities = data[sorted_y, sorted_x]
 
     # Smooth the intensity profile to reduce noise
-    from scipy.ndimage import gaussian_filter1d
 
     smoothed_intensities = gaussian_filter1d(intensities, sigma=1.0)
 
@@ -2105,16 +2005,10 @@ def refine_streak_length_by_overhang(
 
     # Sanity check: don't let it get too much shorter
     if refined_length < initial_length * 0.5:
-        logger.warning(
-            f"Refined length ({refined_length:.1f}) too much shorter than initial ({initial_length:.1f})"
-        )
-        refined_length = (
-            initial_length * 0.8
-        )  # Use 80% of initial as conservative estimate
+        logger.warning(f"Refined length ({refined_length:.1f}) too much shorter than initial ({initial_length:.1f})")
+        refined_length = initial_length * 0.8  # Use 80% of initial as conservative estimate
 
-    logger.info(
-        f"Length refinement: {initial_length:.1f} -> {refined_length:.1f} pixels"
-    )
+    logger.info(f"Length refinement: {initial_length:.1f} -> {refined_length:.1f} pixels")
 
     return refined_length
 
@@ -2137,10 +2031,9 @@ def extract_streak_dims_simple_long(
 
     Returns:
         tuple: (StreakMeasurement, psf, measured_fwhm)
+
     """
-    logger.info(
-        f"Using simple long streak extraction method (est: len={length:.1f}, rot={rotation:.1f}°)"
-    )
+    logger.info(f"Using simple long streak extraction method (est: len={length:.1f}, rot={rotation:.1f}°)")
 
     # Create a working copy
     working_data = data.copy()
@@ -2191,9 +2084,7 @@ def extract_streak_dims_simple_long(
         measured_width = 3 * np.sqrt(eigenvalues[1])
 
         # Calculate aspect ratio
-        aspect_ratio = (
-            initial_length / measured_width if measured_width > 0 else float("inf")
-        )
+        aspect_ratio = initial_length / measured_width if measured_width > 0 else float("inf")
 
         logger.info(
             f"Initial measurement: length={initial_length:.1f}, angle={streak_angle:.1f}°, aspect_ratio={aspect_ratio:.1f}"
@@ -2201,9 +2092,7 @@ def extract_streak_dims_simple_long(
 
         # Sanity checks
         if aspect_ratio < 2.0:
-            logger.warning(
-                f"Low aspect ratio ({aspect_ratio:.1f}) - may not be a streak"
-            )
+            logger.warning(f"Low aspect ratio ({aspect_ratio:.1f}) - may not be a streak")
             return None, None, fwhm
 
         if initial_length < fwhm * 2:
@@ -2241,9 +2130,7 @@ def extract_streak_dims_simple_long(
         return streak_measurement, psf, measured_width
 
 
-def _estimate_streak_seed(
-    data: np.ndarray, fwhm: float = 4.0, crop: int = 2048
-) -> tuple[float, float]:
+def _estimate_streak_seed(data: np.ndarray, fwhm: float = 4.0, crop: int = 2048) -> tuple[float, float]:
     """Coarse, header-free (length, rotation) seed for the anchor frame.
 
     Found by a normalized matched-filter scale-space search on a central crop:
@@ -2271,13 +2158,16 @@ def _estimate_streak_seed(
         h, w = data.shape
         s = min(crop, h, w)
         y0, x0 = (h - s) // 2, (w - s) // 2
-        c = data[y0:y0 + s, x0:x0 + s].astype(np.float32)
+        c = data[y0 : y0 + s, x0 : x0 + s].astype(np.float32)
         c -= np.median(c)
 
         def response(length: float, ang: float) -> float:
             k = rectangle_pyramoid(
-                length, np.sin(np.deg2rad(ang)), np.cos(np.deg2rad(ang)),
-                int(fwhm * 2), halo_fwhm=4,
+                length,
+                np.sin(np.deg2rad(ang)),
+                np.cos(np.deg2rad(ang)),
+                int(fwhm * 2),
+                halo_fwhm=4,
             )
             norm = float(np.sqrt(np.sum(k * k)))
             if norm <= 0:
@@ -2303,9 +2193,7 @@ def _estimate_streak_seed(
                 best_len, best_resp = float(length), resp
         if best_len is None:
             _no_response()
-        logger.info(
-            "Multi-scale seed estimate: L=%.0f px, rot=%.0f deg", best_len, best_rot
-        )
+        logger.info("Multi-scale seed estimate: L=%.0f px, rot=%.0f deg", best_len, best_rot)
     except Exception as e:
         logger.warning("Multi-scale seed estimate failed (%s); using 40 px fallback", e)
         return 40.0, 0.0
@@ -2333,6 +2221,7 @@ def extract_streak_dims_robust_v26(
 
     Returns:
         tuple: (rotation, length, psf, measured_fwhm)
+
     """
     # Only fall back to the simple long-streak extractor for *very* long streaks.
     # The previous 150px threshold split a single set across two extractors
@@ -2341,9 +2230,7 @@ def extract_streak_dims_robust_v26(
     # candidates and clamps width, so it handles normal streaks consistently;
     # reserve simple_long for genuinely huge trails.
     if length is not None and length > 400:
-        logger.info(
-            f"Streak length ({length:.1f} px) exceeds threshold, using simple long streak extraction method"
-        )
+        logger.info(f"Streak length ({length:.1f} px) exceeds threshold, using simple long streak extraction method")
         return extract_streak_dims_simple_long(data, length, rotation, fwhm or 4.0)
 
     # If FWHM is not provided, make an initial estimate
@@ -2397,7 +2284,6 @@ def extract_streak_dims_robust_v26(
     )
 
     # Step 3: Apply matched filter
-    from senpai.engine.utils.stats import fft_workers
 
     with fft_workers():
         filtered_data = convolve(working_data, kernel, mode="same")
@@ -2427,14 +2313,18 @@ def extract_streak_dims_robust_v26(
 
     def _mask(yy: int, xx: int) -> None:
         mask_streak_region_v26(
-            processed_mask, working_data, yy, xx, mask_kernel,
-            effective_kernel=eff_kernel, bg_value=bg_median, response=filtered_data,
+            processed_mask,
+            working_data,
+            yy,
+            xx,
+            mask_kernel,
+            effective_kernel=eff_kernel,
+            bg_value=bg_median,
+            response=filtered_data,
         )
 
     for _ in range(min(30, n_streaks * 3)):  # Try more candidates than needed
-        if np.all(
-            processed_mask[border_width:-border_width, border_width:-border_width]
-        ):
+        if np.all(processed_mask[border_width:-border_width, border_width:-border_width]):
             break  # Stop if we've processed all valid regions
 
         # Next-brightest unprocessed peak — already-masked regions are -inf in the
@@ -2461,9 +2351,7 @@ def extract_streak_dims_robust_v26(
 
         # Check if the cutout overlaps with previously masked regions
         if not is_valid_psf_v26(cutout, processed_mask, y_max, x_max, cutout_size):
-            logger.debug(
-                f"Rejecting PSF at ({y_max}, {x_max}) due to overlap with masked regions"
-            )
+            logger.debug(f"Rejecting PSF at ({y_max}, {x_max}) due to overlap with masked regions")
             # Mark this region as processed and mask the working data
             _mask(y_max, x_max)
             continue
@@ -2499,8 +2387,10 @@ def extract_streak_dims_robust_v26(
             plateau_frac = float(np.mean(norm_cutout[core] >= 0.95))
             if plateau_frac > 0.5:
                 logger.debug(
-                    "Rejecting clipped/saturated candidate at (%d,%d): "
-                    "plateau_frac=%.2f", y_max, x_max, plateau_frac,
+                    "Rejecting clipped/saturated candidate at (%d,%d): plateau_frac=%.2f",
+                    y_max,
+                    x_max,
+                    plateau_frac,
                 )
                 _mask(y_max, x_max)
                 continue
@@ -2515,7 +2405,6 @@ def extract_streak_dims_robust_v26(
             continue
 
         # Find connected component containing peak
-        from scipy import ndimage
 
         labeled, _num_features = ndimage.label(binary_cutout)
         peak_y, peak_x = np.unravel_index(np.argmax(norm_cutout), norm_cutout.shape)
@@ -2552,14 +2441,10 @@ def extract_streak_dims_robust_v26(
             eigenvectors = eigenvectors[:, idx]
 
             # Calculate aspect ratio
-            aspect_ratio = (
-                np.sqrt(eigenvalues[0] / eigenvalues[1]) if eigenvalues[1] > 0 else 10.0
-            )
+            aspect_ratio = np.sqrt(eigenvalues[0] / eigenvalues[1]) if eigenvalues[1] > 0 else 10.0
 
             # Calculate orientation
-            streak_angle = np.degrees(
-                np.arctan2(eigenvectors[0, 0], eigenvectors[1, 0])
-            )
+            streak_angle = np.degrees(np.arctan2(eigenvectors[0, 0], eigenvectors[1, 0]))
             streak_angle = streak_angle % 180
 
             # Calculate length using eigenvalues
@@ -2589,10 +2474,7 @@ def extract_streak_dims_robust_v26(
             # Calculate overall quality score
             # Higher for: high SNR, high aspect ratio, angle close to expected, length close to expected
             quality_score = (
-                snr
-                * aspect_ratio
-                * (1.0 / (1.0 + angle_diff / 10))
-                * (1.0 / (1.0 + abs(length_ratio - 1.0)))
+                snr * aspect_ratio * (1.0 / (1.0 + angle_diff / 10)) * (1.0 / (1.0 + abs(length_ratio - 1.0)))
             )
 
             # Store candidate and metrics
@@ -2636,18 +2518,14 @@ def extract_streak_dims_robust_v26(
     selected_streaks = [streak_candidates[i] for i in selected_indices]
     selected_metrics = [streak_metrics[i] for i in selected_indices]
 
-    logger.info(
-        f"Selected {top_n} best streak candidates out of {len(streak_candidates)}"
-    )
+    logger.info(f"Selected {top_n} best streak candidates out of {len(streak_candidates)}")
 
     # Step 7: Align streaks before stacking
     aligned_streaks = []
     for i, streak in enumerate(selected_streaks):
         # Rotate to align with horizontal axis
         angle_to_horizontal = selected_metrics[i]["angle"] - 90
-        aligned = rotate(
-            streak, angle_to_horizontal, reshape=False, mode="constant", cval=0
-        )
+        aligned = rotate(streak, angle_to_horizontal, reshape=False, mode="constant", cval=0)
         aligned_streaks.append(aligned)
 
     # Step 8: Create PSF by stacking aligned streaks
@@ -2676,15 +2554,11 @@ def extract_streak_dims_robust_v26(
     final_angle = np.median([m["angle"] for m in selected_metrics])
 
     # Log both raw and corrected measurements
-    logger.info(
-        f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction"
-    )
+    logger.info(f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction")
 
     # Sanity check on length
     if final_length < fwhm:
-        logger.warning(
-            f"Corrected length ({final_length:.1f}) is smaller than FWHM ({fwhm:.1f})"
-        )
+        logger.warning(f"Corrected length ({final_length:.1f}) is smaller than FWHM ({fwhm:.1f})")
         # Fall back to original estimate if available and reasonable
         if length is not None and length > final_length:
             logger.info(f"Using original length estimate: {length:.1f}")
@@ -2706,9 +2580,7 @@ def extract_streak_dims_robust_v26(
             return final_angle, final_length, psf, fwhm
     """
 
-    logger.info(
-        f"Final streak parameters: length={final_length:.1f}, angle={final_angle:.1f}°"
-    )
+    logger.info(f"Final streak parameters: length={final_length:.1f}, angle={final_angle:.1f}°")
 
     # After creating the PSF, measure its FWHM perpendicular to the streak direction
     measured_fwhm = measure_psf_fwhm_v26(psf, final_angle)
@@ -2731,9 +2603,7 @@ def extract_streak_dims_robust_v26(
     # Ensure the corrected length is not negative or too small
     final_length = max(corrected_length, fwhm_for_correction * 0.5)
 
-    logger.info(
-        f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction"
-    )
+    logger.info(f"Raw streak length: {raw_length:.1f}, corrected to: {final_length:.1f} after PSF subtraction")
 
     # Sanity checks and fallbacks as before...
     streak_measurement = StreakMeasurement(
@@ -2769,6 +2639,7 @@ def extract_streak_dims(
     Returns:
         A tuple of ``(rotation, length, psf)``. When no valid candidate is found the
         seed ``rotation``/``length`` are returned with ``psf`` set to ``None``.
+
     """
     logger.info("extracting streak params from image")
 
@@ -2873,9 +2744,7 @@ def extract_streak_dims(
         top_n = max(1, len(streaks) // 2)
         selected_indices = sorted_indices[:top_n]
         selected_streaks = [streaks[i] for i in selected_indices]
-        logger.info(
-            f"Selected {top_n} highest SNR streaks out of {len(streaks)} candidates"
-        )
+        logger.info(f"Selected {top_n} highest SNR streaks out of {len(streaks)} candidates")
         psf = np.median(np.stack(selected_streaks), 0)
     else:
         psf = streaks[0]
@@ -2895,9 +2764,7 @@ def extract_streak_dims(
 
     # If refined length is suspiciously short, use the original estimate
     if streak_len_refined < length * 0.5:
-        logger.warning(
-            f"Refined length ({streak_len_refined:.1f}) seems too short compared to expected ({length:.1f})"
-        )
+        logger.warning(f"Refined length ({streak_len_refined:.1f}) seems too short compared to expected ({length:.1f})")
         return rotation, length, psf
 
     return rotation, streak_len_refined, psf
@@ -2912,11 +2779,10 @@ def streak_fwhm_from_cutout_v26(cutout_frame: np.ndarray, rotation: float) -> fl
 
     Returns:
         float: FWHM in pixels, or None if measurement fails
+
     """
     if rotation != 0:
-        rotated_cutout = rotate(
-            cutout_frame, angle=rotation, mode="constant", cval=np.nan
-        )
+        rotated_cutout = rotate(cutout_frame, angle=rotation, mode="constant", cval=np.nan)
     else:
         rotated_cutout = cutout_frame
 
@@ -2965,6 +2831,7 @@ def streak_length_from_cutout_v26(cutout_frame: np.ndarray, plot: bool = True) -
 
     Returns:
         The estimated streak length in pixels (``0.0`` when no cluster is mapped).
+
     """
     subcc = cutout_frame.copy()
     subcc = subcc.copy() - np.median(subcc)
@@ -3003,6 +2870,7 @@ def streak_parameters_from_xcorr_v26(
 
     Returns:
         tuple: (StreakMeasurement with quality info, processed cutout)
+
     """
     cutout_frame = (cutout_frame.copy() - np.min(cutout_frame)) / np.max(cutout_frame)
 
@@ -3071,16 +2939,10 @@ def streak_parameters_from_xcorr_v26(
                 length_pca = 4 * np.sqrt(eigenvalues[0]) if eigenvalues[0] > 0 else 0
 
                 # Calculate aspect ratio for quality assessment
-                aspect_ratio = (
-                    np.sqrt(eigenvalues[0] / eigenvalues[1])
-                    if eigenvalues[1] > 0
-                    else float("inf")
-                )
+                aspect_ratio = np.sqrt(eigenvalues[0] / eigenvalues[1]) if eigenvalues[1] > 0 else float("inf")
 
                 # Calculate rotation angle
-                rotation_deg = np.degrees(
-                    np.arctan2(eigenvectors[0, 0], eigenvectors[1, 0])
-                )
+                rotation_deg = np.degrees(np.arctan2(eigenvectors[0, 0], eigenvectors[1, 0]))
                 rotation_deg = rotation_deg % 180
 
                 # Use PCA length as primary estimate
@@ -3125,9 +2987,7 @@ def streak_parameters_from_xcorr_v26(
 
     if length_cv > 0.3:  # High coefficient of variation
         is_reliable = False
-        warning_messages.append(
-            f"High length variability across thresholds (CV={length_cv:.2f})"
-        )
+        warning_messages.append(f"High length variability across thresholds (CV={length_cv:.2f})")
 
     if median_length < 2 * seeing_fwhm_pixels:
         is_reliable = False
@@ -3137,9 +2997,7 @@ def streak_parameters_from_xcorr_v26(
 
     # Check aspect ratios
     aspect_ratios = [
-        metrics["aspect_ratio"]
-        for metrics in quality_metrics.values()
-        if metrics["aspect_ratio"] != float("inf")
+        metrics["aspect_ratio"] for metrics in quality_metrics.values() if metrics["aspect_ratio"] != float("inf")
     ]
     if aspect_ratios and np.median(aspect_ratios) < 2.0:
         is_reliable = False
@@ -3153,9 +3011,7 @@ def streak_parameters_from_xcorr_v26(
     if median_length > 3 * seeing_fwhm_pixels:
         # Only apply correction for clearly elongated features
         corrected_length = median_length - 0.5 * seeing_fwhm_pixels
-        logger.info(
-            f"Applied seeing correction: {median_length:.1f} -> {corrected_length:.1f} pixels"
-        )
+        logger.info(f"Applied seeing correction: {median_length:.1f} -> {corrected_length:.1f} pixels")
 
     # Ensure minimum length
     final_length = max(corrected_length, seeing_fwhm_pixels)
@@ -3198,6 +3054,7 @@ def estimate_fwhm_from_profiles_v26(x_profile: np.ndarray, y_profile: np.ndarray
 
     Returns:
         The estimated FWHM in pixels, averaged across the two profiles.
+
     """
     # Find half-maximum points in both profiles
     half_max = 0.5
@@ -3238,6 +3095,7 @@ def measure_psf_shift_parameter_free(
 
     Returns:
         np.ndarray: Shift vector from center to peak
+
     """
     center = np.array(centered_cutout.shape) / 2
 
@@ -3250,12 +3108,8 @@ def measure_psf_shift_parameter_free(
     y_center, x_center = int(center[0]), int(center[1])
 
     # Create circular mask around center
-    y_indices, x_indices = np.ogrid[
-        : working_cutout.shape[0], : working_cutout.shape[1]
-    ]
-    center_mask = (y_indices - y_center) ** 2 + (
-        x_indices - x_center
-    ) ** 2 <= center_mask_radius**2
+    y_indices, x_indices = np.ogrid[: working_cutout.shape[0], : working_cutout.shape[1]]
+    center_mask = (y_indices - y_center) ** 2 + (x_indices - x_center) ** 2 <= center_mask_radius**2
 
     # Set center region to minimum value
     if np.any(center_mask):
@@ -3264,9 +3118,7 @@ def measure_psf_shift_parameter_free(
     # If we have an expected maximum distance, limit search to that region
     if expected_max_distance is not None:
         # Create a mask for the search region
-        search_mask = (y_indices - y_center) ** 2 + (
-            x_indices - x_center
-        ) ** 2 <= expected_max_distance**2
+        search_mask = (y_indices - y_center) ** 2 + (x_indices - x_center) ** 2 <= expected_max_distance**2
 
         # Set everything outside search region to minimum
         working_cutout[~search_mask] = np.min(working_cutout)
@@ -3298,9 +3150,8 @@ def measure_streak_shift_centroid(
 
     Returns:
         np.ndarray: Shift vector from center to streak centroid [x, y]
-    """
-    from scipy.ndimage import center_of_mass, label
 
+    """
     center = np.array(centered_cutout.shape) / 2
     y_center, x_center = int(center[0]), int(center[1])
 
@@ -3312,20 +3163,14 @@ def measure_streak_shift_centroid(
 
     # Mask the center to avoid correlation artifacts
     center_mask_radius = 2
-    y_indices, x_indices = np.ogrid[
-        : working_cutout.shape[0], : working_cutout.shape[1]
-    ]
-    center_mask = (y_indices - y_center) ** 2 + (
-        x_indices - x_center
-    ) ** 2 <= center_mask_radius**2
+    y_indices, x_indices = np.ogrid[: working_cutout.shape[0], : working_cutout.shape[1]]
+    center_mask = (y_indices - y_center) ** 2 + (x_indices - x_center) ** 2 <= center_mask_radius**2
     if np.any(center_mask):
         working_cutout[center_mask] = 0
 
     # If we have an expected maximum distance, limit search to that region
     if expected_max_distance is not None:
-        search_mask = (y_indices - y_center) ** 2 + (
-            x_indices - x_center
-        ) ** 2 <= expected_max_distance**2
+        search_mask = (y_indices - y_center) ** 2 + (x_indices - x_center) ** 2 <= expected_max_distance**2
         working_cutout[~search_mask] = 0
 
     # Threshold at a fraction of the peak to get the main streak feature
@@ -3333,9 +3178,7 @@ def measure_streak_shift_centroid(
     binary_mask = working_cutout > threshold
 
     if not np.any(binary_mask):
-        logger.warning(
-            f"No pixels above threshold {threshold:.2f}, falling back to peak finding"
-        )
+        logger.warning(f"No pixels above threshold {threshold:.2f}, falling back to peak finding")
         return measure_psf_shift_parameter_free(centered_cutout, expected_max_distance)
 
     # Find connected components
@@ -3366,13 +3209,9 @@ def measure_streak_shift_centroid(
     return shift
 
 
-def measure_psf_shift_v26(
-    centered_cutout: np.ndarray, length: float, rotation: float, pixel_fwhm: float
-) -> np.ndarray:
+def measure_psf_shift_v26(centered_cutout: np.ndarray, length: float, rotation: float, pixel_fwhm: float) -> np.ndarray:
     """Legacy function - now just calls the parameter-free version with a warning."""
-    logger.warning(
-        "measure_psf_shift_v26 is deprecated - using parameter-free version instead"
-    )
+    logger.warning("measure_psf_shift_v26 is deprecated - using parameter-free version instead")
 
     # Estimate expected distance based on length
     expected_distance = length * 0.75 if length > 0 else None
@@ -3389,10 +3228,10 @@ def cross_corr_v26(img1: np.ndarray, img2: np.ndarray) -> np.ndarray:
 
     Returns:
         np.ndarray: Cross correlated image
+
     """
     # scipy.fft: same pocketfft as numpy's, multithreaded with workers —
     # identical values, several times faster on full frames.
-    from scipy import fft as sfft
 
     ccf = np.roll(
         sfft.ifft2(
@@ -3415,6 +3254,7 @@ def measure_psf_fwhm_v26(data: np.ndarray, rotation: float | None = None) -> flo
 
     Returns:
         float: FWHM in pixels
+
     """
     # If rotation is not provided, try to determine it
     if rotation is None:
@@ -3436,9 +3276,7 @@ def measure_psf_fwhm_v26(data: np.ndarray, rotation: float | None = None) -> flo
             eigenvectors = eigenvectors[:, idx]
 
             # Calculate orientation (perpendicular to streak)
-            streak_angle = np.degrees(
-                np.arctan2(eigenvectors[0, 0], eigenvectors[1, 0])
-            )
+            streak_angle = np.degrees(np.arctan2(eigenvectors[0, 0], eigenvectors[1, 0]))
             # The width direction is perpendicular to the streak
             width_angle = (streak_angle + 90) % 180
         except np.linalg.LinAlgError:
@@ -3476,9 +3314,7 @@ def measure_psf_fwhm_v26(data: np.ndarray, rotation: float | None = None) -> flo
         y1 = profile[left_idx - 1]
         y2 = profile[left_idx]
         # Linear interpolation on an upward crossing: x = x1 + (target_y - y1) * (x2 - x1) / (y2 - y1)
-        left_precise = (
-            (left_idx - 1) + (half_max - y1) / (y2 - y1) if y2 > y1 else float(left_idx)
-        )
+        left_precise = (left_idx - 1) + (half_max - y1) / (y2 - y1) if y2 > y1 else float(left_idx)
     else:
         left_precise = float(left_idx)
 
@@ -3487,9 +3323,7 @@ def measure_psf_fwhm_v26(data: np.ndarray, rotation: float | None = None) -> flo
         y1 = profile[right_idx]
         y2 = profile[right_idx + 1]
         # Linear interpolation on a downward crossing: x = x1 + (target_y - y1) * (x2 - x1) / (y2 - y1)
-        right_precise = (
-            right_idx + (half_max - y1) / (y2 - y1) if y1 > y2 else float(right_idx)
-        )
+        right_precise = right_idx + (half_max - y1) / (y2 - y1) if y1 > y2 else float(right_idx)
     else:
         right_precise = float(right_idx)
 
@@ -3513,8 +3347,6 @@ def streak_mask_effective_kernel(kernel: np.ndarray, threshold: float = 0.01) ->
     streak kernel ~30x, and the self-convolution of a ~85x207 kernel costs ~0.8 s
     each — recomputing it every call dominated runtime.
     """
-    from scipy import signal
-
     key = (kernel.shape, float(kernel.sum()), round(threshold, 6))
     cached = _EK_CACHE.get(key)
     if cached is not None:
@@ -3533,8 +3365,6 @@ def _cached_working_bg(working_data: np.ndarray) -> float:
     regions doesn't shift a 66 MP median, so computing it once per extraction
     (not ~30x) is exact enough and avoids ~0.8 s/call.
     """
-    import weakref
-
     key = id(working_data)
     ent = _BG_CACHE.get(key)
     if ent is not None and ent[0]() is working_data:
@@ -3583,6 +3413,7 @@ def mask_streak_region_v26(
 
     Returns:
         A tuple of the updated processed mask and updated working data.
+
     """
     if effective_kernel is None:
         effective_kernel = streak_mask_effective_kernel(kernel, threshold)
@@ -3632,6 +3463,7 @@ def is_valid_psf_v26(
 
     Returns:
         bool: True if the PSF is valid, False otherwise.
+
     """
     # Extract the corresponding region from the processed mask
     y_start = max(0, y_max - cutout_size)

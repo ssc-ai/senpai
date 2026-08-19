@@ -10,16 +10,26 @@ Given a SenpaiRun with multiple sidereal frames, this module:
 
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
+from astropy.stats import sigma_clipped_stats
 
-from senpai.core.config import get_config
+from senpai.core.config import settings
+from senpai.engine.detection.streak.sidereal_streak import (
+    detect_streaks_in_sidereal,
+    measure_streak_candidate_photometry,
+)
 from senpai.engine.models.senpai import CorrelatedStreak, SenpaiRun
+
+if TYPE_CHECKING:
+    from senpai.engine.models.senpai import SiderealFrame
+    from senpai.engine.photometry.color_terms import MultiBandCalibration
 
 logger = logging.getLogger(__name__)
 
 
-def _deserialize_multiband(raw):
+def _deserialize_multiband(raw: dict | None) -> "MultiBandCalibration | None":
     """Deserialize multiband_calibration from dict (photometry_summary) to MultiBandCalibration."""
     if raw is None:
         return None
@@ -48,15 +58,8 @@ def detect_streaks_in_sidereal_frames(
     Returns:
         Dictionary mapping frame index to ``(directional_excess_map, noise_std, best_angle_deg)``
         for use in multi-frame DE-based confirmation.
+
     """
-    from astropy.stats import sigma_clipped_stats
-
-    from senpai.engine.detection.streak.sidereal_streak import (
-        detect_streaks_in_sidereal,
-        measure_streak_candidate_photometry,
-    )
-
-    config = get_config()
     de_data: dict[int, tuple[np.ndarray, float, np.ndarray]] = {}
 
     for frame in senpai_run.sidereal_frames:
@@ -101,7 +104,7 @@ def detect_streaks_in_sidereal_frames(
                         zero_point_err=zp_err,
                         exposure_time=exposure_time,
                         fwhm=fwhm,
-                        gain=config.photometry.gain,
+                        gain=settings.photometry.gain,
                         multiband_calibration=multiband_cal,
                         observation_filter=obs_filter,
                     )
@@ -132,13 +135,7 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
     2. Filters out candidates matching the star streak angle+length (smeared stars)
     3. Stores remaining candidates on frame.streak_candidates
     """
-    from senpai.engine.detection.streak.sidereal_streak import (
-        detect_streaks_in_sidereal,
-        measure_streak_candidate_photometry,
-    )
-
-    config = get_config()
-    angle_tol = config.detection.streak_angle_tolerance_deg
+    angle_tol = settings.detection.streak_angle_tolerance_deg
 
     for frame in senpai_run.rate_track_frames:
         if frame.starfield is None or not frame.starfield.fit:
@@ -204,7 +201,7 @@ def detect_streaks_in_rate_frames(senpai_run: SenpaiRun) -> None:
                         zero_point_err=zp_err,
                         exposure_time=exposure_time,
                         fwhm=fwhm,
-                        gain=config.photometry.gain,
+                        gain=settings.photometry.gain,
                         multiband_calibration=multiband_cal,
                         observation_filter=obs_filter,
                     )
@@ -274,9 +271,8 @@ def correlate_streaks_across_frames(senpai_run: SenpaiRun) -> list[CorrelatedStr
 
     Returns a list of CorrelatedStreak objects.
     """
-    config = get_config()
-    angle_tol = config.detection.streak_angle_tolerance_deg
-    radius_fwhm = config.detection.streak_correlation_radius_fwhm
+    angle_tol = settings.detection.streak_angle_tolerance_deg
+    radius_fwhm = settings.detection.streak_correlation_radius_fwhm
 
     # Collect all frames with streak candidates, sorted by index
     frames_with_streaks = [f for f in senpai_run.sidereal_frames if f.streak_candidates]
@@ -478,7 +474,7 @@ def correlate_streaks_across_frames(senpai_run: SenpaiRun) -> list[CorrelatedStr
     return correlated
 
 
-def _single_frame_streaks(frames_with_streaks) -> list[CorrelatedStreak]:
+def _single_frame_streaks(frames_with_streaks: "list[SiderealFrame]") -> list[CorrelatedStreak]:
     """Wrap single-frame streaks as unconfirmed CorrelatedStreak entries."""
     result = []
     for frame in frames_with_streaks:
@@ -532,9 +528,8 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
     sign combinations are tried.  A match also resolves the streak's
     180-degree direction ambiguity.
     """
-    config = get_config()
-    angle_tol = config.detection.streak_angle_tolerance_deg
-    radius_fwhm = config.detection.streak_correlation_radius_fwhm
+    angle_tol = settings.detection.streak_angle_tolerance_deg
+    radius_fwhm = settings.detection.streak_correlation_radius_fwhm
 
     if not senpai_run.rate_track_frames or not senpai_run.sidereal_frames:
         return
@@ -608,9 +603,7 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
             rate_dec = (fm.track_rate_dec_arcsec_per_second or 0) if fm else 0
             if rate_ra or rate_dec:
                 fallback_rates = [
-                    (sr * rate_ra / 3600.0, sd * rate_dec / 3600.0)
-                    for sr in (1.0, -1.0)
-                    for sd in (1.0, -1.0)
+                    (sr * rate_ra / 3600.0, sd * rate_dec / 3600.0) for sr in (1.0, -1.0) for sd in (1.0, -1.0)
                 ]
 
         rate_hypotheses = [measured_rate] if measured_rate else fallback_rates
@@ -639,9 +632,7 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
                 continue
 
             ifov = None
-            if sid_frame.starfield.wcs_metadata and hasattr(
-                sid_frame.starfield.wcs_metadata, "x_ifov_arcsec"
-            ):
+            if sid_frame.starfield.wcs_metadata and hasattr(sid_frame.starfield.wcs_metadata, "x_ifov_arcsec"):
                 ifov = sid_frame.starfield.wcs_metadata.x_ifov_arcsec
 
             best = None  # (dist, sc, rate, pred_x, pred_y)
@@ -674,9 +665,7 @@ def correlate_rate_to_sidereal(senpai_run: SenpaiRun) -> None:
             # direction mapped through the WCS
             try:
                 step = 1.0  # seconds of motion for the direction vector
-                px2 = sid_wcs.all_world2pix(
-                    [[ra_pred + rate[0] * step, dec_pred + rate[1] * step]], 0
-                )
+                px2 = sid_wcs.all_world2pix([[ra_pred + rate[0] * step, dec_pred + rate[1] * step]], 0)
                 dx = float(px2[0][0]) - pred_x
                 dy = float(px2[0][1]) - pred_y
                 motion_angle = float(np.degrees(np.arctan2(dy, dx)))

@@ -5,7 +5,6 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from senpai.engine.models.senpai import SenpaiRunResult
 from senpai.engine.utils.file_io import load_senpai_run
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(verbose: bool = False) -> None:
-    """Setup logging configuration."""
+    """Configure logging for the export CLI."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -32,7 +31,7 @@ def setup_logging(verbose: bool = False) -> None:
 def export_single_run(
     run_path: str,
     output_dir: str,
-    collect_id: Optional[str] = None,
+    collect_id: str | None = None,
     write_png: bool = False,
     write_fits: bool = True,
     save_annotated_images: bool = False,
@@ -40,8 +39,8 @@ def export_single_run(
     snr_cut: float = 0.5,
     box_size: int = 4,
     streak_box_size: int = 10,
-    mask_radius: Optional[float] = None,
-    max_streak_length: Optional[float] = None,
+    mask_radius: float | None = None,
+    max_streak_length: float | None = None,
     apply_calibrations: bool = True,
     verbose: bool = False,
 ) -> None:
@@ -79,7 +78,7 @@ def export_single_run(
     logger.info("Export completed successfully")
 
 
-def _export_run_worker(args):
+def _export_run_worker(args: tuple) -> "dict | None":
     """Worker function for parallel export processing."""
     (
         run_file,
@@ -127,14 +126,14 @@ def _export_run_worker(args):
         logger.info(f"Successfully exported {collect_id}")
         return True, collect_id, None
     except Exception as e:
-        logger.error(f"Failed to export {collect_id}: {e}")
+        logger.exception("Failed to export")
         return False, collect_id, str(e)
 
 
 def export_folder(
     folder_path: str,
     output_dir: str,
-    max_runs: Optional[int] = None,
+    max_runs: int | None = None,
     workers: int = 1,
     write_png: bool = False,
     write_fits: bool = True,
@@ -143,8 +142,8 @@ def export_folder(
     snr_cut: float = 0.5,
     box_size: int = 4,
     streak_box_size: int = 10,
-    mask_radius: Optional[float] = None,
-    max_streak_length: Optional[float] = None,
+    mask_radius: float | None = None,
+    max_streak_length: float | None = None,
     apply_calibrations: bool = True,
     verbose: bool = False,
 ) -> None:
@@ -232,6 +231,7 @@ def export_folder(
                     successful_exports += 1
                 else:
                     failed_exports += 1
+                    logger.warning("Export of %s failed: %s", collect_id, error)
     else:
         # Sequential processing
         for args in worker_args:
@@ -240,6 +240,7 @@ def export_folder(
                 successful_exports += 1
             else:
                 failed_exports += 1
+                logger.warning("Export of %s failed: %s", collect_id, error)
 
     logger.info(f"Export completed. Successfully processed {successful_exports} runs, failed {failed_exports} runs.")
 
@@ -250,7 +251,7 @@ def split_dataset(
     train_ratio: float = 0.7,
     val_ratio: float = 0.2,
     test_ratio: float = 0.1,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
     image_pattern: str = "*.fits",
     verbose: bool = False,
 ) -> None:
@@ -274,17 +275,13 @@ def split_dataset(
         logger.info("Dataset split completed successfully")
         for split_name, image_ids in splits.items():
             logger.info(f"  {split_name}: {len(image_ids)} images")
-    except Exception as e:
-        logger.error(f"Failed to split dataset: {e}")
-        if verbose:
-            import traceback
-
-            traceback.print_exc()
+    except Exception:
+        logger.exception("Failed to split dataset")
         raise
 
 
 def main() -> None:
-    """Main CLI entry point."""
+    """Run the export CLI."""
     parser = argparse.ArgumentParser(
         description="Export SENPAI data to COCO format",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -434,12 +431,8 @@ Examples:
             )
     except KeyboardInterrupt:
         logger.info("Export interrupted by user")
-    except Exception as e:
-        logger.error(f"Export failed: {e}")
-        if args.verbose:
-            import traceback
-
-            traceback.print_exc()
+    except Exception:
+        logger.exception("Export failed")
         sys.exit(1)
 
 

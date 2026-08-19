@@ -58,12 +58,13 @@ def solve_rate_from_sidereal(
     Raises:
         WcsPropagationError: if the frame timing is degenerate (overlapping exposures) or the
             cross-correlation has no measurable streak -- no WCS can be propagated either way.
+
     """
     rate_exposure_time = float(rate_frame.frame.header.get("EXPTIME", 1))
     sidereal_exposure_time = float(sidereal_frame.frame.header.get("EXPTIME", 1))
-    inter_frame_gap_seconds = abs(
-        (sidereal_frame.timestamp - rate_frame.timestamp).total_seconds()
-    ) - 0.5 * (rate_exposure_time + sidereal_exposure_time)
+    inter_frame_gap_seconds = abs((sidereal_frame.timestamp - rate_frame.timestamp).total_seconds()) - 0.5 * (
+        rate_exposure_time + sidereal_exposure_time
+    )
 
     # This sidereal->rate shift is the anchor that carries the solved sidereal WCS into the
     # collect. A non-positive gap+0.5*rate_exposure means the sidereal and rate exposures overlap
@@ -98,16 +99,12 @@ def solve_rate_from_sidereal(
 
     # whopping bright streaks can mess with correlation
     if not is_synthetic:
-        rate_data, removed_streaks = remove_near_saturation_streaks(
-            rate_data, rate_frame.frame.data_type
-        )
+        rate_data, removed_streaks = remove_near_saturation_streaks(rate_data, rate_frame.frame.data_type)
         sidereal_data, removed_streaks = remove_n_brightest_streaks(sidereal_data, removed_streaks)
 
     rate_data = remove_border_crossing_streaks(rate_data)
     sidereal_data = remove_border_crossing_streaks(sidereal_data)
-    rate_data, removed_streaks = remove_near_saturation_streaks(
-        rate_data, rate_frame.frame.data_type
-    )
+    rate_data, removed_streaks = remove_near_saturation_streaks(rate_data, rate_frame.frame.data_type)
 
     logger.info("Cross correlating rate and sidereal frames")
 
@@ -158,13 +155,12 @@ def solve_rate_from_sidereal(
             plot_single_frame(
                 psf,
                 scale=False,
-                output_file=Path(settings.plotting.output_dir)
-                / f"{rate_frame.index}_streak_psf.png",
+                output_file=Path(settings.plotting.output_dir) / f"{rate_frame.index}_streak_psf.png",
             )
 
-        pixel_shift_rate_to_sidereal_xy = measure_psf_shift(
-            subcc, length_estimate_2, rotation_estimate_2, pixel_fwhm
-        )[::-1]
+        pixel_shift_rate_to_sidereal_xy = measure_psf_shift(subcc, length_estimate_2, rotation_estimate_2, pixel_fwhm)[
+            ::-1
+        ]
 
         # Validate this proposal
         search_radius_pixels = 10.0
@@ -188,9 +184,7 @@ def solve_rate_from_sidereal(
 
         valid = correlation > 0.9
         if not valid:
-            y_max, x_max = np.unravel_index(
-                np.argmax(cross_correlated_image), cross_correlated_image.shape
-            )
+            y_max, x_max = np.unravel_index(np.argmax(cross_correlated_image), cross_correlated_image.shape)
             mask = np.zeros_like(cross_correlated_image, dtype=bool)
             mask_kernel = rectangle_pyramoid(
                 length_estimate_2 * 1.2,
@@ -200,9 +194,7 @@ def solve_rate_from_sidereal(
                 halo_fwhm=4,
             )
 
-            mask, cross_correlated_image = mask_streak_region(
-                mask, cross_correlated_image, y_max, x_max, mask_kernel
-            )
+            mask, cross_correlated_image = mask_streak_region(mask, cross_correlated_image, y_max, x_max, mask_kernel)
 
     # Log the quality of this fit
     if best_correlation > 0.9:

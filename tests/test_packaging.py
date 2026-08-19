@@ -28,7 +28,7 @@ def _is_relative_to(path: Path, other: Path) -> bool:
 PACKAGE_DIR = constants.PACKAGE_DIR
 
 
-def test_package_dir_is_the_senpai_package():
+def test_package_dir_is_the_senpai_package() -> None:
     assert PACKAGE_DIR.name == "senpai"
     assert (PACKAGE_DIR / "core" / "constants.py").is_file()
 
@@ -37,7 +37,7 @@ def test_package_dir_is_the_senpai_package():
     "name",
     ["RESOURCES_DIR", "ASSETS_DIR", "DATA_DIR", "CONFIG_DIR", "APP_DIR", "APP_CONFIG_PATH"],
 )
-def test_shipped_paths_stay_inside_the_package(name):
+def test_shipped_paths_stay_inside_the_package(name) -> None:
     # These resolve into site-packages/ when anchored at the repo root, where
     # nothing exists. Anchor them at the package or they break when installed.
     assert _is_relative_to(getattr(constants, name), PACKAGE_DIR), f"{name} escapes the installed package"
@@ -50,20 +50,20 @@ def test_shipped_paths_stay_inside_the_package(name):
         "LOCAL_APP_LOCAL_ASTROMETRY_CONFIG_OVERRIDE",
     ],
 )
-def test_default_configs_are_shipped(name):
+def test_default_configs_are_shipped(name) -> None:
     # The API and CLI fall back to these with no --config; they must be in the
     # wheel, not merely in a checkout.
     assert getattr(constants, name).is_file()
 
 
 @pytest.mark.parametrize("name", ["CACHE_DIR", "LOG_DIR", "LOG_PATH"])
-def test_writable_paths_stay_outside_the_package(name):
+def test_writable_paths_stay_outside_the_package(name) -> None:
     # An installed package may sit on a read-only filesystem, and writing into
     # site-packages is wrong even where it is permitted.
     assert not _is_relative_to(getattr(constants, name), PACKAGE_DIR), f"{name} writes into the installed package"
 
 
-def test_cache_dir_honors_environment_override(monkeypatch, tmp_path):
+def test_cache_dir_honors_environment_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SENPAI_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("SENPAI_LOG_DIR", str(tmp_path / "logs"))
     expected_cache = tmp_path / "cache"
@@ -77,7 +77,7 @@ def test_cache_dir_honors_environment_override(monkeypatch, tmp_path):
         importlib.reload(constants)
 
 
-def test_openapi_example_needs_no_files_on_disk(monkeypatch):
+def test_openapi_example_needs_no_files_on_disk(monkeypatch: pytest.MonkeyPatch) -> None:
     # The /solve/sources example is built at import time by FastAPI's
     # ``Body(examples=...)``. Reading anything from disk there is what broke
     # installs; a literal cannot.

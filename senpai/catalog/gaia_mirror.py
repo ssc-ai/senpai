@@ -1,5 +1,7 @@
-"""Build a trimmed local Gaia DR3 mirror (G <= mag_limit) for offline catalog
-queries — the data-engineering side of [[project-local-gaia-mirror]].
+"""Build a trimmed local Gaia DR3 mirror, so catalog queries work offline.
+
+Keeps stars down to ``mag_limit``. The data-engineering side of
+[[project-local-gaia-mirror]].
 
 Online Gaia TAP fetches dominate the burr per-batch runtime (~120-170 s/batch).
 A trimmed all-sky mirror turns each fetch into a sub-second local read. Only the
@@ -24,6 +26,7 @@ import glob
 import json
 import logging
 import os
+import time
 
 import numpy as np
 
@@ -42,19 +45,34 @@ GAIA_DR3_NSOURCES = 1_811_709_771  # DR3 gaia_source row count (random_index ran
 from astroeasy.catalog.mirror import MIRROR_DTYPE  # noqa: E402
 
 _GAIA_COLS = [
-    "source_id", "ra", "dec",
-    "phot_g_mean_mag", "phot_bp_mean_mag", "phot_rp_mean_mag", "pmra", "pmdec",
+    "source_id",
+    "ra",
+    "dec",
+    "phot_g_mean_mag",
+    "phot_bp_mean_mag",
+    "phot_rp_mean_mag",
+    "pmra",
+    "pmdec",
 ]
 _FIELD_FROM_COL = {
-    "phot_g_mean_mag": "g", "phot_bp_mean_mag": "bp", "phot_rp_mean_mag": "rp",
-    "pmra": "pmra", "pmdec": "pmdec",
+    "phot_g_mean_mag": "g",
+    "phot_bp_mean_mag": "bp",
+    "phot_rp_mean_mag": "rp",
+    "pmra": "pmra",
+    "pmdec": "pmdec",
 }
 
 
 def download_chunks(
-    out_dir: str, mag_limit: float = 20.0, step: int = 5_000_000,
-    login_user: str | None = None, max_retries: int = 4, retry_wait: float = 30.0,
-    pause: float = 3.0, max_consecutive_failures: int = 6, job_timeout: float = 300.0,
+    out_dir: str,
+    mag_limit: float = 20.0,
+    step: int = 5_000_000,
+    login_user: str | None = None,
+    max_retries: int = 4,
+    retry_wait: float = 30.0,
+    pause: float = 3.0,
+    max_consecutive_failures: int = 6,
+    job_timeout: float = 300.0,
 ) -> None:
     """Download G<=mag_limit Gaia DR3 in random_index-tiled async chunks.
 
@@ -66,8 +84,6 @@ def download_chunks(
     still fails, skipped (logged) rather than crashing the whole multi-hour run —
     a later re-run picks up the gaps.
     """
-    import time
-
     from astroquery.gaia import Gaia
 
     Gaia.ROW_LIMIT = -1
@@ -89,7 +105,9 @@ def download_chunks(
             logger.critical(
                 "ABORTING: %d consecutive chunk failures — archive likely "
                 "throttling/down. %d/%d done. Re-run later to resume.",
-                consec_fail, done, nchunks,
+                consec_fail,
+                done,
+                nchunks,
             )
             break
         lo, hi = i * step, (i + 1) * step
@@ -107,11 +125,11 @@ def download_chunks(
 
                 _ex = _cf.ThreadPoolExecutor(max_workers=1)
                 try:
-                    tbl = _ex.submit(
-                        lambda: Gaia.launch_job_async(adql).get_results()
-                    ).result(timeout=job_timeout)
-                except _cf.TimeoutError:
-                    raise TimeoutError(f"job exceeded {job_timeout:.0f}s")
+                    tbl = _ex.submit(lambda adql=adql: Gaia.launch_job_async(adql).get_results()).result(
+                        timeout=job_timeout
+                    )
+                except _cf.TimeoutError as exc:
+                    raise TimeoutError(f"job exceeded {job_timeout:.0f}s") from exc
                 finally:
                     _ex.shutdown(wait=False)  # abandon a stuck worker thread
                 arr = np.empty(len(tbl), dtype=MIRROR_DTYPE)
@@ -133,7 +151,12 @@ def download_chunks(
                 consec_fail = 0
                 logger.info(
                     "chunk %d/%d: %d stars (random_index %d-%d) -> %s",
-                    i + 1, nchunks, len(arr), lo, hi, os.path.basename(path),
+                    i + 1,
+                    nchunks,
+                    len(arr),
+                    lo,
+                    hi,
+                    os.path.basename(path),
                 )
                 if pause > 0:
                     time.sleep(pause)  # be a polite citizen between jobs
@@ -142,19 +165,29 @@ def download_chunks(
                 if attempt < max_retries:
                     logger.warning(
                         "chunk %d/%d attempt %d/%d failed (%s); retrying in %.0fs",
-                        i + 1, nchunks, attempt, max_retries, e, retry_wait,
+                        i + 1,
+                        nchunks,
+                        attempt,
+                        max_retries,
+                        e,
+                        retry_wait,
                     )
                     time.sleep(retry_wait)
                 else:
                     failed += 1
                     consec_fail += 1
-                    logger.error(
-                        "chunk %d/%d FAILED after %d attempts (%s); skipping — "
-                        "re-run later to fill the gap", i + 1, nchunks, max_retries, e,
+                    logger.exception(
+                        "chunk %d/%d FAILED after %d attempts; skipping — re-run later to fill the gap",
+                        i + 1,
+                        nchunks,
+                        max_retries,
                     )
     logger.info(
         "download pass complete: %d/%d chunks present, %d still failing in %s",
-        done, nchunks, failed, out_dir,
+        done,
+        nchunks,
+        failed,
+        out_dir,
     )
 
 
@@ -180,15 +213,14 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
         order = np.argsort(tid, kind="stable")
         a, tid = a[order], tid[order]
         uniq, starts = np.unique(tid, return_index=True)
-        starts = list(starts) + [len(a)]
+        starts = [*list(starts), len(a)]
         for j, t in enumerate(uniq):
-            part = a[starts[j]:starts[j + 1]]
+            part = a[starts[j] : starts[j + 1]]
             with open(os.path.join(mirror_dir, f"tile_{int(t):05d}.bin"), "ab") as fh:
                 part.tofile(fh)
         logger.info("ingested chunk %d/%d (%s)", ci + 1, len(chunk_files), os.path.basename(cf))
 
-    index = {"hpx_level": HPX_LEVEL, "shift": HPX_SHIFT,
-             "dtype": MIRROR_DTYPE.descr, "tiles": {}}
+    index = {"hpx_level": HPX_LEVEL, "shift": HPX_SHIFT, "dtype": MIRROR_DTYPE.descr, "tiles": {}}
     total = 0
     for tf in sorted(glob.glob(os.path.join(mirror_dir, "tile_*.bin"))):
         arr = np.fromfile(tf, dtype=MIRROR_DTYPE)
@@ -197,9 +229,11 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
         t = int(os.path.basename(tf)[5:-4])
         index["tiles"][str(t)] = {
             "file": os.path.basename(tf),
-            "ra_min": float(arr["ra"].min()), "ra_max": float(arr["ra"].max()),
-            "dec_min": float(arr["dec"].min()), "dec_max": float(arr["dec"].max()),
-            "n": int(len(arr)),
+            "ra_min": float(arr["ra"].min()),
+            "ra_max": float(arr["ra"].max()),
+            "dec_min": float(arr["dec"].min()),
+            "dec_max": float(arr["dec"].max()),
+            "n": len(arr),
         }
         total += len(arr)
     with open(os.path.join(mirror_dir, "index.json"), "w") as fh:
@@ -208,6 +242,7 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Gaia-mirror CLI: download chunks, or ingest downloaded ones."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser(description="Build/ingest a local Gaia DR3 mirror.")
     sub = p.add_subparsers(dest="cmd", required=True)

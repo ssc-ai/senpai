@@ -56,22 +56,12 @@ from senpai.catalog import query_catalog
 
 # Query SDSS catalog
 stars = query_catalog(
-    catalog_type="sdss",
-    ra_center=180.0,
-    dec_center=0.0,
-    radius_deg=1.0,
-    faint_lim=20.0,
-    bright_lim=10.0
+    catalog_type="sdss", ra_center=180.0, dec_center=0.0, radius_deg=1.0, faint_lim=20.0, bright_lim=10.0
 )
 
 # Query Gaia catalog
 stars = query_catalog(
-    catalog_type="gaia",
-    ra_center=180.0,
-    dec_center=0.0,
-    radius_deg=1.0,
-    faint_lim=18.0,
-    bright_lim=5.0
+    catalog_type="gaia", ra_center=180.0, dec_center=0.0, radius_deg=1.0, faint_lim=18.0, bright_lim=5.0
 )
 
 # Query SSTRC7 catalog (requires local files)
@@ -82,7 +72,7 @@ stars = query_catalog(
     radius_deg=1.0,
     faint_lim=18.0,
     bright_lim=5.0,
-    catalog_path="/path/to/sstrc7"
+    catalog_path="/path/to/sstrc7",
 )
 ```
 
@@ -92,13 +82,13 @@ All catalog queries return stars in a standardized format:
 
 ```python
 {
-    'ra': float,        # Right ascension in degrees
-    'dec': float,       # Declination in degrees
-    'mag': float,       # Magnitude in primary band
-    'mag_err': float,   # Magnitude error
-    'band': str,        # Magnitude band name
-    'catalog_id': str,  # Unique identifier in catalog
-    'additional_data': dict  # Catalog-specific fields
+    "ra": float,  # Right ascension in degrees
+    "dec": float,  # Declination in degrees
+    "mag": float,  # Magnitude in primary band
+    "mag_err": float,  # Magnitude error
+    "band": str,  # Magnitude band name
+    "catalog_id": str,  # Unique identifier in catalog
+    "additional_data": dict,  # Catalog-specific fields
 }
 ```
 

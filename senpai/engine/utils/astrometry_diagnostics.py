@@ -9,9 +9,7 @@ from senpai.engine.models.astrometry import WCSModel
 logger = logging.getLogger(__name__)
 
 
-def calculate_residual_errors(
-    wcs_model: WCSModel, stars_with_radec_xy: list[tuple]
-) -> dict:
+def calculate_residual_errors(wcs_model: WCSModel, stars_with_radec_xy: list[tuple]) -> dict:
     """Calculate residual errors between detected and WCS-predicted positions.
 
     Args:
@@ -20,6 +18,7 @@ def calculate_residual_errors(
 
     Returns:
         dict with 'x_errors', 'y_errors', 'radial_errors' and statistics
+
     """
     if not stars_with_radec_xy:
         return {}
@@ -45,7 +44,7 @@ def calculate_residual_errors(
     y_errors = np.array(y_errors)
     radial_errors = np.array(radial_errors)
 
-    def calc_stats(errors):
+    def calc_stats(errors: np.ndarray) -> dict[str, float]:
         return {
             "min": float(np.min(errors)),
             "max": float(np.max(errors)),
@@ -68,12 +67,13 @@ def calculate_residual_errors(
     }
 
 
-def log_residual_errors(phase_name: str, error_dict: dict):
+def log_residual_errors(phase_name: str, error_dict: dict) -> None:
     """Log residual error statistics in a formatted way.
 
     Args:
         phase_name: Name of the phase (e.g., "Phase 1 - Before SIP fit")
         error_dict: Dictionary returned from calculate_residual_errors()
+
     """
     if not error_dict:
         logger.warning(f"{phase_name}: No error data available")
