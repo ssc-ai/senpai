@@ -674,7 +674,7 @@ def _find_master_calibration(
                             value = value.lower().strip()
                         calib_metadata[header_key] = value
                 logger.info(f"  {calib_file.name}: {calib_metadata}")
-        except:
+        except Exception:
             logger.info(f"  {calib_file.name}: <could not read headers>")
 
     return None

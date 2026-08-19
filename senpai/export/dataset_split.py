@@ -192,8 +192,8 @@ class DatasetSplitter:
                                 return datetime.strptime(dt_str, fmt)
                             except ValueError:
                                 continue
-                    except:
-                        pass
+                    except Exception:
+                        logger.debug("Could not parse a datetime from the filename", exc_info=True)
 
             # If no datetime can be extracted, use a default value
             logger.warning(f"No datetime found for image {img.get('file_name', 'unknown')}, using default")

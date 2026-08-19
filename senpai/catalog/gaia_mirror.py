@@ -125,7 +125,9 @@ def download_chunks(
 
                 _ex = _cf.ThreadPoolExecutor(max_workers=1)
                 try:
-                    tbl = _ex.submit(lambda: Gaia.launch_job_async(adql).get_results()).result(timeout=job_timeout)
+                    tbl = _ex.submit(lambda adql=adql: Gaia.launch_job_async(adql).get_results()).result(
+                        timeout=job_timeout
+                    )
                 except _cf.TimeoutError:
                     raise TimeoutError(f"job exceeded {job_timeout:.0f}s")
                 finally:

@@ -703,7 +703,7 @@ def _confirm_single_candidate(
                 ra_list.append(float(sky.ra.deg))
                 dec_list.append(float(sky.dec.deg))
             except Exception:
-                pass
+                logger.debug("Could not convert a stamp position to sky coordinates", exc_info=True)
 
     # Compute RA/Dec rates from multi-frame sky positions
     rate_ra = None
@@ -782,7 +782,7 @@ def _confirm_single_candidate(
                 else:
                     multiband = multiband_raw
             except Exception:
-                pass
+                logger.debug("Multiband calibration could not be deserialized", exc_info=True)
         if zp is not None:
             from senpai.core.config import settings
             from senpai.engine.detection.streak.sidereal_streak import (
@@ -1328,7 +1328,7 @@ def _propagate_to_frame_candidates(
                 ra_val = float(sky.ra.deg)
                 dec_val = float(sky.dec.deg)
             except Exception:
-                pass
+                logger.debug("Could not convert a stamp position to sky coordinates", exc_info=True)
 
         rate_arcsec = None
         if frame.starfield and frame.starfield.wcs_metadata:
@@ -1375,7 +1375,7 @@ def _propagate_to_frame_candidates(
                             else multiband_raw
                         )
                     except Exception:
-                        pass
+                        logger.debug("Multiband calibration could not be deserialized", exc_info=True)
 
                 tmp = SC(
                     x=float(streak_x),
@@ -1405,7 +1405,7 @@ def _propagate_to_frame_candidates(
                     cal_mags = tmp.calibrated_magnitudes
                     mag_errs = tmp.magnitude_errs
                 except Exception:
-                    pass
+                    logger.debug("Calibrated magnitudes unavailable for this candidate", exc_info=True)
 
         detection = SatelliteInImage(
             x=float(streak_x),

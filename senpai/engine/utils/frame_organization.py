@@ -67,7 +67,7 @@ def _parse_time_string(time_str: str) -> tuple[int, int, int, int] | None:
         arrow_time = arrow.get(time_str)
         return (arrow_time.hour, arrow_time.minute, arrow_time.second, arrow_time.microsecond)
     except Exception:
-        pass
+        logger.debug("Could not parse a time string with the broad parser", exc_info=True)
 
     return None
 

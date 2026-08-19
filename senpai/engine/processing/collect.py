@@ -646,7 +646,7 @@ def _process_senpai_collect(
                         ra_val = float(sky.ra.deg)
                         dec_val = float(sky.dec.deg)
                     except Exception:
-                        pass
+                        logger.debug("Could not convert satellite pixel position to sky coordinates", exc_info=True)
                 satellites.append(
                     SatelliteInImage(
                         x=det.x,
@@ -763,7 +763,7 @@ def _process_senpai_collect(
                 fwhm = frame.starfield.detection_metadata.pixel_fwhm
             radius = 2 * fwhm
 
-            def _near_streak(d: SatelliteInImage, s: CorrelatedStreak) -> bool:
+            def _near_streak(d: SatelliteInImage, s: CorrelatedStreak, radius: float) -> bool:
                 # Distance from the point to the streak SEGMENT (not just its
                 # center) so detections anywhere along the streak are caught.
                 dx, dy = d.x - s.x, d.y - s.y
@@ -779,7 +779,7 @@ def _process_senpai_collect(
             cleaned = []
             for d in frame.detections.detections:
                 if getattr(d, "detection_type", None) == "point":
-                    if any(_near_streak(d, s) for s in streak_dets):
+                    if any(_near_streak(d, s, radius) for s in streak_dets):
                         continue
                 cleaned.append(d)
             n_removed = len(frame.detections.detections) - len(cleaned)

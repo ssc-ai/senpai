@@ -1202,7 +1202,7 @@ def load_position_statistics_from_files(
                     grid_pos = (round(ra, 2), round(dec, 2))
                     incomplete_positions[grid_pos] = "corrupted JSON file"
             except Exception:
-                pass
+                logger.debug("Could not record an incomplete position", exc_info=True)
         except Exception as e:
             logger.warning(f"Failed to load position file {pos_file}: {e}. Will reprocess.")
             pos_file.unlink(missing_ok=True)
@@ -1218,7 +1218,7 @@ def load_position_statistics_from_files(
                     grid_pos = (round(ra, 2), round(dec, 2))
                     incomplete_positions[grid_pos] = f"load error: {e!s}"
             except Exception:
-                pass
+                logger.debug("Could not record an incomplete position", exc_info=True)
 
     return statistics, parameters or {}, processed_positions, incomplete_positions
 

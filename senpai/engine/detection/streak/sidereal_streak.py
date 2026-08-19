@@ -905,7 +905,7 @@ def _trace_and_build_candidate(
             candidate.ra = float(sky.ra.deg)
             candidate.dec = float(sky.dec.deg)
         except Exception:
-            pass
+            logger.debug("Could not convert candidate pixel position to sky coordinates", exc_info=True)
 
     # Rate estimate
     if exposure_time and exposure_time > 0:

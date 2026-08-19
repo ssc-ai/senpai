@@ -548,7 +548,7 @@ def _rate_scan_candidate(
                 ra_list.append(float(sky.ra.deg))
                 dec_list.append(float(sky.dec.deg))
             except Exception:
-                pass
+                logger.debug("Could not convert a scan position to sky coordinates", exc_info=True)
 
     if len(ra_list) >= 2:
         try:
@@ -614,7 +614,7 @@ def _rate_scan_candidate(
                         else multiband_raw
                     )
                 except Exception:
-                    pass
+                    logger.debug("Multiband calibration could not be deserialized", exc_info=True)
             phot_candidate = StreakCandidate(
                 x=float(cx),
                 y=float(cy),
@@ -871,7 +871,7 @@ def _propagate_to_frames(
                 ra_val = float(sky.ra.deg)
                 dec_val = float(sky.dec.deg)
             except Exception:
-                pass
+                logger.debug("Could not convert a scan position to sky coordinates", exc_info=True)
 
         rate_arcsec = None
         if frame.starfield and frame.starfield.wcs_metadata:
