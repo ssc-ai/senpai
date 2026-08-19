@@ -636,7 +636,7 @@ def main() -> None:
                     group_output = args.output
 
                 # Create master flat from this group's files
-                master_flat, header = _create_master_flat_from_files(
+                master_flat, _header = _create_master_flat_from_files(
                     group_files,
                     group_output,
                     args.min_median_counts,

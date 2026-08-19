@@ -598,7 +598,7 @@ def main() -> None:
                     group_output = args.output
 
                 # Create master dark from this group's files
-                master_dark, header = _create_master_dark_from_files(
+                master_dark, _header = _create_master_dark_from_files(
                     group_files,
                     group_output,
                     args.max_percentile_counts,

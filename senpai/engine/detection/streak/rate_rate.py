@@ -721,7 +721,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
         fwhm=streak_fwhm,
     )
 
-    frame_extraction_measurement, psf, fwhm = extract_streak_dims_robust(
+    frame_extraction_measurement, psf, _fwhm = extract_streak_dims_robust(
         rate_b_data,
         n_streaks=5,
         rotation=streak_orientation_expected_from_shift,

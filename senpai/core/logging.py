@@ -9,7 +9,7 @@ import contextlib
 import logging
 import logging.config
 import logging.handlers
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from senpai.core.constants import LOG_PATH
@@ -38,7 +38,7 @@ class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
             super().rotate(source, dest)
 
 
-class LogMode(str, Enum):
+class LogMode(StrEnum):
     """Which logging preset to apply."""
 
     LOCAL = "local"

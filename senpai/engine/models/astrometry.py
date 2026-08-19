@@ -10,7 +10,7 @@ and consumers read instead of recomputing it.
 
 import logging
 import warnings
-from enum import Enum
+from enum import StrEnum
 
 import astropy.units as u
 import numpy as np
@@ -25,7 +25,7 @@ from senpai.core.config import AppConfig
 logger = logging.getLogger(__name__)
 
 
-class WCSStatus(str, Enum):
+class WCSStatus(StrEnum):
     """How a frame's WCS was obtained, or why it has none."""
 
     NO_WCS = "NO_WCS"
