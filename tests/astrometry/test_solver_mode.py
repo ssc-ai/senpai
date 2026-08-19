@@ -7,6 +7,8 @@ exactly as before, and non-dotnet modes must be a clean opt-in.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -124,22 +126,40 @@ class TestCascadeEndToEnd:
         mirror = tmp_path / "mirror"
         mirror.mkdir()
         arr.tofile(mirror / "tile.bin")
-        (mirror / "index.json").write_text(json.dumps({"tiles": {"t": {
-            "file": "tile.bin", "ra_min": float(ra.min()), "ra_max": float(ra.max()),
-            "dec_min": float(dec.min()), "dec_max": float(dec.max())}}}))
+        (mirror / "index.json").write_text(
+            json.dumps(
+                {
+                    "tiles": {
+                        "t": {
+                            "file": "tile.bin",
+                            "ra_min": float(ra.min()),
+                            "ra_max": float(ra.max()),
+                            "dec_min": float(dec.min()),
+                            "dec_max": float(dec.max()),
+                        }
+                    }
+                }
+            )
+        )
         load_mirror_index.cache_clear()
 
         px, py = truth.all_world2pix(ra, dec, 0)
         ok = (px > 10) & (px < self.W - 10) & (py > 10) & (py < self.H - 10) & (g < 14.0)
         sources = StarListImage(
             detections=[
-                StarInImage(x=float(x + rng.normal(0, 0.3)), y=float(y + rng.normal(0, 0.3)),
-                            counts=float(10 ** (-0.4 * (m - 20.0))))
+                StarInImage(
+                    x=float(x + rng.normal(0, 0.3)),
+                    y=float(y + rng.normal(0, 0.3)),
+                    counts=float(10 ** (-0.4 * (m - 20.0))),
+                )
                 for x, y, m in zip(px[ok], py[ok], g[ok], strict=True)
             ],
             image_metadata=ImageMetadata(
-                image_id="synthetic", width=self.W, height=self.H,
-                boresight_ra=self.RA0 + 0.05, boresight_dec=self.DEC0 - 0.04,
+                image_id="synthetic",
+                width=self.W,
+                height=self.H,
+                boresight_ra=self.RA0 + 0.05,
+                boresight_dec=self.DEC0 - 0.04,
             ),
         )
         return sources, str(mirror)
@@ -152,10 +172,12 @@ class TestCascadeEndToEnd:
         sources, mirror = synthetic
         block = dict(
             LEGACY_ASTROMETRY_BLOCK,
-            min_width_degrees=1.0, max_width_degrees=1.3,  # truth fov ~1.14 deg
+            min_width_degrees=1.0,
+            max_width_degrees=1.3,  # truth fov ~1.14 deg
         )
         stub_config.astrometry = AstrometryConfig(
-            **block, solver_mode="tetra3",
+            **block,
+            solver_mode="tetra3",
             fast_solve={"mirror_dir": mirror},
         )
         starfield = solve_field(sources)
@@ -165,13 +187,16 @@ class TestCascadeEndToEnd:
         # WCS lands within arcseconds of the truth center.
         from astropy.wcs import WCS as AWCS
 
-        hdr = {k: v for k, v in starfield.wcs.model_dump().items()
-               if v is not None and k not in ("NAXIS1", "NAXIS2")}
+        hdr = {k: v for k, v in starfield.wcs.model_dump().items() if v is not None and k not in ("NAXIS1", "NAXIS2")}
         w = AWCS(hdr)
         ra_c, dec_c = w.all_pix2world(self.W / 2, self.H / 2, 0)
         import math
-        err_asec = math.hypot(
-            (float(ra_c) - self.RA0) * math.cos(math.radians(self.DEC0)),
-            float(dec_c) - self.DEC0,
-        ) * 3600
+
+        err_asec = (
+            math.hypot(
+                (float(ra_c) - self.RA0) * math.cos(math.radians(self.DEC0)),
+                float(dec_c) - self.DEC0,
+            )
+            * 3600
+        )
         assert err_asec < 5.0

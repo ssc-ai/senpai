@@ -32,8 +32,7 @@ ZP_MIN = 26.1  # photometric-ish frames only
 # every panel's stamps carry comparable per-star SNR (the SAT_PEAK guard
 # still rejects saturation). Equal mag ranges make the short-exposure
 # stacks noise-dominated and bias any width estimate upward.
-MAG_RANGES = {1: (10.0, 13.0), 3: (10.5, 13.5), 5: (11.0, 14.0),
-              10: (11.5, 14.5)}
+MAG_RANGES = {1: (10.0, 13.0), 3: (10.5, 13.5), 5: (11.0, 14.0), 10: (11.5, 14.5)}
 SAT_PEAK = 40000.0  # raw ADU; stay well below the 65535 ceiling
 ISO_RADIUS = 60.0  # px — no brighter-or-comparable neighbor inside this
 MAX_STARS = 250
@@ -46,8 +45,10 @@ def collect_frames(night_dir: Path):
     out = []
     for fn in glob.glob(str(night_dir / "batches" / "*" / "senpai_*.json")):
         try:
-            run = json.load(open(fn))
-        except Exception:
+            with open(fn) as fh:
+                run = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"skipping unreadable {fn}: {exc}", file=sys.stderr)
             continue
         for fr in run.get("sidereal_frames", []):
             fmd = fr.get("frame_metadata") or {}
@@ -65,17 +66,16 @@ def collect_frames(night_dir: Path):
             zp = ps.get("zero_point")
             if zp is None or zp < ZP_MIN:
                 continue
-            out.append((b, float(dm["pixel_fwhm"]), float(zp), path,
-                        sf.get("catalog_stars") or [],
-                        datetime.fromisoformat(ts)))
+            out.append(
+                (b, float(dm["pixel_fwhm"]), float(zp), path, sf.get("catalog_stars") or [], datetime.fromisoformat(ts))
+            )
     return out
 
 
 def pick_tight_set(frames):
     """One frame per bucket minimizing the total time span — a single
     atmospheric moment, so exposure time is the only variable."""
-    by_bucket = {b: [f for f in frames if f[0] == b and len(f[4]) > 300]
-                 for b in BUCKETS}
+    by_bucket = {b: [f for f in frames if f[0] == b and len(f[4]) > 300] for b in BUCKETS}
     if any(not v for v in by_bucket.values()):
         missing = [b for b, v in by_bucket.items() if not v]
         raise SystemExit(f"no candidate frames for buckets: {missing}")
@@ -84,13 +84,12 @@ def pick_tight_set(frames):
         t0 = anchor[5]
         pick = {BUCKETS[-1]: anchor}
         for b in BUCKETS[:-1]:
-            pick[b] = min(by_bucket[b],
-                          key=lambda f: abs((f[5] - t0).total_seconds()))
+            pick[b] = min(by_bucket[b], key=lambda f: abs((f[5] - t0).total_seconds()))
         ts = [pick[b][5] for b in BUCKETS]
         span = (max(ts) - min(ts)).total_seconds()
         if best_span is None or span < best_span:
             best, best_span = pick, span
-    print(f"tightest set spans {best_span/60:.1f} min")
+    print(f"tightest set spans {best_span / 60:.1f} min")
     return best
 
 
@@ -98,11 +97,9 @@ def stack_psf(path, stars, fwhm, mag_range):
     data = fits.getdata(path).astype(np.float64)
     h, w = data.shape
 
-    keep = [s for s in stars
-            if s.get("x") is not None and s.get("y") is not None]
+    keep = [s for s in stars if s.get("x") is not None and s.get("y") is not None]
     xy = np.array([(s["x"], s["y"]) for s in keep])
-    mags = np.array([s.get("magnitude") if s.get("magnitude") is not None
-                     else np.inf for s in keep])
+    mags = np.array([s.get("magnitude") if s.get("magnitude") is not None else np.inf for s in keep])
     tree = cKDTree(xy)
 
     stamps = []
@@ -119,11 +116,10 @@ def stack_psf(path, stars, fwhm, mag_range):
         neigh = tree.query_ball_point((x, y), ISO_RADIUS)
         if any(j != i and mags[j] < mags[i] + 2.0 for j in neigh):
             continue
-        xi, yi = int(round(x)), int(round(y))
-        st = data[yi - HALF: yi + HALF + 1, xi - HALF: xi + HALF + 1].copy()
+        xi, yi = round(x), round(y)
+        st = data[yi - HALF : yi + HALF + 1, xi - HALF : xi + HALF + 1].copy()
         # local background: median of the stamp's border ring
-        ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(),
-                               st[:, 0:4].ravel(), st[:, -4:].ravel()])
+        ring = np.concatenate([st[0:4].ravel(), st[-4:].ravel(), st[:, 0:4].ravel(), st[:, -4:].ravel()])
         st -= np.median(ring)
         if st.max() > SAT_PEAK or st.max() <= 0:
             continue
@@ -151,10 +147,16 @@ def cut_fwhm(profile):
         return float("nan")
     lo, hi = above[0], above[-1]
     # linear interpolation at both edges
-    left = lo - (profile[lo] - half) / (profile[lo] - profile[lo - 1]) \
-        if lo > 0 and profile[lo] != profile[lo - 1] else float(lo)
-    right = hi + (profile[hi] - half) / (profile[hi] - profile[hi + 1]) \
-        if hi < len(profile) - 1 and profile[hi] != profile[hi + 1] else float(hi)
+    left = (
+        lo - (profile[lo] - half) / (profile[lo] - profile[lo - 1])
+        if lo > 0 and profile[lo] != profile[lo - 1]
+        else float(lo)
+    )
+    right = (
+        hi + (profile[hi] - half) / (profile[hi] - profile[hi + 1])
+        if hi < len(profile) - 1 and profile[hi] != profile[hi + 1]
+        else float(hi)
+    )
     return right - left
 
 
@@ -184,36 +186,40 @@ def main():
             ax_im.set_title(f"{b} s — too few stars")
             continue
         fx, fy = moment_fwhm(psf)
-        im = ax_im.imshow(np.arcsinh(psf / 0.02), origin="lower",
-                          extent=extent, cmap="inferno")
-        ax_im.contour(np.linspace(-HALF, HALF, STAMP),
-                      np.linspace(-HALF, HALF, STAMP),
-                      psf, levels=[0.5], colors="cyan", linewidths=1.0)
-        ax_im.set_title(f"{b} s — {when:%H:%M} UTC   ({n} stars)\n"
-                        f"FWHM x={fx:.1f}px  y={fy:.1f}px", fontsize=11)
-        ax_im.set_xlim(-40, 40); ax_im.set_ylim(-40, 40)
+        ax_im.imshow(np.arcsinh(psf / 0.02), origin="lower", extent=extent, cmap="inferno")
+        ax_im.contour(
+            np.linspace(-HALF, HALF, STAMP),
+            np.linspace(-HALF, HALF, STAMP),
+            psf,
+            levels=[0.5],
+            colors="cyan",
+            linewidths=1.0,
+        )
+        ax_im.set_title(f"{b} s — {when:%H:%M} UTC   ({n} stars)\nFWHM x={fx:.1f}px  y={fy:.1f}px", fontsize=11)
+        ax_im.set_xlim(-40, 40)
+        ax_im.set_ylim(-40, 40)
         ax_im.set_xlabel("Δx (px)")
         if col == 0:
             ax_im.set_ylabel("Δy (px)")
 
-        ax_cut.plot(np.arange(STAMP) - HALF, psf[HALF, :], "-",
-                    color="tab:red", label="x cut")
-        ax_cut.plot(np.arange(STAMP) - HALF, psf[:, HALF], "-",
-                    color="tab:blue", label="y cut")
+        ax_cut.plot(np.arange(STAMP) - HALF, psf[HALF, :], "-", color="tab:red", label="x cut")
+        ax_cut.plot(np.arange(STAMP) - HALF, psf[:, HALF], "-", color="tab:blue", label="y cut")
         ax_cut.axhline(0.5, color="gray", ls=":", lw=1)
-        ax_cut.set_xlim(-40, 40); ax_cut.set_ylim(-0.05, 1.05)
+        ax_cut.set_xlim(-40, 40)
+        ax_cut.set_ylim(-0.05, 1.05)
         ax_cut.set_xlabel("Δ (px)")
         if col == 0:
             ax_cut.set_ylabel("normalized profile")
             ax_cut.legend(loc="upper right", fontsize=9)
         ax_cut.grid(alpha=0.3)
-        print(f"{b:>3}s: {path.split('/')[-1]} n={n} det_fwhm={fwhm:.1f} "
-              f"stack FWHM x={fx:.1f} y={fy:.1f} zp={zp:.2f}")
+        print(f"{b:>3}s: {path.split('/')[-1]} n={n} det_fwhm={fwhm:.1f} stack FWHM x={fx:.1f} y={fy:.1f} zp={zp:.2f}")
 
     fig.suptitle(
         f"{night_dir.name}: empirical PSF vs exposure time "
         "(median stack of isolated unsaturated stars, single frame per panel; "
-        "cyan = 50% contour)", fontsize=13)
+        "cyan = 50% contour)",
+        fontsize=13,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(out_path, dpi=130)
     print(f"wrote {out_path}")
