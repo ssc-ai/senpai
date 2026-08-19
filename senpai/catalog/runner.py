@@ -1047,10 +1047,11 @@ def _examine_sdss_catalog() -> bool:
             return False
 
         logger.info("SDSS catalog connectivity confirmed")
-        return True
     except Exception:
         logger.exception("SDSS catalog connectivity test failed")
         return False
+    else:
+        return True
 
 
 def _examine_gaia_catalog() -> bool:
@@ -1067,10 +1068,11 @@ def _examine_gaia_catalog() -> bool:
             return False
 
         logger.info("Gaia catalog connectivity confirmed")
-        return True
     except Exception:
         logger.exception("Gaia catalog connectivity test failed")
         return False
+    else:
+        return True
 
 
 def enforce_catalog() -> None:

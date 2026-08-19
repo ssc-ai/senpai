@@ -778,9 +778,10 @@ def _process_senpai_collect(
 
             cleaned = []
             for d in frame.detections.detections:
-                if getattr(d, "detection_type", None) == "point":
-                    if any(_near_streak(d, s, radius) for s in streak_dets):
-                        continue
+                if getattr(d, "detection_type", None) == "point" and any(
+                    _near_streak(d, s, radius) for s in streak_dets
+                ):
+                    continue
                 cleaned.append(d)
             n_removed = len(frame.detections.detections) - len(cleaned)
             if n_removed:

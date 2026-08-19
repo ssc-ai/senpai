@@ -184,9 +184,10 @@ def estimate_fwhm(
             logger.debug(f"Discarding pathological FWHM estimate: {fwhm:.3f} pixels")
             return None
 
-        return fwhm
     except RuntimeError:
         return None
+    else:
+        return fwhm
 
 
 def detect_sources_classic(

@@ -2198,9 +2198,10 @@ def _estimate_simple_limiting_magnitude(
                     return None
 
                 logger.debug(f"No valid bins found for {target_completeness:.2f} completeness calculation")
-                return None
             except Exception as e:
                 logger.debug(f"Completeness limit calculation failed for target {target_completeness}: {e}")
+                return None
+            else:
                 return None
 
         # Calculate limits at different completeness levels
@@ -2541,10 +2542,14 @@ def calculate_star_snrs_with_aperture_photometry(
     positions: list[tuple[float, float]] = []
 
     for star in catalog_stars:
-        if star.x is not None and star.y is not None:
-            if margin <= star.x < width - margin and margin <= star.y < height - margin:
-                valid_stars.append(star)
-                positions.append((star.x, star.y))
+        if (
+            star.x is not None
+            and star.y is not None
+            and margin <= star.x < width - margin
+            and margin <= star.y < height - margin
+        ):
+            valid_stars.append(star)
+            positions.append((star.x, star.y))
 
     if not valid_stars:
         return []

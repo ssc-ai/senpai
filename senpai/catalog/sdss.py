@@ -149,11 +149,11 @@ def query_by_ra_dec_bounds(
             }
             stars.append(star)
 
-        return stars
-
     except Exception:
         logger.exception("SDSS query failed")
         return []
+    else:
+        return stars
 
 
 def query_by_bounds(
@@ -358,11 +358,11 @@ def query_by_bounds(
             }
             stars.append(star)
 
-        return stars
-
     except Exception:
         logger.exception("SDSS query failed")
         return []
+    else:
+        return stars
 
 
 def query_by_los_radec_with_rotation(

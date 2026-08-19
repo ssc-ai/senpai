@@ -114,10 +114,14 @@ def plot_overs(
                 logger.debug(f"Using SIP order from model: {sip_order}")
 
             # Also check WCS object directly
-            if sip_order == 0 and hasattr(wcs_with_sip, "sip") and wcs_with_sip.sip is not None:
-                if hasattr(wcs_with_sip.sip, "a_order"):
-                    sip_order = wcs_with_sip.sip.a_order
-                    logger.debug(f"Using SIP order from WCS object: {sip_order}")
+            if (
+                sip_order == 0
+                and hasattr(wcs_with_sip, "sip")
+                and wcs_with_sip.sip is not None
+                and hasattr(wcs_with_sip.sip, "a_order")
+            ):
+                sip_order = wcs_with_sip.sip.a_order
+                logger.debug(f"Using SIP order from WCS object: {sip_order}")
 
             if sip_order > 0:
                 logger.debug(f"Plotting undistorted catalog positions (SIP order={sip_order})")

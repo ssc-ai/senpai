@@ -198,8 +198,8 @@ def query_by_ra_dec_bounds(
             }
             stars.append(star)
 
-        return stars
-
     except Exception:
         logger.exception("Gaia query failed")
         return []
+    else:
+        return stars
