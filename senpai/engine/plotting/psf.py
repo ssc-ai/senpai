@@ -416,7 +416,7 @@ def render_sidereal_psf(
         for u, name, col in ((north, "N", "white"), (east, "E", "deepskyblue")):
             L = 0.7 * stamp_view
             ax0.annotate(
-                "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=col, lw=1.4)
+                "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops={"arrowstyle": "->", "color": col, "lw": 1.4}
             )
             ax0.text(L * 1.13 * u[0], L * 1.13 * u[1], name, color=col, fontsize=9, ha="center", va="center")
     ax0.set_xlim(-stamp_view, stamp_view)
@@ -505,7 +505,7 @@ def render_streak_psf(
         for u, name, col in ((north_s, "N", "white"), (east_s, "E", "deepskyblue")):
             L = 0.6 * half_p
             ax0.annotate(
-                "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=col, lw=1.3)
+                "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops={"arrowstyle": "->", "color": col, "lw": 1.3}
             )
             ax0.text(L * 1.2 * u[0], L * 1.2 * u[1], name, color=col, fontsize=9, ha="center", va="center")
     ax0.set_xlabel("along streak (px)")

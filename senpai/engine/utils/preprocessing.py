@@ -1408,7 +1408,8 @@ def unscale_starfield_coordinates(
         import warnings
 
         warnings.warn(
-            "Block median unscaling may not be exact due to trimming. Consider using simple_integer scaling for precise coordinate mapping."
+            "Block median unscaling may not be exact due to trimming. Consider using simple_integer scaling for precise coordinate mapping.",
+            stacklevel=2,
         )
 
         # Use the same logic as simple_integer for now

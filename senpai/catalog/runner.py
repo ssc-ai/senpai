@@ -1009,7 +1009,7 @@ def _examine_gaia_local_catalog(catalog_path: str) -> bool:
     try:
         with open(index_path) as fh:
             tiles = json.load(fh).get("tiles") or {}
-    except Exception as e:
+    except Exception:
         logger.exception("gaia_local index unreadable")
         return False
     if not tiles:
@@ -1048,7 +1048,7 @@ def _examine_sdss_catalog() -> bool:
 
         logger.info("SDSS catalog connectivity confirmed")
         return True
-    except Exception as e:
+    except Exception:
         logger.exception("SDSS catalog connectivity test failed")
         return False
 
@@ -1068,7 +1068,7 @@ def _examine_gaia_catalog() -> bool:
 
         logger.info("Gaia catalog connectivity confirmed")
         return True
-    except Exception as e:
+    except Exception:
         logger.exception("Gaia catalog connectivity test failed")
         return False
 

@@ -293,10 +293,7 @@ def solve_rate_from_rate(rate_frame_a: RateTrackFrame, rate_frame_b: RateTrackFr
     if rate_frame_b.pixel_track_rate_per_second is not None:
         rates.append(rate_frame_b.pixel_track_rate_per_second)
 
-    if rates:
-        pixel_track_rate_per_second = np.mean(rates)
-    else:
-        pixel_track_rate_per_second = None
+    pixel_track_rate_per_second = np.mean(rates) if rates else None
 
     fwhms = []
     if rate_frame_a.streak is not None:

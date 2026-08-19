@@ -211,7 +211,7 @@ def ingest(chunk_dir: str, mirror_dir: str) -> None:
         order = np.argsort(tid, kind="stable")
         a, tid = a[order], tid[order]
         uniq, starts = np.unique(tid, return_index=True)
-        starts = list(starts) + [len(a)]
+        starts = [*list(starts), len(a)]
         for j, t in enumerate(uniq):
             part = a[starts[j] : starts[j + 1]]
             with open(os.path.join(mirror_dir, f"tile_{int(t):05d}.bin"), "ab") as fh:

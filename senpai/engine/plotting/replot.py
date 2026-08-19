@@ -206,15 +206,15 @@ def _plot_aperture(
         except ValueError:
             ts = datetime.now()
 
-    common = dict(
-        starfield=sf,
-        detections=frame.detections,
-        frame=img,
-        index=frame.index,
-        timestamp=ts,
-        frame_metadata=frame.frame_metadata,
-        photometry_summary=frame.photometry_summary,
-    )
+    common = {
+        "starfield": sf,
+        "detections": frame.detections,
+        "frame": img,
+        "index": frame.index,
+        "timestamp": ts,
+        "frame_metadata": frame.frame_metadata,
+        "photometry_summary": frame.photometry_summary,
+    }
     if kind == "rate":
         frame_obj = RateTrackFrame(streak=getattr(frame, "streak", None), **common)
     else:

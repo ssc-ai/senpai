@@ -1298,10 +1298,7 @@ def _propagate_to_frame_candidates(
         length = rate * exposure_time
 
     # Compute direction vector
-    if direction is not None:
-        dir_rad = np.radians(direction)
-    else:
-        dir_rad = np.radians(angle)
+    dir_rad = np.radians(direction) if direction is not None else np.radians(angle)
     cos_d = np.cos(dir_rad)
     sin_d = np.sin(dir_rad)
 

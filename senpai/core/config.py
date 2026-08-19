@@ -30,7 +30,7 @@ def load_yaml(path: Path) -> dict:
         with path.open() as f:
             data = yaml.safe_load(f)
             return data.get("app", {})
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to load config from")
         return {}
 
@@ -876,7 +876,7 @@ def initialize_config(config_path: Path) -> AppConfig:
     # Create and validate config
     try:
         config = AppConfig(**config_data)
-    except Exception as e:
+    except Exception:
         logger.exception("Configuration validation failed")
         raise
 

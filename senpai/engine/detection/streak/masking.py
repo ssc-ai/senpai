@@ -146,9 +146,8 @@ def map_cluster_bounded(
                 if dy == 0 and dx == 0:
                     continue
                 ny, nx = y + dy, x + dx
-                if 0 <= ny < image.shape[0] and 0 <= nx < image.shape[1]:
-                    if not visited[ny, nx]:
-                        stack.append((ny, nx))
+                if 0 <= ny < image.shape[0] and 0 <= nx < image.shape[1] and not visited[ny, nx]:
+                    stack.append((ny, nx))
 
     if pad_size == 0:
         return visited
@@ -216,10 +215,7 @@ def analyze_source_shape_fwhm(
     # Estimate background within the mapped region
     # Use values below 50th percentile as background estimate
     background_values = mapped_values[mapped_values <= np.percentile(mapped_values, 50)]
-    if len(background_values) > 0:
-        background_level = np.median(background_values)
-    else:
-        background_level = np.min(mapped_values)
+    background_level = np.median(background_values) if len(background_values) > 0 else np.min(mapped_values)
 
     # Calculate FWHM threshold: halfway between background and peak
     fwhm_threshold = background_level + 0.5 * (peak_value - background_level)

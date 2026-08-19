@@ -28,7 +28,7 @@ Programmatic Usage:
 
 Creating master flats:
     from senpai.engine.utils.flats import create_master_flat
-    
+
     master_flat, header = create_master_flat(
         flat_directory="/path/to/flats/",
         output_path="/path/to/master_flat.fits",
@@ -37,7 +37,7 @@ Creating master flats:
 
 Applying flat corrections:
     from senpai.engine.utils.preprocessing import apply_flat_field
-    
+
     corrected_image = apply_flat_field(
         image=processed_fits_image,
         master_flat="/path/to/master_flat.fits"
@@ -45,7 +45,7 @@ Applying flat corrections:
 
 Auto-applying calibrations based on config:
     from senpai.engine.utils.preprocessing import auto_apply_calibrations
-    
+
     calibrated_image = auto_apply_calibrations(processed_fits_image)
 """
 

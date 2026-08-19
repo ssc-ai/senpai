@@ -1131,13 +1131,12 @@ def load_position_statistics_from_files(
                     continue
 
                 # Verify we have all expected FOV/mag combinations
-                found_combinations = set((s.fov, s.magnitude_threshold) for s in pos_statistics)
-                expected_combinations = set((fov, mag) for fov in expected_fovs for mag in expected_mags)
+                found_combinations = {(s.fov, s.magnitude_threshold) for s in pos_statistics}
+                expected_combinations = {(fov, mag) for fov in expected_fovs for mag in expected_mags}
                 missing_combinations = expected_combinations - found_combinations
                 if missing_combinations:
                     incomplete_positions[grid_pos] = (
-                        f"missing {len(missing_combinations)} FOV/mag combinations: "
-                        f"{sorted(list(missing_combinations))[:5]}"
+                        f"missing {len(missing_combinations)} FOV/mag combinations: {sorted(missing_combinations)[:5]}"
                     )
                     logger.warning(
                         f"Position {grid_pos} file is missing {len(missing_combinations)} FOV/mag combinations. "
@@ -1384,7 +1383,7 @@ def run_coverage_analysis(
 
                     pbar.set_description(f"Position {position_num}/{total_positions} (RA={ra:.1f}°, Dec={dec:.1f}°)")
                     pbar.update(1)
-                except Exception as e:
+                except Exception:
                     logger.exception("Error processing position")
                     grid_pos = (round(ra, 2), round(dec, 2))
                     for fov in fov_values:
@@ -2409,7 +2408,7 @@ def plot_coverage_results(
     if per_position_stats is not None:
         # Get total number of unique grid positions (should be the same for all FOV/mag combinations)
         # Count unique positions from all statistics
-        all_positions = set(stat.grid_position for stat in per_position_stats)
+        all_positions = {stat.grid_position for stat in per_position_stats}
         total_grid_positions = len(all_positions)
         logger.info(f"Total unique grid positions for coverage calculation: {total_grid_positions}")
 
@@ -2486,10 +2485,7 @@ def _plot_coverage_percentage_single(
                     f"FOV {fov:.2f}°, mag {mag:.1f}: Only {positions_with_stats}/{total_grid_positions} "
                     f"positions have statistics. Coverage may be underestimated."
                 )
-            if total_grid_positions > 0:
-                coverage_pct = 100.0 * positions_above_threshold / total_grid_positions
-            else:
-                coverage_pct = 0.0
+            coverage_pct = 100.0 * positions_above_threshold / total_grid_positions if total_grid_positions > 0 else 0.0
 
             coverage_percentages.append(coverage_pct)
 
@@ -2660,9 +2656,8 @@ def main() -> int:
     args = parser.parse_args()
 
     # Validate required arguments (unless plot-only mode)
-    if not args.plot_only:
-        if args.max_fov is None or args.min_fov is None:
-            parser.error("--max-fov and --min-fov are required unless --plot-only is specified")
+    if not args.plot_only and (args.max_fov is None or args.min_fov is None):
+        parser.error("--max-fov and --min-fov are required unless --plot-only is specified")
 
     # Validate that positions-file is mutually exclusive with degrees-off-geo-belt and test-mode
     if args.positions_file:
@@ -2721,7 +2716,7 @@ def main() -> int:
                     json.dump(stats_output, f, indent=2)
                 logger.info(f"Recreated master statistics file: {json_path}")
 
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to load per-position statistics")
                 return 1
 
@@ -2959,7 +2954,7 @@ def main() -> int:
                             f"(RA={corridor.ra_center:.1f}°, Dec={corridor.dec_center:.1f}°)"
                         )
                         pbar.update(1)
-                    except Exception as e:
+                    except Exception:
                         logger.exception("Error processing corridor time step")
                         pbar.update(1)
 

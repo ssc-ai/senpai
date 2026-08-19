@@ -84,7 +84,7 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
             try:
                 arrow_time = _parse_date_string(str(header[header_key]))
                 return arrow_time.datetime
-            except Exception as e:
+            except Exception:
                 logger.exception("failed to parse time from")
                 continue
 
@@ -94,7 +94,7 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
         if header_key in header:
             try:
                 arrow_date = _parse_date_string(str(header[header_key]))
-            except Exception as e:
+            except Exception:
                 logger.exception("failed to parse time from")
                 continue
 
@@ -104,7 +104,7 @@ def extract_uct_time_from_header(header: dict[str, Any]) -> datetime:
                 try:
                     time_components = _parse_time_string(str(header[header_key]))
                     break
-                except Exception as e:
+                except Exception:
                     logger.exception("failed to parse time from")
                     continue
 

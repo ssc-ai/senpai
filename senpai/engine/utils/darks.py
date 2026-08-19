@@ -30,7 +30,7 @@ Programmatic Usage:
 
 Creating master darks:
     from senpai.engine.utils.darks import create_master_dark
-    
+
     master_dark, header = create_master_dark(
         dark_directory="/path/to/darks/",
         output_path="/path/to/master_dark.fits",
@@ -39,7 +39,7 @@ Creating master darks:
 
 Applying dark corrections:
     from senpai.engine.utils.darks import apply_dark_subtraction
-    
+
     corrected_image = apply_dark_subtraction(
         image=processed_fits_image,
         master_dark="/path/to/master_dark.fits"
@@ -814,7 +814,7 @@ def analyze_header_variations(directory: str | Path) -> None:
                 header = hdul[0].header
                 file_count += 1
 
-                for key in header.keys():
+                for key in header:
                     # Skip standard FITS keywords that don't affect calibration
                     if key in [
                         "SIMPLE",
@@ -859,7 +859,7 @@ def analyze_header_variations(directory: str | Path) -> None:
 
     for key, values in all_headers.items():
         if len(values) == 1:
-            constant_headers[key] = list(values)[0]
+            constant_headers[key] = next(iter(values))
         else:
             varying_headers[key] = sorted(values)
 

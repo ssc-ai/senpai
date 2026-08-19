@@ -142,15 +142,9 @@ class StreakMeasurements(BaseModel):
         else:
             rotation_avg = 0.0
 
-        if lengths:
-            length_avg = np.average(lengths, weights=weights)
-        else:
-            length_avg = 0.0
+        length_avg = np.average(lengths, weights=weights) if lengths else 0.0
 
-        if fwhms:
-            fwhm_avg = np.average(fwhms, weights=fwhm_weights)
-        else:
-            fwhm_avg = None
+        fwhm_avg = np.average(fwhms, weights=fwhm_weights) if fwhms else None
 
         return StreakMeasurement(
             rotation=rotation_avg,

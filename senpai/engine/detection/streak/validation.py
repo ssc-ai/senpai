@@ -523,9 +523,9 @@ def validate_shift_lightweight(
     random_correlations = np.array(random_correlations)
     random_n_stars = np.array(random_n_stars)
 
-    all_correlations_raw = np.array([proposed_corr] + list(random_correlations))
-    all_n_stars = np.array([proposed_n_stars] + list(random_n_stars))
-    all_shifts = [(shift_x, shift_y)] + random_shifts
+    all_correlations_raw = np.array([proposed_corr, *list(random_correlations)])
+    all_n_stars = np.array([proposed_n_stars, *list(random_n_stars)])
+    all_shifts = [(shift_x, shift_y), *random_shifts]
 
     # Calculate confidence-weighted scores
     # Confidence increases with sqrt(n) because standard error decreases with sqrt(n)

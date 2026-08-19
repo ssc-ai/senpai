@@ -249,10 +249,7 @@ def measure_simple_star_photometry(
                 for mask in bg_masks:
                     data_sub = mask.multiply(image.data)
                     bg_pixels_list.append(data_sub[mask.data > 0])
-                if bg_pixels_list:
-                    bg_pixels = np.concatenate(bg_pixels_list)
-                else:
-                    bg_pixels = np.array([])
+                bg_pixels = np.concatenate(bg_pixels_list) if bg_pixels_list else np.array([])
             else:
                 data_sub = bg_masks.multiply(image.data)
                 bg_pixels = data_sub[bg_masks.data > 0]
@@ -604,14 +601,8 @@ def measure_simple_starfield_photometry(
     # Areas can be scalar or array depending on photutils version / usage
     aper_area = aperture.area
     bg_area = bg_aperture.area
-    if hasattr(aper_area, "__len__"):
-        aper_area = np.asarray(aper_area, dtype=float)
-    else:
-        aper_area = float(aper_area)
-    if hasattr(bg_area, "__len__"):
-        bg_area = np.asarray(bg_area, dtype=float)
-    else:
-        bg_area = float(bg_area)
+    aper_area = np.asarray(aper_area, dtype=float) if hasattr(aper_area, "__len__") else float(aper_area)
+    bg_area = np.asarray(bg_area, dtype=float) if hasattr(bg_area, "__len__") else float(bg_area)
 
     # Broadcast areas if needed
     aper_area_arr = aper_area if isinstance(aper_area, np.ndarray) else np.full_like(flux_sum, aper_area, dtype=float)
@@ -953,14 +944,8 @@ def measure_rate_starfield_photometry(
     # Get areas (can be scalar or array)
     aper_area = apertures.area
     bg_area = bg_apertures.area
-    if hasattr(aper_area, "__len__"):
-        aper_area = np.asarray(aper_area, dtype=float)
-    else:
-        aper_area = float(aper_area)
-    if hasattr(bg_area, "__len__"):
-        bg_area = np.asarray(bg_area, dtype=float)
-    else:
-        bg_area = float(bg_area)
+    aper_area = np.asarray(aper_area, dtype=float) if hasattr(aper_area, "__len__") else float(aper_area)
+    bg_area = np.asarray(bg_area, dtype=float) if hasattr(bg_area, "__len__") else float(bg_area)
 
     # Broadcast areas if needed
     aper_area_arr = aper_area if isinstance(aper_area, np.ndarray) else np.full_like(flux_sum, aper_area, dtype=float)
@@ -1290,10 +1275,7 @@ def _assess_simple_quality(
     if snr < config.min_snr:
         return False
     # Reject too crowded
-    if crowding_factor > config.max_crowding:
-        return False
-
-    return True
+    return not crowding_factor > config.max_crowding
 
 
 def _has_bright_neighbor(
@@ -1335,10 +1317,7 @@ def _has_bright_neighbor(
                 continue
 
             # Get magnitude from cache if available, otherwise compute
-            if mag_cache is not None:
-                other_mag = mag_cache.get(id(other))
-            else:
-                other_mag = _get_best_magnitude(other)
+            other_mag = mag_cache.get(id(other)) if mag_cache is not None else _get_best_magnitude(other)
 
             if other_mag is None:
                 continue
@@ -1361,10 +1340,7 @@ def _has_bright_neighbor(
             continue
 
         # Get magnitude from cache if available, otherwise compute
-        if mag_cache is not None:
-            other_mag = mag_cache.get(id(other))
-        else:
-            other_mag = _get_best_magnitude(other)
+        other_mag = mag_cache.get(id(other)) if mag_cache is not None else _get_best_magnitude(other)
 
         if other_mag is None:
             continue
@@ -2024,8 +2000,10 @@ def _estimate_simple_limiting_magnitude(
         if not r.quality_flag:
             continue
 
-        if iso_radius_pix is not None and catalog_stars:
-            if _has_bright_neighbor(
+        if (
+            iso_radius_pix is not None
+            and catalog_stars
+            and _has_bright_neighbor(
                 r.star,
                 mag,
                 catalog_stars,
@@ -2033,8 +2011,9 @@ def _estimate_simple_limiting_magnitude(
                 config.isolation_delta_mag,
                 mag_cache=mag_cache,
                 kdtree=kdtree,
-            ):
-                continue
+            )
+        ):
+            continue
 
         # Use original SNR for fit (not floored)
         empirical_points.append((mag, r.snr))
@@ -2477,8 +2456,10 @@ def _calculate_simple_zero_point(
             mag = result_mag_cache[id(r.star)]
             if mag is None:
                 continue
-            if iso_radius_pix is not None and catalog_stars:
-                if _has_bright_neighbor(
+            if (
+                iso_radius_pix is not None
+                and catalog_stars
+                and _has_bright_neighbor(
                     r.star,
                     mag,
                     catalog_stars,
@@ -2486,8 +2467,9 @@ def _calculate_simple_zero_point(
                     config.isolation_delta_mag,
                     mag_cache=mag_cache,
                     kdtree=kdtree,
-                ):
-                    continue
+                )
+            ):
+                continue
             sel.append((mag, r.flux))
         return sel
 

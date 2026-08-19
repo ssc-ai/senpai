@@ -233,7 +233,7 @@ class ProcessedFitsImage(BaseModel):
 
         if exposure_time is None:
             logger.warning(f"No exposure time found in header. Available keys: {list(fits_file.header.keys())}")
-            for key in fits_file.header.keys():
+            for key in fits_file.header:
                 if "TIME" in key.upper() or "EXP" in key.upper():
                     logger.info(f"  {key}: {fits_file.header[key]}")
 

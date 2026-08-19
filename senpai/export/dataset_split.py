@@ -213,7 +213,7 @@ class DatasetSplitter:
             logger.info(f"Found {len(image_ids)} unique images to split in temporal order")
         else:
             # Use random splitting (original behavior)
-            image_ids = list(set(img["id"] for img in all_images))
+            image_ids = list({img["id"] for img in all_images})
             random.shuffle(image_ids)
             logger.info(f"Found {len(image_ids)} unique images to split randomly")
 
@@ -404,7 +404,7 @@ class DatasetSplitter:
         logger.debug(f"  - Line annotations: {len(line_annotations)}")
         logger.debug(f"  - Other annotations: {len(other_annotations)}")
         if other_annotations:
-            logger.debug(f"  - Other types: {set(ann.get('type') for ann in other_annotations)}")
+            logger.debug(f"  - Other types: { {ann.get('type') for ann in other_annotations} }")
 
 
 def split_coco_dataset(

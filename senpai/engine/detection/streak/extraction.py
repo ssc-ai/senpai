@@ -1700,7 +1700,7 @@ def extract_streak_dims(
             maxy - cutout_shape : maxy + cutout_shape,
         ].copy()
 
-        if cutout.shape == tuple([cutout_shape * 2, cutout_shape * 2]):
+        if cutout.shape == (cutout_shape * 2, cutout_shape * 2):
             # Calculate SNR before normalization
             # Use edge pixels for background estimate (avoid including the streak itself)
             edge_width = max(5, cutout_shape // 10)
@@ -1816,16 +1816,10 @@ def streak_fwhm_from_cutout(cutout_frame: np.ndarray, rotation: float) -> float:
 
     if len(left_side) > 0 and len(right_side) > 0:
         # Find left crossing (last True before peak)
-        if not np.all(left_side):
-            left_idx = len(left_side) - 1 - np.argmax(left_side[::-1] == False)
-        else:
-            left_idx = 0
+        left_idx = len(left_side) - 1 - np.argmax(~left_side[::-1]) if not np.all(left_side) else 0
 
         # Find right crossing (first False after peak)
-        if not np.all(right_side):
-            right_idx = peak_idx + np.argmax(right_side == False)
-        else:
-            right_idx = len(vertical_profile) - 1
+        right_idx = peak_idx + np.argmax(~right_side) if not np.all(right_side) else len(vertical_profile) - 1
 
         # Calculate FWHM in pixels
         fwhm = right_idx - left_idx

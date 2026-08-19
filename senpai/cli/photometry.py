@@ -104,7 +104,7 @@ def main() -> None:
 
         logger.info(f"Photometry results saved to: {output_path}")
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error processing photometry")
         raise
 

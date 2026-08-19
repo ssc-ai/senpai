@@ -2313,7 +2313,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
             L = 0.7 * win
             for u, name, col in ((b["north_unit"], "N", "white"), (b["east_unit"], "E", "deepskyblue")):
                 ax.annotate(
-                    "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=col, lw=1.4)
+                    "", xy=(L * u[0], L * u[1]), xytext=(0, 0), arrowprops={"arrowstyle": "->", "color": col, "lw": 1.4}
                 )
                 ax.text(L * 1.12 * u[0], L * 1.12 * u[1], name, color=col, fontsize=9, ha="center", va="center")
         ax.set_xlim(-win, win)
@@ -3155,7 +3155,7 @@ def _render_snr_vs_exposure_6s_explained(
             textcoords="axes fraction",
             fontsize=9,
             ha="left",
-            arrowprops=dict(arrowstyle="->", color="gray"),
+            arrowprops={"arrowstyle": "->", "color": "gray"},
         )
     ax.set_yscale("log")
     if d["xticks"]:

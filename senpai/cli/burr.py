@@ -585,7 +585,7 @@ def cmd_flats(args: argparse.Namespace) -> int:
                 sigma=3.0,
                 maxiters=5,
             )
-        except Exception as e:
+        except Exception:
             logger.exception("Night %s: master flat failed", night.night_id)
             rc = 2
     return rc

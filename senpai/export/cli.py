@@ -275,7 +275,7 @@ def split_dataset(
         logger.info("Dataset split completed successfully")
         for split_name, image_ids in splits.items():
             logger.info(f"  {split_name}: {len(image_ids)} images")
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to split dataset")
         raise
 
@@ -431,7 +431,7 @@ Examples:
             )
     except KeyboardInterrupt:
         logger.info("Export interrupted by user")
-    except Exception as e:
+    except Exception:
         logger.exception("Export failed")
         sys.exit(1)
 

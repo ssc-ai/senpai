@@ -154,7 +154,7 @@ def plot_overs(
                     logger.debug(
                         f"WCS without SIP test: pixel ({centers[0][0] if len(centers) > 0 else 100}, {centers[0][1] if len(centers) > 0 else 100}) -> RA={test_ra:.6f}, Dec={test_dec:.6f}"
                     )
-                except Exception as e:
+                except Exception:
                     logger.exception("Failed to create WCS without SIP for plotting")
                     wcs_no_sip = None
 
@@ -221,10 +221,7 @@ def plot_overs(
 
     if starlist is not None:
         stars = starlist.centers_xy()
-        if len(stars.shape) > 1:
-            centers = stars[:, :2]
-        else:
-            centers = None
+        centers = stars[:, :2] if len(stars.shape) > 1 else None
 
     if centers is not None and streak is not None:
         centercross = True
@@ -245,28 +242,27 @@ def plot_overs(
                 linewidth=linewidth,
             )
 
-    if centers is not None and marker is not None:
-        if centers.shape[0] > 0:
-            if centercross:
-                ax.scatter(
-                    centers[:, 0],
-                    centers[:, 1],
-                    marker=marker,
-                    color="red",
-                    s=markersize,
+    if centers is not None and marker is not None and centers.shape[0] > 0:
+        if centercross:
+            ax.scatter(
+                centers[:, 0],
+                centers[:, 1],
+                marker=marker,
+                color="red",
+                s=markersize,
+            )
+        else:
+            for center in centers:
+                rect = patches.Circle(
+                    center,
+                    radius=2 * markersize,
+                    linewidth=linewidth,
+                    linestyle="-",
+                    edgecolor="red",
+                    facecolor="none",
                 )
-            else:
-                for center in centers:
-                    rect = patches.Circle(
-                        center,
-                        radius=2 * markersize,
-                        linewidth=linewidth,
-                        linestyle="-",
-                        edgecolor="red",
-                        facecolor="none",
-                    )
 
-                    ax.add_patch(rect)
+                ax.add_patch(rect)
 
     # Collect streak-type detection indices so we don't double-render them
     _streak_det_indices: set[int] = set()
@@ -749,12 +745,12 @@ def plot_single_frame(
                 va=va,
                 size=font_size(img),
                 rotation=angle,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="black",
-                    alpha=0.7,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "black",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
             logger.debug(f"RA {ra:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°")
 
@@ -997,12 +993,12 @@ def plot_single_frame(
                 va=va,
                 size=font_size(img),
                 rotation=angle,
-                bbox=dict(
-                    boxstyle="round,pad=0.3",
-                    facecolor="black",
-                    alpha=0.7,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.3",
+                    "facecolor": "black",
+                    "alpha": 0.7,
+                    "edgecolor": "none",
+                },
             )
             logger.debug(f"Dec {dec:.2f}°: pos=({label_x:.0f},{label_y:.0f}), edge={best_edge}, angle={angle:.1f}°")
     else:
@@ -1219,7 +1215,7 @@ def plot_sip_distortions(
 
     try:
         wcs_no_sip = WCS(header_no_sip, relax=True)
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to create WCS without SIP")
         return None
 

@@ -100,10 +100,7 @@ def query_by_ra_dec_bounds(
             if result2 is not None and len(result2) > 0:
                 results_to_combine.append(result2)
 
-            if len(results_to_combine) > 0:
-                result = vstack(results_to_combine)
-            else:
-                result = None
+            result = vstack(results_to_combine) if len(results_to_combine) > 0 else None
         else:
             # Field doesn't cross boundary - simple case
             logger.info(
@@ -203,6 +200,6 @@ def query_by_ra_dec_bounds(
 
         return stars
 
-    except Exception as e:
+    except Exception:
         logger.exception("Gaia query failed")
         return []

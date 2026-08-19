@@ -512,7 +512,7 @@ class SenpaiRun(BaseModel):
             before_frames = [f for f in all_frames if f.index < start_index]
             before_frames.sort(key=lambda x: x.index, reverse=True)
 
-            ordered_frames = [start_frame] + after_frames
+            ordered_frames = [start_frame, *after_frames]
 
         # Create shifts between consecutive frames in our ordered path
         for i in range(len(ordered_frames) - 1):

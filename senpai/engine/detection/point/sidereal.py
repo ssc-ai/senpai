@@ -135,7 +135,7 @@ def estimate_fwhm(
             0,
             0,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Error estimating FWHM")
         return None
 
@@ -487,10 +487,7 @@ def extract_point_sources(
 
     # Set minimum separation based on FWHM if not provided
     if min_separation is None:
-        if fwhm_pixel > 10:
-            min_separation = max(1.0 * fwhm_pixel, 5.0)
-        else:
-            min_separation = max(1.5 * fwhm_pixel, 5.0)
+        min_separation = max(1.0 * fwhm_pixel, 5.0) if fwhm_pixel > 10 else max(1.5 * fwhm_pixel, 5.0)
 
     logger.info(f"Using FWHM: {fwhm_pixel:.1f} pixels, minimum separation: {min_separation:.1f} pixels")
 

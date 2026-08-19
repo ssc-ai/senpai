@@ -811,10 +811,7 @@ def plot_photometry_summary(
 
     # Plot 1: Magnitude vs SNR (only plot we want to keep)
     try:
-        if output_file is not None:
-            mag_snr_file = output_file
-        else:
-            mag_snr_file = output_dir / "photometry_magnitude_vs_snr.png"
+        mag_snr_file = output_file if output_file is not None else output_dir / "photometry_magnitude_vs_snr.png"
         plot_magnitude_vs_snr(results, summary, mag_snr_file)
     except Exception as e:
         logger.error(f"Failed to create magnitude vs SNR plot: {e}", exc_info=True)

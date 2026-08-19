@@ -119,13 +119,13 @@ def wcs_distortion_metrics(wcs: WCS, rate_ra: float, rate_dec: float, nx: int = 
     max_angle_var = np.max(np.abs(angles - angles[nx * ny // 2])) * 180 / np.pi
     max_len_var = np.max(np.abs(lengths / lengths[nx * ny // 2] - 1))
 
-    return dict(
-        delta_J=float(delta_J),
-        max_angle_variation_deg=float(max_angle_var),
-        max_length_variation_fraction=float(max_len_var),
-        jacobians=jacobians,
-        vectors=vectors,
-    )
+    return {
+        "delta_J": float(delta_J),
+        "max_angle_variation_deg": float(max_angle_var),
+        "max_length_variation_fraction": float(max_len_var),
+        "jacobians": jacobians,
+        "vectors": vectors,
+    }
 
 
 def compute_effective_sky_motion_vector(
@@ -199,10 +199,7 @@ def compute_local_streak_vector_from_jacobian(
     # Central unit pixel vector implied by the sky rate
     v0_unit = J_ref @ rate_hat
     len0_unit = np.linalg.norm(v0_unit)
-    if len0_unit == 0:
-        scale = 0.0
-    else:
-        scale = pixel_length / len0_unit
+    scale = 0.0 if len0_unit == 0 else pixel_length / len0_unit
 
     # Local Jacobian and unit pixel vector
     J_local = local_jacobian(wcs, x, y, dsky=dsky)

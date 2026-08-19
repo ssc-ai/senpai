@@ -352,7 +352,7 @@ def _rate_scan_candidate(
     # the expected max under null is moderate.  Require stacked SNR > 12
     # for detection.  A real streak with 3 frames at ~10σ each gives
     # stacked_snr ≈ 17.
-    all_vals = [ref_val] + best_other_vals
+    all_vals = [ref_val, *best_other_vals]
 
     if stacked_snr < 12.0:
         logger.debug(
@@ -419,14 +419,13 @@ def _rate_scan_candidate(
                 sx = pred_x + offset * best_cos_a
                 sy = pred_y + offset * best_sin_a
                 six, siy = round(sx), round(sy)
-                if 0 <= siy < oh and 0 <= six < ow:
-                    if de_map[siy, six] > 3 * ofd["noise"]:
-                        local_angle = float(ba_map[siy, six])
-                        adiff = abs(local_angle - best_angle) % 180
-                        adiff = min(adiff, 180 - adiff)
-                        if adiff < 25:
-                            angle_ok = True
-                            break
+                if 0 <= siy < oh and 0 <= six < ow and de_map[siy, six] > 3 * ofd["noise"]:
+                    local_angle = float(ba_map[siy, six])
+                    adiff = abs(local_angle - best_angle) % 180
+                    adiff = min(adiff, 180 - adiff)
+                    if adiff < 25:
+                        angle_ok = True
+                        break
             if angle_ok:
                 n_angle_consistent += 1
         else:
@@ -513,10 +512,7 @@ def _rate_scan_candidate(
     length = best_rate * exposure_time if exposure_time else best_rate
 
     # Direction in [0, 360)
-    if best_dir > 0:
-        direction_deg = float(angle_deg % 360)
-    else:
-        direction_deg = float((angle_deg + 180) % 360)
+    direction_deg = float(angle_deg % 360) if best_dir > 0 else float((angle_deg + 180) % 360)
 
     # Positions in each frame (use best_angle's cos/sin, not loop variable)
     frame_indices = [ref_frame.index]
@@ -848,10 +844,7 @@ def _propagate_to_frames(
     if ref_frame is None:
         return
 
-    if direction is not None:
-        dir_rad = np.radians(direction)
-    else:
-        dir_rad = np.radians(angle)
+    dir_rad = np.radians(direction) if direction is not None else np.radians(angle)
     cos_d = np.cos(dir_rad)
     sin_d = np.sin(dir_rad)
 
