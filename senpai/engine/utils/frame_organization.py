@@ -190,7 +190,7 @@ def header_key_matches(file: Path, header_key: str, value: str) -> bool:
     return header[header_key] == value
 
 
-def get_imageset_by_id(data_directory: Path, id: str, header_id_key: str) -> list[str]:
+def get_imageset_by_id(data_directory: Path, id: str, header_id_key: str) -> list[str]:  # noqa: A002 - `id` is the published parameter name
     """Find every frame under a directory belonging to one collect, by header id.
 
     This opens each candidate file's header, so it is proportional to the directory rather

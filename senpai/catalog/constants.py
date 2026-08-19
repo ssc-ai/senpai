@@ -41,7 +41,7 @@ class SDSSFilter(Enum):
     U = "u"
     G = "g"
     R = "r"
-    I = "i"
+    I = "i"  # noqa: E741 - the SDSS i band; the member name is the public API
     Z = "z"
 
 

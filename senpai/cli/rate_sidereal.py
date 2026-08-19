@@ -130,16 +130,12 @@ if __name__ == "__main__":
     senpai_run = profile_run(process_senpai_collect, file_list, id=run_id, run_id=run_id)
 
     result = senpai_run.to_result()
-    json.dump(
-        result.model_dump(),
-        open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w"),
-    )
+    with open(output_dir / f"senpai_{result.senpai_version}_{result.id}.json", "w") as f:
+        json.dump(result.model_dump(), f)
 
     summary = senpai_run.to_summary()
-    json.dump(
-        summary.model_dump(),
-        open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w"),
-    )
+    with open(output_dir / f"senpai_{summary.senpai_version}_{summary.id}_summary.json", "w") as f:
+        json.dump(summary.model_dump(), f)
 
     # Per-frame quick-look JSONs (detections + WCS, no bulk star arrays)
     write_frame_quicklooks(summary, output_dir)

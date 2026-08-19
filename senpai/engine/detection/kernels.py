@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 MAX_KERNEL_FINE_ELEMENTS = 500_000_000
 
 
-def shift_filter_subpx(filter: np.ndarray, pix_shift: np.ndarray) -> np.ndarray:
+def shift_filter_subpx(kernel: np.ndarray, pix_shift: np.ndarray) -> np.ndarray:
     """Shift a kernel by a sub-pixel offset, keeping it non-negative and normalized in range.
 
     The kernel is padded before shifting so interpolation at the edge does not wrap, and the
@@ -37,7 +37,7 @@ def shift_filter_subpx(filter: np.ndarray, pix_shift: np.ndarray) -> np.ndarray:
     """
     pad = (pix_shift + 0.5).round().astype(int)
 
-    padded = np.pad(filter, ((pad[0], pad[0]), (pad[1], pad[1])))
+    padded = np.pad(kernel, ((pad[0], pad[0]), (pad[1], pad[1])))
     shifted = shift(padded, pix_shift)
 
     shifted[np.where(np.abs(shifted) < 1e-4)] = 0.000

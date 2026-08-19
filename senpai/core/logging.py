@@ -5,6 +5,7 @@ interleaves when several worker processes hold the same file open, so rotation i
 instead of assumed.
 """
 
+import contextlib
 import logging
 import logging.config
 import logging.handlers
@@ -32,11 +33,9 @@ class MultiprocessSafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
 
     def rotate(self, source: str, dest: str) -> None:
         """Rotate, tolerating another process having already rotated the same file."""
-        try:
+        # Another process may already have rotated this file out from under us.
+        with contextlib.suppress(FileNotFoundError):
             super().rotate(source, dest)
-        except FileNotFoundError:
-            # Another process already rotated this file out from under us.
-            pass
 
 
 class LogMode(str, Enum):

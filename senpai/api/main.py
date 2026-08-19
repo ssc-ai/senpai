@@ -110,7 +110,12 @@ def create_app(config: AppConfig | str | Path | None = None) -> FastAPI:
 
 
 @click.command()
-@click.option("--host", default="0.0.0.0", show_default=True)
+@click.option(
+    # A service in a container must bind all interfaces to be reachable from outside it.
+    "--host",
+    default="0.0.0.0",  # noqa: S104
+    show_default=True,
+)
 @click.option("--port", default=8000, show_default=True)
 @click.option("--workers", default=1, show_default=True, envvar="WORKERS")
 @click.option(

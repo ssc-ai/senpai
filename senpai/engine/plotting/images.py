@@ -371,7 +371,7 @@ def plot_single_frame(
     n_brightest: int | None = None,
     show_undistorted_catalog: bool = False,
     dpi: int | None = None,
-    format: str | None = None,
+    format: str | None = None,  # noqa: A002 - mirrors matplotlib's savefig(format=...)
     jpeg_quality: int = 95,
     png_compression: int = 6,
 ) -> tuple[plt.Figure, plt.Axes]:
@@ -399,14 +399,16 @@ def plot_single_frame(
         else:
             dpi = 150  # Default DPI for smaller images
 
-    # Determine output format from file extension if not specified
-    if output_file and format is None:
+    # Determine output format from the file extension when the caller did not state one. Kept in
+    # a local rather than reassigning the parameter, so the caller's argument stays readable.
+    out_format = format
+    if output_file and out_format is None:
         output_path = Path(output_file)
         ext = output_path.suffix.lower()
         if ext in [".jpg", ".jpeg"]:
-            format = "jpeg"
+            out_format = "jpeg"
         elif ext == ".png":
-            format = "png"
+            out_format = "png"
         # If no extension or unknown, default to PNG
 
     if starfield is not None and starfield.fit:
@@ -1043,12 +1045,12 @@ def plot_single_frame(
     if output_file:
         # Prepare savefig kwargs based on format
         save_kwargs = {"dpi": dpi}
-        if format == "jpeg" or format == "jpg":
+        if out_format in ("jpeg", "jpg"):
             save_kwargs["format"] = "jpeg"
             save_kwargs["quality"] = jpeg_quality
             save_kwargs["optimize"] = True
             logger.info(f"Saving as JPEG with quality={jpeg_quality}, DPI={dpi}")
-        elif format == "png":
+        elif out_format == "png":
             save_kwargs["format"] = "png"
             logger.info(f"Saving as PNG with DPI={dpi}")
         else:
@@ -1059,7 +1061,7 @@ def plot_single_frame(
 
         # For PNG files, try to optimize further using PIL if available
         output_path = Path(output_file)
-        if (format is None or format == "png") and output_path.suffix.lower() == ".png":
+        if (out_format is None or out_format == "png") and output_path.suffix.lower() == ".png":
             try:
                 from PIL import Image
 

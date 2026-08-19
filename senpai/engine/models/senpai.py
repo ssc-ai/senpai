@@ -308,7 +308,7 @@ class SenpaiRun(BaseModel):
     def organize_senpai_frames(
         cls,
         frames: list[ProcessedFitsImage],
-        id: str = "",
+        id: str = "",  # noqa: A002 - `id` is the published parameter name
         force_track_mode: TrackMode | None = None,
     ) -> "SenpaiRun":
         """Sort frames into sidereal and rate-tracked, and seed the registration chain.

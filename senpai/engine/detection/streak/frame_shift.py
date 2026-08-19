@@ -61,7 +61,7 @@ def solve_shift(senpai_run: SenpaiRun, frame_shift: FrameShift) -> None:
         solve_type = "rate to sidereal"
 
     else:
-        raise ValueError(f"Invalid frame types: {type(frame_source)} and {type(frame_target)}")
+        raise TypeError(f"Invalid frame types: {type(frame_source)} and {type(frame_target)}")
 
     logger.info(f"Solving shift from {frame_source.index} to {frame_target.index} ({solve_type})")
 

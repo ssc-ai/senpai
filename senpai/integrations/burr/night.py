@@ -527,7 +527,8 @@ class BurrNight(BaseModel):
         for rs in attributed:
             rs.sort(key=lambda r: (r.parsed.frame_index or 0, r.path.name))
             cmd = rs[0].command
-            assert cmd is not None
+            if cmd is None:  # attributed batches always carry one; skip rather than crash
+                continue
             label = cmd.target_label or "unlabeled"
             ts = cmd.observation_time
             ts_tag = ts.strftime("%Y%m%dT%H%M%S") if ts else "unknownT"

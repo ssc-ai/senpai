@@ -128,8 +128,8 @@ def download_chunks(
                     tbl = _ex.submit(lambda adql=adql: Gaia.launch_job_async(adql).get_results()).result(
                         timeout=job_timeout
                     )
-                except _cf.TimeoutError:
-                    raise TimeoutError(f"job exceeded {job_timeout:.0f}s")
+                except _cf.TimeoutError as exc:
+                    raise TimeoutError(f"job exceeded {job_timeout:.0f}s") from exc
                 finally:
                     _ex.shutdown(wait=False)  # abandon a stuck worker thread
                 arr = np.empty(len(tbl), dtype=MIRROR_DTYPE)

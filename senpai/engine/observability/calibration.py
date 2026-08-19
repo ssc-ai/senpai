@@ -2303,7 +2303,7 @@ def _render_psf_profile(d: dict, meta: dict, output_dir: str | Path, plt: Module
     fig = plt.figure(figsize=(max(13.0, 4.4 * nb), 10.5))
     gs = fig.add_gridspec(2, 2 * nb, height_ratios=[1.05, 1.0])
 
-    for i, (b, c) in enumerate(zip(bands, colors, strict=True)):
+    for i, b in enumerate(bands):
         ax = fig.add_subplot(gs[0, 2 * i : 2 * i + 2])
         stamp = np.asarray(b["stamp2d"])
         ext = [-half, half, -half, half]

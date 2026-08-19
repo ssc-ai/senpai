@@ -252,6 +252,11 @@ docstring-code-format = false
 # enabled.
 docstring-code-line-length = "dynamic"
 
+# FastAPI declares request parameters by calling Body()/File()/Depends() in the default, which
+# is the framework's convention rather than the mutable-default bug B008 targets.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Body", "fastapi.File", "fastapi.Depends", "fastapi.Query"]
+
 [tool.ruff.lint.extend-per-file-ignores]
 
 "{tests,senpai/engine/tests,senpai/api/tests}/**/*.py" = [

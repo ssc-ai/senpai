@@ -20,6 +20,9 @@ from senpai.engine.models.starfield import StarField, StarListImage
 from senpai.engine.plotting.images import plot_single_frame
 from senpai.engine.utils.preprocessing import remove_column_and_row_medians
 
+#: Built once at import rather than in the parameter default, which is what B008 asks for.
+_SOURCES_EXAMPLES = StarListImageExample().get_openapi_examples()
+
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
@@ -40,7 +43,7 @@ async def index(request: Request) -> JSONResponse:
 @router.post("/solve/sources")
 async def solve_sources(
     request: Request,
-    sources: StarListImage = Body(description="sources list", examples=StarListImageExample().get_openapi_examples()),
+    sources: StarListImage = Body(description="sources list", examples=_SOURCES_EXAMPLES),
 ) -> StarField:
     """Astrometry solve endpoint.
 

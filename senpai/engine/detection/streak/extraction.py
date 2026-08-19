@@ -570,7 +570,7 @@ def refine_robust_streak(
         # Plot measurements showing core vs full length
         if core_lengths:
             thresholds_used = [t for t, _ in core_lengths]
-            lengths_core = [l for _, l in core_lengths]
+            lengths_core = [length for _, length in core_lengths]
             axes[1].plot(
                 thresholds_used,
                 lengths_core,

@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 def process_senpai_collect(
     file_list: list[ProcessedFitsImage],
-    id: str = "senpai",
+    id: str = "senpai",  # noqa: A002 - `id` is the published parameter name
     force_track_mode: TrackMode | None = None,
     pipeline_mode: Literal["full", "detect_solve", "detect"] | None = None,
 ) -> SenpaiRun:
