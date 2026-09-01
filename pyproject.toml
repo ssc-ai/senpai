@@ -270,6 +270,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["senpai"]
 
+[tool.hatch.build.targets.sdist]
+# The accepted-manuscript PDF is ~9 MB; keep it out of the sdist.
+exclude = ["docs/*.pdf"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",

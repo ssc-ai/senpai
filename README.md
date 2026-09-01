@@ -6,7 +6,7 @@ A classic star detector and astrometry tool.
 
 <img src="https://raw.githubusercontent.com/ssc-ai/senpai/main/docs/senpai_logo.png" alt="senpai" width="600"/>
 
-SENPAI is built off of the algorithm descriptions in [Gazak et al. 2026, PASP, 138, 014502](https://iopscience.iop.org/article/10.1088/1538-3873/ae2b35/meta) — see [Citation](#citation) below if you use this software.
+SENPAI is built off of the algorithm descriptions in [Gazak et al. 2026, PASP, 138, 014502](https://iopscience.iop.org/article/10.1088/1538-3873/ae2b35/meta). The accepted manuscript is included in this repo: [docs/gazak2026_senpai_pasp.pdf](docs/gazak2026_senpai_pasp.pdf) — see [Citation](#citation) below if you use this software.
 
 
 Is SENPAI the tool I'm looking for? SENPAI processes FITS imagery from ground-based telescopes and provides:
@@ -138,6 +138,8 @@ http://localhost:8000/docs
 SENPAI implements the algorithms described in:
 
 > Gazak, J. Z., Fisher, L., Phelps, M., Swindle, R., Baruela, L., & Fletcher, J. 2026, "SENPAI: Sidereal Enriched Rate-track Astrometry in Deep Imagery of Solar System Bodies", PASP, 138, 014502. [doi:10.1088/1538-3873/ae2b35](https://doi.org/10.1088/1538-3873/ae2b35)
+
+The accepted manuscript is available here: [docs/gazak2026_senpai_pasp.pdf](docs/gazak2026_senpai_pasp.pdf). This is the author-accepted version; the version of record is at the DOI above. IOP Publishing Ltd is not responsible for any errors or omissions in this version of the manuscript or any version derived from it.
 
 If you use SENPAI in your research, please cite this paper:
 
