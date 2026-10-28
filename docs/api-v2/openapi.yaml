@@ -1,0 +1,4245 @@
+openapi: 3.1.0
+info:
+  title: senpai API
+  version: 2.0.0-draft.1
+  summary: Detection, plate solving, photometry and seeing for ground-based telescope frames.
+  description: |
+    Normative contract for the senpai v2 HTTP API. The server, the `senpai-client` package,
+    the `senpai.v2` models used in-process, and the contract-validated test fake are all
+    generated from or validated against this document.
+
+    Companion documents in this directory:
+
+    - `README.md`: conventions (pixel origin, WCS, angles, time, units), error model,
+      idempotency, sync vs jobs, auth, limits, v1 migration.
+    - `versioning-and-provenance.md`: version axes, pinning, compatibility windows and the
+      provenance block.
+
+    `info.version` is the revision of this document. The API contract version a server
+    implements is `MAJOR.MINOR` (here `2.0`). It is sent in the `Senpai-Api-Version` response
+    header and reported by `GET /v2/capabilities`.
+
+    Response enums are open. Every enum that can appear in a response carries
+    `x-extensible-enum: true` (shared enums such as `SolveTier` and `Operation` carry
+    `x-extensible-enum: responses`: strict in requests, open in responses). Generated clients
+    must map an unknown value to a raw-string fallback instead of raising; the FakeServer has a
+    mode that emits unknown enum values so client CI checks this.
+
+    Every response, including errors and `204`s, carries `Senpai-Api-Version` and
+    `Senpai-Request-Id`.
+
+    Every `{job_id}`, `{result_id}`, table URL, SSE stream, `upload:<id>` reference and
+    `{pixel_sha256}` lookup is filtered by the caller's tenant. An id that belongs to another
+    tenant returns `404 not-found`, never `403`, so ids cannot be probed. Each operation's
+    `security` lists the scope it needs; a token without it gets `403 forbidden`.
+
+    Status: DRAFT for owner review, 2026-10-19. Not implemented.
+  contact:
+    name: senpai maintainers
+    url: https://github.com/ssc-ai/senpai
+  x-api-contract-version: "2.0"
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+servers:
+  - url: https://{host}
+    description: Hosted or self-hosted server behind TLS.
+    variables:
+      host:
+        default: senpai.example.org
+        description: Placeholder. The hosted endpoint name is an open question.
+  - url: http://127.0.0.1:8765
+    description: Local profile (localhost service on the observatory PC).
+security:
+  - bearerAuth: []
+tags:
+  - name: meta
+    description: Health, capabilities and the contract itself.
+  - name: frames
+    description: Single-frame analysis (the bounded synchronous route) and solve-from-sources.
+  - name: jobs
+    description: Asynchronous work (single frames, multi-frame collects, batches).
+  - name: results
+    description: Retrieval of retained results and bulk tables.
+  - name: data
+    description: Uploads and data-ownership operations on retained frames.
+  - name: v1-deprecated
+    description: |
+      senpai 2.x routes, kept during the v1 deprecation window. Request and response bodies
+      are those of senpai 2.8 and are not repeated here; "unchanged" refers to bodies only.
+      From senpai 3.0 the v1 handlers sit behind the same auth (tenant and scopes),
+      `capabilities.limits`, rate limits, killable worker pool and tenant default retention as
+      v2. On `hosted`, v1 is enabled per tenant (default off). Every v1 response carries
+      `Deprecation`, `Link; rel="deprecation"` and, once scheduled, `Sunset`; after the sunset
+      date hosted answers `410 api-version-gone`.
+
+paths:
+  /v2/health:
+    get:
+      tags: [meta]
+      operationId: getHealth
+      summary: Readiness
+      description: |
+        `200` when the server can accept work (`ok` or `degraded`), `503` when it cannot.
+        `degraded` means some capability is down (for example the astrometry.net tier) while
+        others work; check `GET /v2/capabilities` for what is ready. Unauthenticated callers
+        get `status` only; `api_version`, `server_version` and `checks` are returned only with
+        a valid token, or on the `local` profile. Served from the event loop, never blocked by
+        frame processing.
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ready (possibly degraded).
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: Not ready.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v2/health/live:
+    get:
+      tags: [meta]
+      operationId: getLiveness
+      summary: Liveness (process is up)
+      security:
+        - {}
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+  /v2/capabilities:
+    get:
+      tags: [meta]
+      operationId: getCapabilities
+      summary: Versions, pipelines, formats, limits, tiers, bundles and policies
+      description: |
+        Everything a client needs to decide whether this server can do the work: API version,
+        software build, served algorithm versions, enabled solve tiers, active data bundles,
+        limits and data policies. Never contains filesystem paths or secrets. Cacheable with
+        `ETag`. Unauthenticated on the `local` profile; requires a token elsewhere.
+
+        `limits` and `policies` are the caller's **effective** values: the server-wide
+        limits, narrowed by the caller's tenant limits (`limits.per_tenant`).
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Capabilities.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+              examples:
+                selfHosted:
+                  $ref: "#/components/examples/CapabilitiesSelfHosted"
+        "304":
+          description: Not modified.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /v2/openapi.json:
+    get:
+      tags: [meta]
+      operationId: getOpenApi
+      summary: This contract, as served
+      description: Byte-identical (after JSON conversion) to the checked-in `docs/api-v2/openapi.yaml` of the running release. CI enforces this.
+      security:
+        - {}
+      responses:
+        "200":
+          description: OpenAPI document.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /v2/analyze:
+    post:
+      tags: [frames]
+      operationId: analyzeFrame
+      summary: Analyze one frame (bounded synchronous; the slew-loop route)
+      security:
+        - bearerAuth: [analyze]
+      description: |
+        Detect sources in one frame and, depending on `ops`, plate-solve it and measure
+        seeing, photometry and moving-object streaks. One frame per request; the frame is
+        always solved on its own (never through a collect's shift chain).
+
+        Deadline: `min(Prefer: wait, request.deadline_s, limits.sync_max_deadline_s)`. The
+        deadline clock starts when the request body has been fully received; upload time is
+        not part of it. Clients size their transport timeout as transfer estimate + deadline +
+        a margin. A request whose `solve.timeout_s` is below the deadline gets a `200` with the
+        slow rung reported as `attempts[].status: timeout`, not a `504`.
+
+        - Without `Prefer: respond-async`, a request that misses the deadline gets `504
+          deadline-exceeded` and its worker is killed. Nothing keeps running.
+        - With `Prefer: respond-async, wait=N` (RFC 7240), a request still running after `N`
+          seconds is turned into a job: `202` with `Location` and `Preference-Applied:
+          respond-async`. Only if `capabilities.policies.async_promotion` is true (default
+          false on `hosted`). A promoted request keeps its sync worker for at most
+          `limits.promoted_max_s` and counts against the caller's per-tenant sync concurrency
+          until it finishes; past that it fails with `deadline-exceeded` in the job.
+        - On servers that set `limits.sync_tier_budget_s`, a tier whose budget is exhausted is
+          reported as `attempts[].status: timeout`; blind solves that need more belong on
+          `POST /v2/jobs`.
+
+        If no sync worker is free within `limits.overload_reject_ms` (default 1000) the server
+        returns `503 overloaded` so the client can fall back; the sync pool never queues behind
+        batch work. Admission to the sync pool is by tenant fair share.
+
+        Unavailable solve tiers: tiers in `solve.tiers` that this server cannot run are
+        skipped and listed in `solution.attempts[]` with `status: skipped` and `reason:
+        tier-unavailable:<T>`; the solve proceeds with the available tiers and the result is
+        `200`. `solution.status: not_attempted` with `reason: tier-unavailable` means none of
+        the requested tiers is available under `planner: auto`. Only `planner: explicit` naming
+        a tier this server does not serve returns `422 tier-unavailable`.
+
+        "Processed but not solved" is `200` with `solution.status` set. 4xx/5xx mean the
+        request or the server failed, never that the sky did not cooperate.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/Prefer"
+        - $ref: "#/components/parameters/ApiMinMinor"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AnalyzeMultipart"
+            encoding:
+              request:
+                contentType: application/json
+              image:
+                contentType: application/fits, application/octet-stream, application/gzip
+            examples:
+              pointingWarm:
+                $ref: "#/components/examples/AnalyzeRequestPointingWarm"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRequest"
+            examples:
+              byReference:
+                $ref: "#/components/examples/AnalyzeRequestByRef"
+      responses:
+        "200":
+          $ref: "#/components/responses/FrameResultOk"
+        "202":
+          $ref: "#/components/responses/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/DeadlineExceeded"
+
+  /v2/solve/sources:
+    post:
+      tags: [frames]
+      operationId: solveSources
+      summary: Plate-solve a detection list (no image)
+      security:
+        - bearerAuth: [analyze]
+      description: |
+        Successor of `POST /astrometry/solve/sources`. For clients that detect locally
+        (low-bandwidth mode) or bring their own detector. Sources are 0-based pixel
+        coordinates; the server converts for astroeasy. `hint.scale` is honoured (v1 silently
+        ignored its FoV hint). Same bounded-sync, deadline and tier rules as `/v2/analyze`.
+        `pin.algorithm` must name `senpai.sources-solve` (or be a bare integer or channel
+        alias); a pin naming another pipeline is `400 invalid-request`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/Prefer"
+        - $ref: "#/components/parameters/ApiMinMinor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourcesSolveRequest"
+      responses:
+        "200":
+          description: Processed. Check `solution.status`.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+            Senpai-Replayed:
+              $ref: "#/components/headers/SenpaiReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcesSolveResult"
+            application/vnd.senpai.v2+msgpack:
+              schema:
+                $ref: "#/components/schemas/SourcesSolveResult"
+        "202":
+          $ref: "#/components/responses/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/DeadlineExceeded"
+
+  /v2/jobs:
+    post:
+      tags: [jobs]
+      operationId: createJob
+      summary: Submit an asynchronous job (frame, collect or sources)
+      security:
+        - bearerAuth: [jobs]
+      description: |
+        `kind: frame` takes an `AnalyzeRequest`; `kind: collect` takes a `CollectRequest`
+        with one image part per frame, named `image.<client_frame_id>` (or `image.ref` per
+        frame); `kind: sources` takes a `SourcesSolveRequest`.
+
+        A collect solves the first sidereal frame that solves and propagates the WCS to the
+        other frames along the shift chain unless `collect.solve_every_frame` is true. Each
+        frame's `wcs_status` says which happened. Pointing-model clients must use
+        `/v2/analyze` (one frame per request), not collects.
+
+        A repeated `Idempotency-Key` with the same fingerprint returns `202` with the existing
+        job's `Location` in every job state (queued, running or finished); `409
+        idempotency-in-flight` applies only to the sync routes. Where
+        `capabilities.policies.idempotency_required` lists this route, a request without the
+        header gets `400 idempotency-key-missing`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ApiMinMinor"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/JobMultipart"
+            encoding:
+              request:
+                contentType: application/json
+              image:
+                contentType: application/fits, application/octet-stream, application/gzip
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v2/jobs/{job_id}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: Job status
+      description: Status monitor. Kept at least `capabilities.policies.job_ttl_h` after completion. Poll after `Retry-After`. Tenant-scoped (a foreign id is `404`).
+      security:
+        - bearerAuth: [jobs]
+      responses:
+        "200":
+          description: Job status.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [jobs]
+      operationId: cancelJob
+      summary: Cancel a job and purge its inputs and result
+      security:
+        - bearerAuth: ["data:delete"]
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v2/jobs/{job_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [jobs]
+      operationId: streamJobEvents
+      summary: Server-sent events for a job
+      security:
+        - bearerAuth: [jobs]
+      description: |
+        `text/event-stream`. Event names: `state` (data: `Job`), `progress` (data: `JobProgress`),
+        `frame_done` (data: `FrameResult` for one frame of a collect, in completion order),
+        `done` (data: `Job`). Supports `Last-Event-ID` for resumption. Available when
+        `capabilities.jobs.sse` is true.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Event stream.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: progress
+                id: 7
+                data: {"frames_done": 3, "frames_total": 12, "fraction": 0.25}
+
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/results/{result_id}:
+    parameters:
+      - $ref: "#/components/parameters/ResultId"
+    get:
+      tags: [results]
+      operationId: getResult
+      summary: A retained result (frame, collect or sources-solve)
+      description: Available while the result is retained under the applied data policy (`data_policy_applied.retain_until`). Tenant-scoped.
+      security:
+        - bearerAuth: ["results:read"]
+      responses:
+        "200":
+          description: The stored result, identical to what was first returned.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnyResult"
+            application/vnd.senpai.v2+msgpack:
+              schema:
+                $ref: "#/components/schemas/AnyResult"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [results]
+      operationId: deleteResult
+      summary: Delete a retained result now
+      description: Deletes the result and its tables. An audit row remains for `policies.audit_retention_days` with the fields listed in `docs/deployment.md` section 8 (ids, timestamps, version axes, `pixel_sha256`; no hint, WCS, detections or pixels).
+      security:
+        - bearerAuth: ["data:delete"]
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v2/results/{result_id}/tables/{table}:
+    parameters:
+      - $ref: "#/components/parameters/ResultId"
+      - $ref: "#/components/parameters/TableName"
+    get:
+      tags: [results]
+      operationId: getResultTable
+      summary: Bulk table of a retained result
+      security:
+        - bearerAuth: ["results:read"]
+      description: |
+        Large lists in columnar form. `Accept: application/vnd.apache.arrow.stream` (preferred
+        for large tables), `application/vnd.senpai.v2+msgpack`, or `application/json` (an
+        array of row objects). Column names and units equal the corresponding JSON fields.
+        For collects, every row carries `client_frame_id`.
+      responses:
+        "200":
+          description: Table.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/vnd.apache.arrow.stream:
+              schema:
+                type: string
+                contentMediaType: application/vnd.apache.arrow.stream
+            application/vnd.senpai.v2+msgpack:
+              schema:
+                type: string
+                contentMediaType: application/vnd.senpai.v2+msgpack
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v2/uploads:
+    post:
+      tags: [data]
+      operationId: createUpload
+      summary: Get a presigned upload slot for a large frame or a collect
+      security:
+        - bearerAuth: [analyze]
+      description: |
+        Only when `capabilities.inputs.image_ref.uploads` is true (hosted, or a self-host with
+        an object store). PUT the bytes to `upload_url`, then reference `image_ref.uri` in an
+        analyze request or job. The checksum is enforced by the store.
+
+        The `upload:<id>` is bound to (tenant, sha256): only the creating tenant can reference
+        it, and only for bytes with that hash. An object never referenced is deleted at
+        `expires_at`; once referenced it follows the referencing request's data policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadSlotRequest"
+      responses:
+        "201":
+          description: Upload slot.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSlot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v2/frames/{pixel_sha256}:
+    parameters:
+      - $ref: "#/components/parameters/PixelSha256"
+    get:
+      tags: [data]
+      operationId: getFrameRecord
+      summary: What this server holds for a frame (data ownership)
+      description: Retention status, linked results, holds (e.g. a consented shadow evaluation) and contribution grants for this tenant only.
+      security:
+        - bearerAuth: ["results:read"]
+      responses:
+        "200":
+          description: Frame record.
+          headers:
+            Senpai-Api-Version:
+              $ref: "#/components/headers/SenpaiApiVersion"
+            Senpai-Request-Id:
+              $ref: "#/components/headers/SenpaiRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FrameRecord"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [data]
+      operationId: deleteFrame
+      summary: Delete a retained frame, its derived results, and revoke contribution
+      description: |
+        Removes the frame bytes and the tenant's results for it. A contribution grant is
+        revoked: the frame is removed from future evaluation and training sets. Models already
+        trained are not retrained (stated in the contribution terms).
+      security:
+        - bearerAuth: ["data:delete"]
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /senpai/:
+    get:
+      tags: [v1-deprecated]
+      operationId: v1Info
+      deprecated: true
+      summary: "v1: API info (replaced by /v2/health and /v2/capabilities)"
+      security:
+        - {}
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /senpai/detect:
+    post:
+      tags: [v1-deprecated]
+      operationId: v1Detect
+      deprecated: true
+      summary: "v1: base64 collect (replaced by POST /v2/jobs kind=collect, or /v2/analyze for one frame)"
+      requestBody:
+        $ref: "#/components/requestBodies/V1Json"
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /senpai/detect/upload:
+    post:
+      tags: [v1-deprecated]
+      operationId: v1DetectUpload
+      deprecated: true
+      summary: "v1: alias of /senpai/detect"
+      requestBody:
+        $ref: "#/components/requestBodies/V1Json"
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /senpai/sidereal:
+    post:
+      tags: [v1-deprecated]
+      operationId: v1Sidereal
+      deprecated: true
+      summary: "v1: alias of /senpai/detect"
+      requestBody:
+        $ref: "#/components/requestBodies/V1Json"
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /senpai/rate:
+    post:
+      tags: [v1-deprecated]
+      operationId: v1Rate
+      deprecated: true
+      summary: "v1: alias of /senpai/detect"
+      requestBody:
+        $ref: "#/components/requestBodies/V1Json"
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /astrometry/:
+    get:
+      tags: [v1-deprecated]
+      operationId: v1AstrometryInfo
+      deprecated: true
+      summary: "v1: API info. From senpai 3.0 returns only {api, version}; the config dump is removed (security fix)."
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /astrometry/solve/sources:
+    post:
+      tags: [v1-deprecated]
+      operationId: v1SolveSources
+      deprecated: true
+      summary: "v1: solve a StarListImage (replaced by POST /v2/solve/sources)"
+      requestBody:
+        $ref: "#/components/requestBodies/V1Json"
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "422":
+          $ref: "#/components/responses/V1Deprecated"
+  /astrometry/solve/fits:
+    post:
+      tags: [v1-deprecated]
+      operationId: v1SolveFits
+      deprecated: true
+      summary: "v1: solve an uploaded FITS (replaced by POST /v2/analyze ops=[detect, solve]). From 3.0 no longer writes a PNG to the working directory."
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                fits_file:
+                  type: string
+                  contentMediaType: application/fits
+      responses:
+        "200":
+          $ref: "#/components/responses/V1Deprecated"
+        "410":
+          $ref: "#/components/responses/Gone"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer <token>`. Static API keys (prefix `snp_`, hashed at rest; the
+        self-hosted, air-gapped and local default) or OIDC-issued JWTs (hosted, or a self-host
+        with an identity provider). `capabilities.auth.modes` says which modes are active.
+
+        Scopes: `analyze` (`/v2/analyze`, `/v2/solve/sources`, `/v2/uploads`), `jobs`
+        (`POST /v2/jobs`, job status and events), `results:read` (results, tables, frame
+        records), `data:delete` (`DELETE` on jobs, results and frames). Each operation's
+        `security` names its scope; a token without it gets `403 forbidden`. Telescope tokens
+        should carry `analyze` (and `jobs`) only.
+
+        Tenancy: every principal maps to one `tenant_id`. Every id lookup (`job_id`,
+        `result_id`, tables, SSE, `upload:<id>`, `pixel_sha256`) is filtered by that tenant;
+        a foreign id is `404 not-found`, never `403`.
+
+        Static keys: a key-file record is `{key_id, sha256(secret), tenant_id, scopes,
+        not_after, disabled}`; `senpai-admin keys add|rotate|revoke` manage it. OIDC: the
+        server config must set `iss`, `aud` and an allowed-algorithms list; the server refuses
+        to start in `oidc` mode without `aud`. Hosted uses `oidc` like any other deployment:
+        the gateway forwards the caller's JWT, or mints a short-lived JWT with `aud`,
+        `tenant_id` and `scope` claims that the standard `oidc` mode verifies. There is no
+        gateway-header auth path.
+
+        Mode `none` is accepted only on a loopback bind and only with
+        `auth.allow_none_on_loopback: true`; the `local` profile's default is a token file. On
+        loopback binds the server always checks `Host` against `127.0.0.1:<port>`,
+        `localhost:<port>` and `[::1]:<port>`, and rejects any request whose `Origin` is not
+        on the CORS allow-list (default: reject all), so web pages and DNS rebinding cannot
+        drive the local service.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        A token of 1 to 255 characters from `[A-Za-z0-9._:-]`. A structured-field string
+        (the same characters, double-quoted, as in the IETF idempotency-key draft) is also
+        accepted; the quotes are not part of the key. Scope is (tenant, key). One key per
+        exposure: a retry with a new exposure, or a reprocess under a new pin, needs a new key.
+
+        Fingerprint: `/v2/analyze` and frame jobs use `sha256(pixel_sha256 || JCS(request
+        without client_frame_id, data_policy and deadline_s))`; `/v2/solve/sources` and
+        sources jobs use `sha256(sources_sha256 || JCS(request without client_frame_id,
+        data_policy and deadline_s))`; collects hash the ordered list of frame pixel hashes
+        with the request. The `Prefer` header is not part of the fingerprint.
+
+        Same key + same fingerprint, finished: the stored result is replayed with
+        `Senpai-Replayed: true`. Same key while the first request is in flight: `409
+        idempotency-in-flight` on the sync routes; on `/v2/jobs`, `202` with the existing job.
+        Same key + different fingerprint: `422 idempotency-key-reused`. Keys expire after
+        `capabilities.policies.idempotency_ttl_s`. Required (`400 idempotency-key-missing`
+        otherwise) only on routes listed in `capabilities.policies.idempotency_required`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 257
+        pattern: "^(\"[A-Za-z0-9._:-]{1,255}\"|[A-Za-z0-9._:-]{1,255})$"
+      example: run_01JB7Q2A:017:0
+    Prefer:
+      name: Prefer
+      in: header
+      required: false
+      description: "RFC 7240. `wait=N` bounds the synchronous wait in seconds. Add `respond-async` to allow promotion to a job (202) instead of `504`."
+      schema:
+        type: string
+      examples:
+        boundedSync:
+          value: wait=20
+        promotable:
+          value: respond-async, wait=20
+    ApiMinMinor:
+      name: Senpai-Api-Min-Minor
+      in: header
+      required: false
+      description: Smallest v2 minor the client needs. A server implementing an older minor answers `412 api-minor-unsupported`.
+      schema:
+        type: integer
+        minimum: 0
+      example: 0
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^job_[0-9A-Za-z]{26}$"
+    ResultId:
+      name: result_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^res_[0-9A-Za-z]{26}$"
+    PixelSha256:
+      name: pixel_sha256
+      in: path
+      required: true
+      description: The `frame.pixel_sha256` of a result (canonical decoded-pixel hash, README section 9).
+      schema:
+        $ref: "#/components/schemas/Sha256Hex"
+    TableName:
+      name: table
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [detections, matches, photometry_stars, fwhm_samples, streaks, objects]
+
+  headers:
+    SenpaiApiVersion:
+      description: API contract version implemented by the server, `2.MINOR`.
+      schema:
+        type: string
+        pattern: "^2\\.[0-9]+$"
+      example: "2.0"
+    SenpaiRequestId:
+      description: Server-assigned request id; also in `provenance.request_id` and in problem documents.
+      schema:
+        type: string
+      example: req_01JB7Q4C1V8N2M3K4J5H6G7F8D
+    SenpaiReplayed:
+      description: "`true` when the body is an idempotent replay of an earlier response."
+      schema:
+        type: boolean
+    SenpaiCache:
+      description: "`hit` when the result was served from the reproducibility-key cache (see `provenance.cache`)."
+      schema:
+        type: string
+        enum: [hit, miss]
+    RetryAfter:
+      description: Seconds to wait before retrying or polling.
+      schema:
+        type: integer
+        minimum: 0
+    Location:
+      description: URL of the created job status monitor.
+      schema:
+        type: string
+        format: uri-reference
+    PreferenceApplied:
+      description: RFC 7240 `Preference-Applied`, e.g. `respond-async`.
+      schema:
+        type: string
+    RateLimit:
+      description: IETF httpapi RateLimit fields (draft). Remaining quota and reset.
+      schema:
+        type: string
+    RateLimitPolicy:
+      description: IETF httpapi RateLimit-Policy field (draft).
+      schema:
+        type: string
+    ETag:
+      description: Entity tag.
+      schema:
+        type: string
+    Deprecation:
+      description: "RFC 9745. `@<unix-seconds>` when the route was deprecated."
+      schema:
+        type: string
+      example: "@1798761600"
+    Sunset:
+      description: RFC 8594. HTTP-date after which the route may stop working (hosted returns `410`).
+      schema:
+        type: string
+      example: Wed, 01 Dec 2027 00:00:00 GMT
+    Link:
+      description: '`<https://github.com/ssc-ai/senpai/blob/main/docs/api-v2/README.md#11-migration-from-v1>; rel="deprecation"`'
+      schema:
+        type: string
+
+  requestBodies:
+    V1Json:
+      required: true
+      content:
+        application/json:
+          schema:
+            description: Unchanged senpai 2.8 request body.
+            type: [object, array]
+
+  responses:
+    NoContent:
+      description: Done; no body.
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+    Gone:
+      description: "`api-version-gone`: the route is past its `Sunset` date (hosted)."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    V1Deprecated:
+      description: Unchanged senpai 2.8 response body, plus deprecation headers.
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+        Deprecation:
+          $ref: "#/components/headers/Deprecation"
+        Sunset:
+          $ref: "#/components/headers/Sunset"
+        Link:
+          $ref: "#/components/headers/Link"
+      content:
+        application/json:
+          schema:
+            type: [object, array]
+    FrameResultOk:
+      description: Processed. Check `status`, `detection.status` and `solution.status`.
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+        Senpai-Replayed:
+          $ref: "#/components/headers/SenpaiReplayed"
+        Senpai-Cache:
+          $ref: "#/components/headers/SenpaiCache"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/FrameResult"
+          examples:
+            solved:
+              $ref: "#/components/examples/FrameResultSolved"
+        application/vnd.senpai.v2+msgpack:
+          schema:
+            $ref: "#/components/schemas/FrameResult"
+    JobAccepted:
+      description: "Accepted as a job (explicit job submission, or sync request promoted under `Prefer: respond-async`)."
+      headers:
+        Location:
+          $ref: "#/components/headers/Location"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+        Preference-Applied:
+          $ref: "#/components/headers/PreferenceApplied"
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Job"
+    BadRequest:
+      description: "`invalid-request` (schema failure, unknown field, or a pin naming another pipeline; see `errors[]`) or `idempotency-key-missing` (only on routes in `policies.idempotency_required`)."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthenticated:
+      description: "`unauthenticated`."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: "`forbidden` (token lacks the operation's scope, or tenant policy forbids the request, e.g. contribution not agreed). Never used for another tenant's ids (those are `404`)."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: "`not-found` (job, result, upload or frame unknown, owned by another tenant, or no longer retained)."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: "`idempotency-in-flight` (retry after `Retry-After`)."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PreconditionFailed:
+      description: "`api-minor-unsupported`: the server's v2 minor is older than `Senpai-Api-Min-Minor`."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PayloadTooLarge:
+      description: "`payload-too-large`: request bytes, decoded size (pixels or bytes, from ZNAXISn/ZBITPIX for tile-compressed HDUs and NAXISn/BITPIX otherwise, checked before decompression; gzip streams aborted at the cap), HDU or header-card count, source count, or frame count over `capabilities.limits`."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnsupportedMediaType:
+      description: "`unsupported-format`: not a supported image format or compression."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnprocessableContent:
+      description: |
+        `unreadable-image`, `lossy-encoding-not-allowed`, `image-ref-forbidden`,
+        `image-ref-unreachable`, `image-ref-checksum-mismatch` (on `hosted` these three
+        collapse into `image-ref-unusable` with a generic `detail`), `idempotency-key-reused`,
+        `algorithm-unavailable`, `bundle-unavailable`, `tier-unavailable` (only `planner:
+        explicit` naming a tier this server does not serve), `operation-unavailable`. Never
+        used for "no solution".
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            algorithmUnavailable:
+              $ref: "#/components/examples/ProblemAlgorithmUnavailable"
+    TooManyRequests:
+      description: "`rate-limited`."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+        RateLimit:
+          $ref: "#/components/headers/RateLimit"
+        RateLimit-Policy:
+          $ref: "#/components/headers/RateLimitPolicy"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    InternalError:
+      description: "`internal`. Carries `request_id`."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: "`overloaded` (no sync worker within `limits.overload_reject_ms`, or the caller's per-tenant sync share is used) or `not-ready` (a required bundle is missing or warming)."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    DeadlineExceeded:
+      description: "`deadline-exceeded`: the sync deadline passed without `respond-async`. The worker was killed."
+      headers:
+        Senpai-Api-Version:
+          $ref: "#/components/headers/SenpaiApiVersion"
+        Senpai-Request-Id:
+          $ref: "#/components/headers/SenpaiRequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    # ---------------------------------------------------------------- primitives
+    Sha256Hex:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    Digest:
+      type: string
+      description: Content digest, `sha256:<hex>`.
+      pattern: "^sha256:[0-9a-f]{64}$"
+    PixelXY:
+      type: array
+      description: "[x, y] in 0-based pixel coordinates (centre of first pixel = [0, 0])."
+      items:
+        type: number
+      minItems: 2
+      maxItems: 2
+    Binning:
+      type: array
+      description: "[x, y] binning of the frame as delivered."
+      items:
+        type: integer
+        minimum: 1
+      minItems: 2
+      maxItems: 2
+    ClientId:
+      type: string
+      pattern: "^[A-Za-z0-9._:-]{1,128}$"
+    ValueSource:
+      type: string
+      description: "Where a value came from: `request`, `header:<KEY>`, `derived`, `measured`, `default`, `config` or `absent`."
+      pattern: "^(request|header:[A-Z0-9_-]{1,8}|derived|measured|default|config|absent)$"
+    SourcedNumber:
+      type: object
+      required: [value, source]
+      properties:
+        value:
+          type: [number, "null"]
+        source:
+          $ref: "#/components/schemas/ValueSource"
+    PixelConvention:
+      type: object
+      description: Stated once per result. Fixed for all of v2.
+      required: [origin, center_of_first_pixel, x_axis]
+      properties:
+        origin:
+          const: 0
+        center_of_first_pixel:
+          $ref: "#/components/schemas/PixelXY"
+        x_axis:
+          const: column
+          description: "`x` is the column (FITS axis 1), `y` the row (FITS axis 2)."
+    WcsHeader:
+      type: object
+      description: |
+        Standard FITS WCS keywords (CRPIX 1-based per FITS): `CTYPE1/2` (`RA---TAN` or
+        `RA---TAN-SIP`), `CRVAL1/2`, `CRPIX1/2`, `CD1_1..CD2_2` (or `PC*` + `CDELT*`),
+        `A_ORDER`, `A_p_q`, `B_ORDER`, `B_p_q`, `AP_*`, `BP_*` (all coefficients present
+        whenever CTYPE ends in `-SIP`), `RADESYS` (`ICRS`), `EQUINOX`, `IMAGEW`, `IMAGEH`.
+        Time keywords: `DATE-OBS`/`MJD-OBS` and `DATE-BEG`/`MJD-BEG` = exposure start;
+        `DATE-AVG`/`MJD-AVG` = mid-exposure (`t_mid`, the epoch of every position in the
+        result); `TIMESYS = 'UTC'`. Guaranteed valid for
+        `astropy.wcs.WCS(header).all_pix2world(x, y, 0)` with the 0-based coordinates in this
+        API.
+      required: [header]
+      properties:
+        header:
+          type: object
+          additionalProperties:
+            type: [string, number, integer, boolean]
+          propertyNames:
+            pattern: "^[A-Z0-9_-]{1,8}$"
+    Warning:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable upper-case code, e.g. `MISSING_EXPOSURE`, `NO_SITE`, `IERS_STALE`, `HINT_IGNORED`, `PIN_NOT_HONORED`, `HEADER_OVERRIDDEN`, `LOSSY_INPUT`, `ALGORITHM_DEPRECATED`.
+          examples: [NO_SITE]
+        message:
+          type: string
+        field:
+          type: string
+          description: JSON pointer into the request, when the warning concerns a field.
+        disables:
+          type: array
+          items:
+            type: string
+          description: Products that this condition disables, e.g. `["altaz", "airmass"]`.
+
+    # ---------------------------------------------------------------- requests
+    ImageRef:
+      type: object
+      description: |
+        A frame by reference. Resolution rules are normative and in README section 5.5
+        (parsed scheme/host/port allow-lists, no private or metadata addresses, no
+        redirects, byte cap, per-tenant S3 prefixes and roles, `file:` forbidden on `hosted`
+        and confined to a configured root elsewhere, `upload:` bound to (tenant, sha256)).
+      required: [uri]
+      additionalProperties: false
+      properties:
+        uri:
+          type: string
+          description: "`upload:<id>` (from `POST /v2/uploads`), `https://…`, `s3://…`, or `file:///…` where `capabilities.inputs.image_ref.schemes` allows it."
+        sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+          description: SHA-256 of the transport bytes. Required for `https` and `s3`; the server verifies it.
+      if:
+        properties:
+          uri:
+            pattern: "^(https|s3)://"
+      then:
+        required: [uri, sha256]
+    ImageOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        ref:
+          oneOf:
+            - $ref: "#/components/schemas/ImageRef"
+            - type: "null"
+          description: Use instead of a multipart `image` part.
+        hdu:
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: string
+            - type: "null"
+          description: HDU index or EXTNAME. Default is the first HDU with 2-D data (including tile-compressed `CompImageHDU`).
+        allow_lossy:
+          type: boolean
+          default: false
+          description: |
+            Accept lossy input. An HDU is lossy when its ZBITPIX is negative (float) and it was
+            quantized: a `ZSCALE`/`ZZERO` column or keyword is present, or `ZQUANTIZ` is present
+            and not `NONE`. Integer ZBITPIX tile compression is always lossless; float GZIP or
+            Rice without quantization (no ZSCALE/ZZERO) is lossless. Otherwise `422
+            lossy-encoding-not-allowed`.
+    Site:
+      type: object
+      required: [lat_deg, lon_deg]
+      additionalProperties: false
+      properties:
+        lat_deg:
+          type: number
+          minimum: -90
+          maximum: 90
+        lon_deg:
+          type: number
+          minimum: -180
+          maximum: 360
+          description: East positive.
+        height_m:
+          type: number
+    HeaderMap:
+      type: object
+      description: Per-request FITS keyword names for frame metadata (capture apps differ). Keys are frame-meta field names.
+      additionalProperties: false
+      properties:
+        exposure_s:
+          type: string
+        t_start_utc:
+          type: string
+        t_mid_utc:
+          type: string
+          description: Header key holding the mid-exposure time (e.g. `DATE-AVG`, `MIDPOINT`).
+        filter:
+          type: string
+        ra:
+          type: string
+        dec:
+          type: string
+        binning_x:
+          type: string
+        binning_y:
+          type: string
+        gain:
+          type: string
+        track_mode:
+          type: string
+        rate_ra:
+          type: string
+        rate_dec:
+          type: string
+        site_lat:
+          type: string
+        site_lon:
+          type: string
+        site_height:
+          type: string
+    FrameMeta:
+      type: object
+      description: Explicit frame metadata. Overrides FITS headers unless `header_policy` says otherwise. Every value used is echoed with its source.
+      additionalProperties: false
+      properties:
+        exposure_s:
+          type: number
+          exclusiveMinimum: 0
+        t_start_utc:
+          type: string
+          format: date-time
+        t_mid_utc:
+          type: string
+          format: date-time
+          description: If both times are given they must agree within 1 ms.
+        binning:
+          $ref: "#/components/schemas/Binning"
+        filter:
+          type: [string, "null"]
+        gain_e_per_adu:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+        read_noise_e:
+          type: [number, "null"]
+          minimum: 0
+        saturation_adu:
+          type: [number, "null"]
+        track_mode:
+          type: string
+          enum: [auto, sidereal, rate]
+          default: auto
+        site:
+          oneOf:
+            - $ref: "#/components/schemas/Site"
+            - type: "null"
+        calibrated:
+          type: boolean
+          default: true
+          description: "`true`: frame is already dark/flat calibrated; the server does no calibration-library lookup."
+        header_policy:
+          type: string
+          enum: [fallback, prefer_header, ignore_header]
+          default: fallback
+          description: "`fallback`: request values win, headers fill gaps."
+        header_map:
+          $ref: "#/components/schemas/HeaderMap"
+        header_time_ref:
+          type: string
+          enum: [start, mid, end]
+          default: start
+          description: |
+            What the header time mapped to `t_start_utc` actually marks (MaxIm with the DL
+            Imaging driver >= 6.24 writes the midpoint into `DATE-OBS`). Precedence for
+            `t_mid`: explicit `t_mid_utc` > explicit `t_start_utc` + exposure/2 > header mid
+            key (`header_map.t_mid_utc`, then `DATE-AVG`, `MIDPOINT`) > header start key +
+            exposure/2 (adjusted by `header_time_ref`). The rule used is echoed in
+            `frame.t_mid_source`, e.g. `header:DATE-AVG`.
+        header_time_scale:
+          const: utc
+          description: Header times without a zone designator (TheSkyX dropped the `Z` from DATE-OBS) are read as UTC.
+    CenterHint:
+      type: object
+      required: [ra_deg, dec_deg]
+      additionalProperties: false
+      properties:
+        ra_deg:
+          type: number
+          minimum: 0
+          exclusiveMaximum: 360
+        dec_deg:
+          type: number
+          minimum: -90
+          maximum: 90
+        radius_deg:
+          type: number
+          exclusiveMinimum: 0
+          description: Expected pointing error, roughly a 1-sigma radius. Drives which solve rungs are tried.
+    ScaleHint:
+      type: object
+      required: [arcsec_per_px]
+      additionalProperties: false
+      properties:
+        arcsec_per_px:
+          type: number
+          exclusiveMinimum: 0
+          description: Scale of the frame as delivered (binned).
+        rel_tol:
+          type: number
+          exclusiveMinimum: 0
+          exclusiveMaximum: 1
+          default: 0.1
+    RollHint:
+      type: object
+      required: [deg]
+      additionalProperties: false
+      properties:
+        deg:
+          type: number
+          description: Position angle of image +y, north through east.
+        tol_deg:
+          type: number
+          exclusiveMinimum: 0
+    StarMotionPixels:
+      type: object
+      title: Pixel form
+      required: [length_px, angle_deg]
+      additionalProperties: false
+      properties:
+        length_px:
+          type: number
+          minimum: 0
+        angle_deg:
+          type: [number, "null"]
+          description: Axial, [0, 180). Null if unknown (length still drives routing).
+    StarMotionSky:
+      type: object
+      title: Sky-rate form
+      required: [ra_arcsec_s, dec_arcsec_s]
+      additionalProperties: false
+      properties:
+        ra_arcsec_s:
+          type: number
+          description: Apparent rate of stars relative to the boresight, RA component (times cos dec), arcsec/s.
+        dec_arcsec_s:
+          type: number
+    Hint:
+      type: object
+      description: What the server cannot infer. All optional; absent hints make the server rely on headers and blind tiers.
+      additionalProperties: false
+      properties:
+        phase:
+          type: string
+          enum: [cold, warm, locked]
+          description: Default derived from what is present (prior_wcs implies locked).
+        center:
+          $ref: "#/components/schemas/CenterHint"
+        scale:
+          $ref: "#/components/schemas/ScaleHint"
+        roll:
+          $ref: "#/components/schemas/RollHint"
+        parity:
+          type: [integer, "null"]
+          enum: [1, -1, null]
+        prior_wcs:
+          oneOf:
+            - $ref: "#/components/schemas/WcsHeader"
+            - type: "null"
+          description: Standard-convention WCS used by the T0 refine rung.
+        star_motion:
+          description: |
+            Predicted apparent motion of stars across the detector during the exposure (the
+            owner's "predicted rate vector"). Pixel form, or sky-rate form that the server
+            converts with scale, roll and exposure. Drives point vs trail routing.
+          oneOf:
+            - $ref: "#/components/schemas/StarMotionPixels"
+            - $ref: "#/components/schemas/StarMotionSky"
+        fwhm_px:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+          description: Seeing memory from the previous frame. The server is stateless.
+    DetectionOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        method:
+          type: string
+          enum: [auto, point, trail]
+          default: auto
+          description: "`trail` = star-trail centroid path. `auto` routes on predicted or measured trail length."
+        threshold_sigma:
+          type: number
+          exclusiveMinimum: 0
+          default: 5.0
+          description: Significance in a zero-mean matched filter with annulus noise. No padding with noise peaks up to max_sources.
+        max_sources:
+          type: integer
+          minimum: 1
+          default: 100
+          description: At most `capabilities.limits.max_sources`.
+        routing_fwhm_factor:
+          type: number
+          exclusiveMinimum: 0
+          default: 1.5
+          description: Trail path when length >= factor x FWHM.
+        n_trails:
+          type: integer
+          minimum: 1
+          default: 10
+          description: Trails used to measure the star-trail model.
+        refine_centroids:
+          type: boolean
+          default: true
+        edge_margin_fwhm:
+          type: number
+          minimum: 0
+          default: 1.0
+          description: Trails are dropped within length/2 + margin x FWHM of the edge; points within margin x FWHM.
+        background:
+          type: string
+          enum: [global_median, mesh, none]
+          default: global_median
+    GateOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        min_matches:
+          type: integer
+          minimum: 3
+          default: 8
+        max_rms_px:
+          type: number
+          exclusiveMinimum: 0
+          default: 5.0
+        min_log_odds:
+          type: number
+          default: 10.0
+        match_tol_px:
+          type: number
+          exclusiveMinimum: 0
+          default: 8.0
+    SolveTier:
+      type: string
+      x-extensible-enum: responses
+      enum: [T0, T1, T3, T4]
+      description: "T0 catalog refine near a prior, T1 tetra3 pattern match, T3 astrometry.net with hint, T4 astrometry.net blind."
+    SolveOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        tiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/SolveTier"
+          uniqueItems: true
+          default: [T0, T1, T4]
+          description: |
+            Tiers this server cannot run are skipped (`attempts[].status: skipped`, reason
+            `tier-unavailable:<T>`) and the solve proceeds with the rest (`200`). If none is
+            available under `planner: auto` the result is `solution.status: not_attempted`
+            with reason `tier-unavailable`. Only `planner: explicit` naming an unserved tier is
+            `422 tier-unavailable`.
+        planner:
+          type: string
+          enum: [auto, explicit]
+          default: auto
+          description: "`auto`: astroeasy rung planner (T0 prior, roll-constrained T0, T0 boresight, T1 both parities, T3/T4). `explicit`: run `tiers` exactly as listed."
+        gate:
+          $ref: "#/components/schemas/GateOptions"
+        sip_order:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 2
+        max_t0_error_fov_frac:
+          type: number
+          exclusiveMinimum: 0
+          default: 0.5
+          description: T0 boresight rung is skipped when hint radius exceeds this fraction of the FoV.
+        catalog_mag_limit_g:
+          type: [number, "null"]
+        timeout_s:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+          description: Solve budget inside the overall deadline.
+    PhotometryOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        aperture_fwhm_factor:
+          type: number
+          exclusiveMinimum: 0
+        annulus_fwhm:
+          type: array
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+        min_snr:
+          type: number
+        limiting_snr:
+          type: number
+          default: 5.0
+        target_bands:
+          type: array
+          items:
+            type: string
+        color_terms:
+          type: boolean
+          default: false
+    ObjectsOptions:
+      type: object
+      description: Moving-object / target detection (`ops` contains `objects`). Independent of `detection.max_sources`.
+      additionalProperties: false
+      properties:
+        max_objects:
+          type: integer
+          minimum: 1
+          default: 500
+        min_snr:
+          type: number
+          exclusiveMinimum: 0
+          default: 5.0
+        confirmation:
+          type: string
+          enum: [auto, none, stamp, rate_scan]
+          default: auto
+          description: How candidates are confirmed (the engine's stamp and rate-scan confirmation).
+    StreakOptions:
+      type: object
+      description: Moving-object streak detection (not star trails).
+      additionalProperties: false
+      properties:
+        detect:
+          type: boolean
+          default: true
+        correlation_radius_fwhm:
+          type: number
+          exclusiveMinimum: 0
+        angle_tolerance_deg:
+          type: number
+          exclusiveMinimum: 0
+    Products:
+      type: object
+      description: What to include inline. Bulk tables are fetchable later while retained.
+      additionalProperties: false
+      properties:
+        detections:
+          type: boolean
+          default: true
+        matches:
+          type: boolean
+          default: true
+        candidate_wcs:
+          type: boolean
+          default: true
+          description: Return the best rejected candidate WCS and its gate stats so the client can apply its own gate.
+        photometry_stars:
+          type: boolean
+          default: false
+        fwhm_map:
+          type: boolean
+          default: false
+        processing_history:
+          type: boolean
+          default: false
+    Pin:
+      type: object
+      additionalProperties: false
+      properties:
+        algorithm:
+          type: [string, "null"]
+          description: |
+            `<pipeline>@<int>` (exact, e.g. `senpai.frame@5`), a bare integer for the request's
+            pipeline (`"5"`), or a channel alias `stable` / `candidate`. Null: server default.
+            The pipeline must match the route (`senpai.frame` for `/v2/analyze` and frame
+            jobs, `senpai.sources-solve` for `/v2/solve/sources`, `senpai.collect` for
+            collects); a mismatch is `400 invalid-request`.
+          pattern: "^([a-z0-9.-]+@[0-9]+|[0-9]+|stable|candidate)$"
+          examples: ["senpai.frame@5"]
+        bundles:
+          type: [object, "null"]
+          description: "`{\"<kind>/<name>\": \"sha256:...\"}` bundles that must be used."
+          additionalProperties:
+            $ref: "#/components/schemas/Digest"
+        policy:
+          type: string
+          enum: [exact, prefer]
+          default: exact
+          description: "`exact`: unavailable pin is `422 algorithm-unavailable` / `bundle-unavailable`. `prefer`: use the server default and add warning `PIN_NOT_HONORED`."
+    Contribution:
+      type: object
+      required: [terms_version, purposes]
+      additionalProperties: false
+      properties:
+        terms_version:
+          type: string
+          description: Version of the contribution terms the tenant agreed to.
+        purposes:
+          type: array
+          items:
+            type: string
+            enum: [algorithm_eval, training, publication]
+          uniqueItems: true
+          minItems: 1
+        license:
+          type: string
+          description: SPDX id or `internal-use-only`.
+        attribution:
+          type: string
+        public:
+          type: boolean
+          default: false
+    DataPolicy:
+      type: object
+      description: May only restrict the tenant/server policy, never extend it. The applied policy is echoed.
+      additionalProperties: false
+      properties:
+        retain:
+          type: string
+          enum: [none, results, frames]
+          description: |
+            Retention class (normative; `docs/deployment.md` section 8):
+
+            - `none`: frame bytes are never persisted beyond the worker. The result is held,
+              encrypted, only for min(`idempotency_ttl_s`, `results_ttl_h`) for idempotent
+              replay and for fetching a job or promoted result, then purged. It is never
+              placed in the result cache. Its purge time is echoed as
+              `data_policy_applied.retain_until`.
+            - `results`: results kept until `retain_days` (capped by the tenant policy); no
+              frame bytes.
+            - `frames`: frames and results kept until `retain_days`.
+
+            In every class an audit row (ids, timestamps, version axes, `pixel_sha256`; no
+            hint, WCS, detections or pixels) is kept for `policies.audit_retention_days`.
+        retain_days:
+          type: [integer, "null"]
+          minimum: 0
+        contribute:
+          oneOf:
+            - $ref: "#/components/schemas/Contribution"
+            - type: "null"
+          description: Effective only on the `hosted` profile and only when the tenant has agreed to these terms.
+    Expert:
+      type: object
+      description: |
+        Whitelisted engine overrides. Keys are dotted names that must appear verbatim in
+        `capabilities.expert_keys` (an explicit list, no globs); any other key is `400
+        invalid-request`. Expert keys can never change resource limits
+        (`max_stars_per_frame`, decoded-size caps), deadlines, timeouts, worker settings or
+        paths. Hashed into `config_hash`.
+      additionalProperties: true
+    Operation:
+      type: string
+      x-extensible-enum: responses
+      enum: [detect, solve, seeing, photometry, streaks, objects]
+      description: "`objects`: moving-object / target detection (satellites in rate-tracked or sidereal frames), returned in `objects`, not capped by `detection.max_sources`."
+    AnalyzeRequest:
+      type: object
+      description: Request for one frame (`POST /v2/analyze`, or a job with `kind = frame`). Unknown fields are rejected.
+      additionalProperties: false
+      properties:
+        kind:
+          const: frame
+          description: Required only inside `POST /v2/jobs`.
+        client_frame_id:
+          $ref: "#/components/schemas/ClientId"
+        ops:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+          uniqueItems: true
+          default: [detect, solve]
+        image:
+          $ref: "#/components/schemas/ImageOptions"
+        frame:
+          $ref: "#/components/schemas/FrameMeta"
+        hint:
+          $ref: "#/components/schemas/Hint"
+        detection:
+          $ref: "#/components/schemas/DetectionOptions"
+        solve:
+          $ref: "#/components/schemas/SolveOptions"
+        photometry:
+          $ref: "#/components/schemas/PhotometryOptions"
+        streaks:
+          $ref: "#/components/schemas/StreakOptions"
+        objects:
+          $ref: "#/components/schemas/ObjectsOptions"
+        products:
+          $ref: "#/components/schemas/Products"
+        pin:
+          $ref: "#/components/schemas/Pin"
+        data_policy:
+          $ref: "#/components/schemas/DataPolicy"
+        deadline_s:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+          description: "Sync deadline; capped by `limits.sync_max_deadline_s`. Also settable with `Prefer: wait=N` (the smaller wins). Starts when the request body has been fully received. Not part of the idempotency fingerprint."
+        expert:
+          $ref: "#/components/schemas/Expert"
+    AnalyzeMultipart:
+      type: object
+      required: [request]
+      properties:
+        request:
+          $ref: "#/components/schemas/AnalyzeRequest"
+        image:
+          type: string
+          contentMediaType: application/fits
+          description: "FITS bytes. Rice/fpack tile compression preferred; tile GZIP and plain FITS accepted; a gzip-wrapped file is signalled by the part's `Content-Type: application/gzip` or detected by magic bytes (no per-part `Content-Encoding`, RFC 7578 section 4.8). Exactly one of this part or `request.image.ref`."
+    SourceIn:
+      type: object
+      required: [x, y, flux]
+      additionalProperties: false
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+        flux:
+          type: number
+          description: Any monotonic brightness; used for ordering.
+        flux_err:
+          type: number
+        shape:
+          type: string
+          enum: [point, trail]
+          default: point
+        length_px:
+          type: number
+        angle_deg:
+          type: number
+    SourcesSolveRequest:
+      type: object
+      required: [image_width, image_height, sources]
+      additionalProperties: false
+      properties:
+        kind:
+          const: sources
+          description: Required only inside `POST /v2/jobs`.
+        client_frame_id:
+          $ref: "#/components/schemas/ClientId"
+        image_width:
+          type: integer
+          minimum: 1
+        image_height:
+          type: integer
+          minimum: 1
+        pixel_convention:
+          $ref: "#/components/schemas/PixelConvention"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceIn"
+          minItems: 1
+          maxItems: 100000
+          description: Also bounded by `capabilities.limits.max_input_sources`. The whole JSON body is bounded by `limits.max_request_bytes`.
+        frame:
+          $ref: "#/components/schemas/FrameMeta"
+        hint:
+          $ref: "#/components/schemas/Hint"
+        solve:
+          $ref: "#/components/schemas/SolveOptions"
+        products:
+          $ref: "#/components/schemas/Products"
+        pin:
+          $ref: "#/components/schemas/Pin"
+        data_policy:
+          $ref: "#/components/schemas/DataPolicy"
+        deadline_s:
+          type: [number, "null"]
+          exclusiveMinimum: 0
+        client_asserted_detection_provenance:
+          description: |
+            Provenance block of the client-side detection (e.g. a local `senpai.v2` engine's
+            block), as the client asserts it. Validated against `Provenance`, at most 16 KiB.
+            Echoed in the result under the same name and folded into `reproducibility_key`.
+            The server sets `provenance.input.detection_attested: false` and never copies it
+            into its own `provenance.algorithm`, `software` or `data`.
+          oneOf:
+            - $ref: "#/components/schemas/Provenance"
+            - type: "null"
+    CollectFrameSpec:
+      type: object
+      required: [client_frame_id]
+      additionalProperties: false
+      properties:
+        client_frame_id:
+          $ref: "#/components/schemas/ClientId"
+        image:
+          $ref: "#/components/schemas/ImageOptions"
+          description: Omit when the bytes are in multipart part `image.<client_frame_id>`.
+        frame:
+          $ref: "#/components/schemas/FrameMeta"
+        hint:
+          $ref: "#/components/schemas/Hint"
+    CollectDefaults:
+      type: object
+      additionalProperties: false
+      properties:
+        frame:
+          $ref: "#/components/schemas/FrameMeta"
+        hint:
+          $ref: "#/components/schemas/Hint"
+        detection:
+          $ref: "#/components/schemas/DetectionOptions"
+        solve:
+          $ref: "#/components/schemas/SolveOptions"
+        photometry:
+          $ref: "#/components/schemas/PhotometryOptions"
+        streaks:
+          $ref: "#/components/schemas/StreakOptions"
+        objects:
+          $ref: "#/components/schemas/ObjectsOptions"
+        products:
+          $ref: "#/components/schemas/Products"
+    CollectOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        pipeline_mode:
+          type: string
+          enum: [full, detect_solve, detect]
+          default: full
+        force_track_mode:
+          type: [string, "null"]
+          enum: [sidereal, rate, null]
+        solve_every_frame:
+          type: boolean
+          default: false
+          description: "`true`: independent plate solve per frame. `false`: solve the first sidereal frame that solves and propagate along the shift chain."
+        correlate_streaks:
+          type: boolean
+          default: true
+    CollectRequest:
+      type: object
+      required: [kind, frames]
+      additionalProperties: false
+      properties:
+        kind:
+          const: collect
+        client_collect_id:
+          $ref: "#/components/schemas/ClientId"
+        frames:
+          type: array
+          items:
+            $ref: "#/components/schemas/CollectFrameSpec"
+          minItems: 1
+          description: Results are returned in this order. At most `limits.max_frames_per_collect`.
+        defaults:
+          $ref: "#/components/schemas/CollectDefaults"
+        collect:
+          $ref: "#/components/schemas/CollectOptions"
+        ops:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+          uniqueItems: true
+        pin:
+          $ref: "#/components/schemas/Pin"
+        data_policy:
+          $ref: "#/components/schemas/DataPolicy"
+        expert:
+          $ref: "#/components/schemas/Expert"
+    JobRequest:
+      description: "`kind` is required in a job body."
+      oneOf:
+        - allOf:
+            - $ref: "#/components/schemas/AnalyzeRequest"
+            - required: [kind]
+        - $ref: "#/components/schemas/CollectRequest"
+        - allOf:
+            - $ref: "#/components/schemas/SourcesSolveRequest"
+            - required: [kind]
+      discriminator:
+        propertyName: kind
+        mapping:
+          frame: "#/components/schemas/AnalyzeRequest"
+          collect: "#/components/schemas/CollectRequest"
+          sources: "#/components/schemas/SourcesSolveRequest"
+    JobMultipart:
+      type: object
+      required: [request]
+      properties:
+        request:
+          $ref: "#/components/schemas/JobRequest"
+        image:
+          type: string
+          contentMediaType: application/fits
+          description: Image for `kind = frame`.
+      patternProperties:
+        "^image\\.[A-Za-z0-9._:-]{1,128}$":
+          type: string
+          contentMediaType: application/fits
+          description: Image for the collect frame whose `client_frame_id` follows `image.`.
+    UploadSlotRequest:
+      type: object
+      required: [bytes, sha256]
+      additionalProperties: false
+      properties:
+        bytes:
+          type: integer
+          minimum: 1
+        sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+        content_type:
+          type: string
+          default: application/fits
+    UploadSlot:
+      type: object
+      required: [image_ref, upload_url, method, expires_at, max_bytes]
+      properties:
+        image_ref:
+          $ref: "#/components/schemas/ImageRef"
+        upload_url:
+          type: string
+          format: uri
+        method:
+          const: PUT
+        required_headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Headers the PUT must carry (e.g. the signed checksum).
+        expires_at:
+          type: string
+          format: date-time
+        max_bytes:
+          type: integer
+
+    # ---------------------------------------------------------------- results
+    TrackModeDecision:
+      type: object
+      required: [value, source]
+      properties:
+        value:
+          type: string
+          x-extensible-enum: true
+          enum: [sidereal, rate, unknown]
+        source:
+          type: string
+          x-extensible-enum: true
+          enum: [request, header, rates, pixel_arbiter, default]
+        detail:
+          type: [string, "null"]
+    FrameInfo:
+      type: object
+      required: [width, height, dtype, encoding, lossy, transport_sha256, pixel_sha256]
+      properties:
+        width:
+          type: integer
+        height:
+          type: integer
+        dtype:
+          type: string
+          examples: [uint16]
+        binning:
+          $ref: "#/components/schemas/Binning"
+        encoding:
+          type: string
+          x-extensible-enum: true
+          enum: [fits, fits+rice, fits+tile-gzip, fits+gzip, fits+rice+gzip, fits+hcompress, fits+plio, jpeg, dng, other]
+          description: "`fits+rice` and `fits+tile-gzip` (GZIP_1/GZIP_2) are tile compression inside the FITS file; `fits+gzip` is a whole-file gzip wrapper around plain FITS; `fits+rice+gzip` a wrapper around a Rice file."
+        lossy:
+          type: boolean
+        hdu:
+          type: [integer, string]
+        transport_sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+        pixel_sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+          description: Canonical hash of the decoded pixels (README section 9; byte-order-free dtype tag, BZERO/BSCALE applied, little-endian bytes); equal for plain, Rice-lossless, tile-GZIP and gzip-wrapped encodings of one frame.
+        header_sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+        internal_scale_factor:
+          type: number
+          default: 1.0
+          description: Informational. All outputs are on the delivered pixel grid regardless.
+        t_start_utc:
+          type: [string, "null"]
+          format: date-time
+        t_mid_utc:
+          type: [string, "null"]
+          format: date-time
+        t_mid_source:
+          $ref: "#/components/schemas/ValueSource"
+          description: Which rule produced `t_mid` (e.g. `request`, `header:DATE-AVG`, `derived` from start + exposure/2).
+        exposure_s:
+          $ref: "#/components/schemas/SourcedNumber"
+        epoch:
+          type: object
+          properties:
+            positions_at:
+              const: mid_exposure
+        track_mode:
+          $ref: "#/components/schemas/TrackModeDecision"
+        filter:
+          type: object
+          properties:
+            value:
+              type: [string, "null"]
+            source:
+              $ref: "#/components/schemas/ValueSource"
+        gain_e_per_adu:
+          $ref: "#/components/schemas/SourcedNumber"
+        read_noise_e:
+          $ref: "#/components/schemas/SourcedNumber"
+        saturation_adu:
+          $ref: "#/components/schemas/SourcedNumber"
+        processing_history:
+          type: array
+          items:
+            type: object
+            properties:
+              step:
+                type: string
+              params:
+                type: object
+    StarTrail:
+      type: object
+      description: Star-trail model of a rate-tracked or streaked frame.
+      properties:
+        length_px:
+          type: number
+        angle_deg:
+          type: number
+        width_px:
+          type: number
+        fwhm_px:
+          type: number
+        rate_px_s:
+          type: [number, "null"]
+        variable_kernel:
+          type: boolean
+    Rate:
+      type: object
+      properties:
+        px_s:
+          $ref: "#/components/schemas/PixelXY"
+        arcsec_s:
+          type: [number, "null"]
+        ra_arcsec_s:
+          type: [number, "null"]
+          description: RA component times cos(dec).
+        dec_arcsec_s:
+          type: [number, "null"]
+    MagnitudeSet:
+      type: object
+      description: Per-band magnitudes keyed by band name (e.g. `G`, `V`, `Clear`), mirroring the engine's `calibrated_magnitudes` / `magnitude_errs` dicts.
+      additionalProperties:
+        $ref: "#/components/schemas/Magnitude"
+    Magnitude:
+      type: object
+      properties:
+        instrumental:
+          type: [number, "null"]
+        calibrated:
+          type: [number, "null"]
+        err:
+          type: [number, "null"]
+        band:
+          type: [string, "null"]
+    Detection:
+      type: object
+      required: [id, rank, shape, class, x, y, flux, snr]
+      properties:
+        id:
+          type: integer
+          description: Stable within the result.
+        rank:
+          type: integer
+          description: 0-based position in brightness order (flux descending).
+        shape:
+          type: string
+          x-extensible-enum: true
+          enum: [point, trail]
+        class:
+          type: string
+          x-extensible-enum: true
+          enum: [star, non_catalog, unknown]
+          description: Set after catalog matching; `unknown` when not solved.
+        x:
+          type: number
+          description: 0-based column on the delivered grid; trail midpoint (mid-exposure) for trails.
+        y:
+          type: number
+        flux:
+          type: number
+        flux_err:
+          type: [number, "null"]
+        flux_unit:
+          type: string
+          x-extensible-enum: true
+          enum: [adu, e]
+          default: adu
+        snr:
+          type: number
+          description: The significance actually used for the threshold cut.
+        peak_adu:
+          type: [number, "null"]
+        saturated:
+          type: boolean
+        fwhm_px:
+          type: [number, "null"]
+        length_px:
+          type: [number, "null"]
+        angle_deg:
+          type: [number, "null"]
+        width_px:
+          type: [number, "null"]
+        ra_deg:
+          type: [number, "null"]
+        dec_deg:
+          type: [number, "null"]
+        catalog_match:
+          type: [object, "null"]
+          properties:
+            catalog:
+              type: string
+            catalog_id:
+              type: string
+            mag:
+              type: number
+            band:
+              type: string
+            resid_arcsec:
+              type: number
+        mags:
+          $ref: "#/components/schemas/MagnitudeSet"
+        rate:
+          $ref: "#/components/schemas/Rate"
+        flags:
+          type: array
+          items:
+            type: string
+          description: e.g. `edge`, `blended`, `cosmic_ray_suspect`, `unrefined`.
+    DetectionBlock:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [ok, failed]
+        reason:
+          type: [string, "null"]
+          description: Stable short code when failed, e.g. `trail_measure_failed`, `too_few_sources`, `empty_frame`.
+        method:
+          type: string
+          x-extensible-enum: true
+          enum: [point, trail]
+        route_reason:
+          type: string
+          examples: ["predicted trail 0.4 px < 1.5 x FWHM 3.1 px"]
+        predicted_trail_px:
+          type: [number, "null"]
+        routing_threshold_px:
+          type: [number, "null"]
+        fwhm:
+          type: object
+          properties:
+            value_px:
+              type: number
+            source:
+              type: string
+              x-extensible-enum: true
+              enum: [measured, hint, default]
+            trail_corrected:
+              type: boolean
+        background:
+          type: object
+          properties:
+            median_adu:
+              type: number
+            std_adu:
+              type: number
+        threshold_sigma:
+          type: number
+        max_sources:
+          type: integer
+        saturation_adu:
+          type: [number, "null"]
+        counts:
+          type: object
+          properties:
+            candidates:
+              type: integer
+            rejected_low_snr:
+              type: integer
+            dropped_edge:
+              type: integer
+            unrefined:
+              type: integer
+            saturated:
+              type: integer
+            returned:
+              type: integer
+        star_trail:
+          oneOf:
+            - $ref: "#/components/schemas/StarTrail"
+            - type: "null"
+        sources:
+          type: array
+          description: Brightest first, at most `max_sources`. Omitted when `products.detections` is false (see `tables.detections`).
+          items:
+            $ref: "#/components/schemas/Detection"
+    DerivedGeometry:
+      type: object
+      required: [reference_pixel, center_ra_deg, center_dec_deg, scale_arcsec_px, roll_deg, parity]
+      properties:
+        reference_pixel:
+          $ref: "#/components/schemas/PixelXY"
+          description: "[W/2, H/2], 0-based. The pointing reference; CRVAL is not the pointing."
+        center_ra_deg:
+          type: number
+        center_dec_deg:
+          type: number
+        scale_arcsec_px:
+          type: number
+          description: sqrt(|det CD|) x 3600 at CRPIX.
+        roll_deg:
+          type: number
+          description: Position angle of image +y, north through east, [0, 360).
+        parity:
+          type: integer
+          enum: [1, -1]
+          description: "+1 when det(CD) < 0 (sky-like), -1 when mirrored."
+        fov_deg:
+          type: array
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+    GateStats:
+      type: object
+      properties:
+        n_matches:
+          type: integer
+        rms_px:
+          type: [number, "null"]
+        log_odds:
+          type: [number, "null"]
+        expected_chance_matches:
+          type: [number, "null"]
+        n_catalog_in_frame:
+          type: [integer, "null"]
+        passed:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+    SolveAttempt:
+      type: object
+      required: [rung, tier, status, ms]
+      properties:
+        rung:
+          type: string
+          description: e.g. `T0:prior`, `T0:boresight-roll`, `T0:boresight`, `T1:parity+1`, `T1:parity-1`, `T3`, `T4`.
+          examples: ["T1:parity+1"]
+        tier:
+          $ref: "#/components/schemas/SolveTier"
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [accepted, rejected, failed, skipped, timeout]
+        reason:
+          type: [string, "null"]
+        ms:
+          type: integer
+        gate:
+          $ref: "#/components/schemas/GateStats"
+    SolveQuality:
+      type: object
+      properties:
+        n_matched:
+          type: integer
+        rms_px:
+          type: number
+        rms_arcsec:
+          type: number
+          description: Computed from full-precision matched pairs.
+        log_odds:
+          type: [number, "null"]
+        expected_chance_matches:
+          type: [number, "null"]
+        n_catalog_in_frame:
+          type: [integer, "null"]
+        wcs_status:
+          $ref: "#/components/schemas/WcsStatus"
+        refit:
+          type: [object, "null"]
+          properties:
+            sip_order:
+              type: integer
+            rms_px:
+              type: number
+            rms_arcsec:
+              type: number
+            n_stars:
+              type: integer
+            frac_significant:
+              type: number
+            passed:
+              type: boolean
+    WcsStatus:
+      type: string
+      x-extensible-enum: true
+      enum: [direct_fit, pixel_shifted, kernel_refined, refined_unvalidated, none]
+    MatchedStar:
+      type: object
+      required: [source_id, x, y, ra_deg, dec_deg]
+      properties:
+        source_id:
+          type: integer
+        x:
+          type: number
+        y:
+          type: number
+        ra_deg:
+          type: number
+          description: Catalog position at the frame epoch (proper motion applied).
+        dec_deg:
+          type: number
+        mag:
+          type: [number, "null"]
+        band:
+          type: [string, "null"]
+        catalog:
+          type: string
+        catalog_id:
+          type: string
+        resid_x_px:
+          type: number
+        resid_y_px:
+          type: number
+        resid_arcsec:
+          type: number
+    Solution:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [solved, rejected_by_gate, no_solution, insufficient_sources, not_attempted, error]
+        reason:
+          type: [string, "null"]
+          description: Stable short code plus text, e.g. `tier-unavailable` (no requested tier is available; `not_attempted`), `gate:n_matches<8`.
+        tier:
+          oneOf:
+            - $ref: "#/components/schemas/SolveTier"
+            - type: "null"
+        rung:
+          type: [string, "null"]
+          description: The accepted rung (e.g. `T0:prior`, `T1:parity+1`), or for `rejected_by_gate` the rung of the returned candidate. Same values as `attempts[].rung`.
+        wcs:
+          oneOf:
+            - allOf:
+                - $ref: "#/components/schemas/WcsHeader"
+                - type: object
+                  properties:
+                    is_candidate:
+                      type: boolean
+                      description: "`true` when status is `rejected_by_gate` and `products.candidate_wcs` was requested."
+            - type: "null"
+        derived:
+          oneOf:
+            - $ref: "#/components/schemas/DerivedGeometry"
+            - type: "null"
+        quality:
+          $ref: "#/components/schemas/SolveQuality"
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SolveAttempt"
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/MatchedStar"
+    Seeing:
+      type: object
+      properties:
+        fwhm_px:
+          type: object
+          properties:
+            median:
+              type: number
+            mean:
+              type: number
+            std:
+              type: number
+            min:
+              type: number
+            max:
+              type: number
+            n:
+              type: integer
+        fwhm_vs_position:
+          type: [object, "null"]
+        spatial_gradient:
+          type: [object, "null"]
+        is_oversampled:
+          type: boolean
+        recommended_scale_factor:
+          type: [number, "null"]
+    LimitingMag:
+      type: object
+      required: [value_mag, snr]
+      properties:
+        value_mag:
+          type: number
+        snr:
+          type: number
+        completeness:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+    Photometry:
+      type: object
+      properties:
+        band:
+          type: [string, "null"]
+        zero_point:
+          type: object
+          properties:
+            value_mag:
+              type: number
+            err_mag:
+              type: number
+            n_stars:
+              type: integer
+        n_stars:
+          type: integer
+        n_quality:
+          type: integer
+        median_snr:
+          type: number
+        median_background_adu:
+          type: number
+        limiting_mag:
+          type: array
+          items:
+            $ref: "#/components/schemas/LimitingMag"
+        completeness:
+          type: object
+          properties:
+            mag_50:
+              type: [number, "null"]
+            mag_90:
+              type: [number, "null"]
+        multiband:
+          type: [object, "null"]
+        aperture:
+          type: [object, "null"]
+    StreakCandidate:
+      type: object
+      description: "Moving-object streak in a sidereal frame (`ops` contains `streaks`). Point-like and rate-tracked targets are in `objects`."
+      required: [id, x, y, angle_deg, length_px]
+      properties:
+        id:
+          type: integer
+        x:
+          type: number
+        y:
+          type: number
+        angle_deg:
+          type: number
+        length_px:
+          type: number
+        width_px:
+          type: number
+        peak_snr:
+          type: number
+        directional_excess:
+          type: number
+        fractional_excess:
+          type: number
+        n_pixels:
+          type: integer
+        ra_deg:
+          type: [number, "null"]
+        dec_deg:
+          type: [number, "null"]
+        rate:
+          $ref: "#/components/schemas/Rate"
+        flux:
+          type: [number, "null"]
+        flux_err:
+          type: [number, "null"]
+        filter:
+          type: [string, "null"]
+          description: Observation filter used for the photometry.
+        mags:
+          $ref: "#/components/schemas/MagnitudeSet"
+    ObjectDetection:
+      type: object
+      description: A moving-object (target) detection, separate from the star list.
+      required: [id, x, y, detection_type]
+      properties:
+        id:
+          type: integer
+        x:
+          type: number
+          description: 0-based column; mid-exposure position (streak midpoint for streaks).
+        y:
+          type: number
+        detection_type:
+          type: string
+          x-extensible-enum: true
+          enum: [point, streak]
+        snr:
+          type: [number, "null"]
+        flux:
+          type: [number, "null"]
+        flux_err:
+          type: [number, "null"]
+        fwhm_px:
+          type: [number, "null"]
+        angle_deg:
+          type: [number, "null"]
+        length_px:
+          type: [number, "null"]
+        ra_deg:
+          type: [number, "null"]
+        dec_deg:
+          type: [number, "null"]
+        rate:
+          $ref: "#/components/schemas/Rate"
+        filter:
+          type: [string, "null"]
+        mags:
+          $ref: "#/components/schemas/MagnitudeSet"
+        confirmation:
+          type: object
+          properties:
+            method:
+              type: string
+              x-extensible-enum: true
+              enum: [none, stamp, rate_scan]
+            confirmed:
+              type: boolean
+    ObjectsBlock:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [ok, failed]
+        reason:
+          type: [string, "null"]
+        count:
+          type: integer
+        truncated:
+          type: boolean
+          description: "`true` when more than `objects.max_objects` passed the cut; the full list is in `tables.objects`."
+        objects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectDetection"
+    Timings:
+      type: object
+      description: Milliseconds per stage.
+      additionalProperties:
+        type: integer
+      properties:
+        queue:
+          type: integer
+        decode:
+          type: integer
+        preprocess:
+          type: integer
+        detect:
+          type: integer
+        solve:
+          type: integer
+        catalog:
+          type: integer
+        photometry:
+          type: integer
+        total:
+          type: integer
+    DataPolicyApplied:
+      type: object
+      required: [retain]
+      properties:
+        retain:
+          type: string
+          x-extensible-enum: true
+          enum: [none, results, frames]
+        retain_until:
+          type: [string, "null"]
+          format: date-time
+          description: When the result is purged (for `none`, the end of the replay/fetch window).
+        frame_retained:
+          type: boolean
+          description: Whether frame bytes outlive the request.
+        frame_retain_until:
+          type: [string, "null"]
+          format: date-time
+          description: Includes any consented hold (e.g. a shadow evaluation under `algorithm_eval`).
+        contribute:
+          type: boolean
+        purposes:
+          type: array
+          items:
+            type: string
+    ResultStatus:
+      type: string
+      x-extensible-enum: true
+      enum: [complete, partial, failed]
+      description: "`partial`: some requested operations failed; see each block's status."
+    FrameResult:
+      type: object
+      required: [result_type, result_id, request_id, status, pixel_convention, frame, warnings, timings_ms, data_policy_applied, provenance]
+      properties:
+        result_type:
+          const: frame
+        result_id:
+          type: string
+        request_id:
+          type: string
+        job_id:
+          type: [string, "null"]
+        client_frame_id:
+          type: [string, "null"]
+        status:
+          $ref: "#/components/schemas/ResultStatus"
+        pixel_convention:
+          $ref: "#/components/schemas/PixelConvention"
+        frame:
+          $ref: "#/components/schemas/FrameInfo"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warning"
+        detection:
+          oneOf:
+            - $ref: "#/components/schemas/DetectionBlock"
+            - type: "null"
+        solution:
+          oneOf:
+            - $ref: "#/components/schemas/Solution"
+            - type: "null"
+        seeing:
+          oneOf:
+            - $ref: "#/components/schemas/Seeing"
+            - type: "null"
+        photometry:
+          oneOf:
+            - $ref: "#/components/schemas/Photometry"
+            - type: "null"
+        streaks:
+          type: array
+          items:
+            $ref: "#/components/schemas/StreakCandidate"
+        objects:
+          oneOf:
+            - $ref: "#/components/schemas/ObjectsBlock"
+            - type: "null"
+        tables:
+          type: object
+          additionalProperties:
+            type: string
+            format: uri-reference
+          description: Links to bulk tables while retained.
+        timings_ms:
+          $ref: "#/components/schemas/Timings"
+        data_policy_applied:
+          $ref: "#/components/schemas/DataPolicyApplied"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+    CollectFrameResult:
+      allOf:
+        - $ref: "#/components/schemas/FrameResult"
+        - type: object
+          required: [input_index, time_index, wcs_status]
+          properties:
+            input_index:
+              type: integer
+            time_index:
+              type: [integer, "null"]
+              description: Position in time order; null for untimed frames.
+            wcs_status:
+              $ref: "#/components/schemas/WcsStatus"
+    FrameShift:
+      type: object
+      properties:
+        source_frame_id:
+          type: string
+        target_frame_id:
+          type: string
+        dx_px:
+          type: number
+        dy_px:
+          type: number
+        valid:
+          type: boolean
+        error:
+          type: [string, "null"]
+    CorrelatedStreak:
+      type: object
+      properties:
+        id:
+          type: string
+          description: The engine's `streak_id`.
+        frame_ids:
+          type: array
+          items:
+            type: string
+        positions:
+          type: array
+          items:
+            type: object
+            properties:
+              client_frame_id:
+                type: string
+              x:
+                type: number
+              y:
+                type: number
+              t_utc:
+                type: string
+                format: date-time
+              ra_deg:
+                type: [number, "null"]
+              dec_deg:
+                type: [number, "null"]
+        angle_deg:
+          type: number
+        direction_deg:
+          type: [number, "null"]
+          description: Directed, [0, 360), same zero and sense as angle_deg. Null for single-frame streaks (direction unresolved).
+        length_px:
+          type: number
+        rate:
+          $ref: "#/components/schemas/Rate"
+        confirmed:
+          type: boolean
+        best_snr:
+          type: number
+        best_flux_adu:
+          type: number
+        best_mags:
+          $ref: "#/components/schemas/MagnitudeSet"
+    CollectResult:
+      type: object
+      required: [result_type, result_id, request_id, status, pixel_convention, run, frames, provenance]
+      properties:
+        result_type:
+          const: collect
+        result_id:
+          type: string
+        request_id:
+          type: string
+        job_id:
+          type: [string, "null"]
+        client_collect_id:
+          type: [string, "null"]
+        status:
+          $ref: "#/components/schemas/ResultStatus"
+        pixel_convention:
+          $ref: "#/components/schemas/PixelConvention"
+        run:
+          type: object
+          properties:
+            completed:
+              type: boolean
+            error:
+              type: [string, "null"]
+            compute_s:
+              type: number
+            pixel_rate_px_s:
+              type: [number, "null"]
+        frames:
+          type: array
+          description: In request order.
+          items:
+            $ref: "#/components/schemas/CollectFrameResult"
+        frame_shifts:
+          type: array
+          items:
+            $ref: "#/components/schemas/FrameShift"
+        frame_shifts_failed:
+          type: array
+          items:
+            $ref: "#/components/schemas/FrameShift"
+        correlated_streaks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CorrelatedStreak"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warning"
+        timings_ms:
+          $ref: "#/components/schemas/Timings"
+        data_policy_applied:
+          $ref: "#/components/schemas/DataPolicyApplied"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+    SourcesSolveResult:
+      type: object
+      required: [result_type, result_id, request_id, pixel_convention, solution, provenance]
+      properties:
+        result_type:
+          const: sources_solve
+        result_id:
+          type: string
+        request_id:
+          type: string
+        job_id:
+          type: [string, "null"]
+        client_frame_id:
+          type: [string, "null"]
+        pixel_convention:
+          $ref: "#/components/schemas/PixelConvention"
+        solution:
+          $ref: "#/components/schemas/Solution"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Warning"
+        timings_ms:
+          $ref: "#/components/schemas/Timings"
+        data_policy_applied:
+          $ref: "#/components/schemas/DataPolicyApplied"
+        client_asserted_detection_provenance:
+          description: Echo of the request field; client-asserted, not attested by this server.
+          oneOf:
+            - $ref: "#/components/schemas/Provenance"
+            - type: "null"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+    AnyResult:
+      oneOf:
+        - $ref: "#/components/schemas/FrameResult"
+        - $ref: "#/components/schemas/CollectResult"
+        - $ref: "#/components/schemas/SourcesSolveResult"
+      discriminator:
+        propertyName: result_type
+        mapping:
+          frame: "#/components/schemas/FrameResult"
+          collect: "#/components/schemas/CollectResult"
+          sources_solve: "#/components/schemas/SourcesSolveResult"
+
+    # ---------------------------------------------------------------- provenance
+    BundleRef:
+      type: object
+      required: [kind, name, version, digest]
+      properties:
+        kind:
+          type: string
+          x-extensible-enum: true
+          enum: [anet-index, tetra3-db, gaia-mirror, sstrc7, iers, sensor-profile, weights, golden, other]
+        name:
+          type: string
+        version:
+          type: string
+        digest:
+          $ref: "#/components/schemas/Digest"
+          description: Bundle digest (SHA-256 of the canonical `bundle.json`). For `origin = path` (data configured as a raw path, not a store bundle), SHA-256 over the sorted list of (relative path, file SHA-256) computed when the data was loaded.
+        origin:
+          type: string
+          x-extensible-enum: true
+          enum: [upstream, site, path]
+        signed:
+          type: [boolean, "null"]
+          description: "`true` for upstream bundles (keyless Sigstore signature) and for site bundles signed with the site's own key; `false` for a hashed-only site bundle accepted with `--allow-unsigned-site-bundle`, or for `origin = path`."
+        attribution:
+          type: [string, "null"]
+          description: One-line credit for the bundle's upstream sources, copied from `bundle.json` `license.attribution` (for example `ESA/Gaia/DPAC`). Null for `origin = path`. Full licence and upstream list in `Capabilities.bundles.active[].license`.
+    UpstreamSource:
+      type: object
+      description: One upstream data source of a bundle, as listed in `bundle.json` `license.upstreams` and the bundle's `NOTICE` file.
+      required: [name, release, credit, license]
+      properties:
+        name:
+          type: string
+          examples: ["Gaia DR3"]
+        release:
+          type: string
+          description: The exact upstream release, table or file version used.
+        credit:
+          type: string
+          examples: ["ESA/Gaia/DPAC"]
+        citation:
+          type: [string, "null"]
+        license:
+          type: string
+          description: Upstream licence or terms, as stated by the upstream.
+        terms_url:
+          type: [string, "null"]
+          format: uri
+        url:
+          type: [string, "null"]
+          format: uri
+    BundleLicense:
+      type: object
+      description: Licence and attribution of a data bundle (`bundle.json` `license`). Every bundle credits every upstream source it was derived from; see `docs/deployment.md` section 3.1.1.
+      required: [spdx, attribution, upstreams]
+      properties:
+        spdx:
+          type: string
+          description: SPDX expression, or a `LicenseRef-` id when the upstream terms have no SPDX id.
+        attribution:
+          type: string
+        upstreams:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpstreamSource"
+        notice:
+          type: [string, "null"]
+          description: Path of the `NOTICE` file inside the bundle.
+    Provenance:
+      type: object
+      description: Exactly what produced this result. Identical shape for in-process, localhost and remote execution. See versioning-and-provenance.md.
+      required: [request_id, api_version, software, algorithm, config, data, input, execution, reproducibility_key]
+      properties:
+        result_id:
+          type: string
+        request_id:
+          type: string
+        job_id:
+          type: [string, "null"]
+        idempotency_key:
+          type: [string, "null"]
+        received_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        api_version:
+          type: string
+          pattern: "^2\\.[0-9]+$"
+        release:
+          type: [object, "null"]
+          properties:
+            channel:
+              type: string
+            seq:
+              type: integer
+        software:
+          type: object
+          required: [senpai]
+          properties:
+            senpai:
+              type: string
+            build:
+              type: string
+              description: Git commit.
+            lock_sha256:
+              type: [string, "null"]
+              description: Hash of the release's `uv.lock`. Meaningful only when `environment_matches_release` is true.
+            environment_sha256:
+              type: string
+              description: Computed by the engine at import from `importlib.metadata` over its dependency closure (name, version, wheel tag). Identifies the environment actually used, including an in-process engine installed from a client's lock.
+            environment_matches_release:
+              type: boolean
+              description: Whether the dependency set equals the one listed in the release manifest (the set the golden gate ran on).
+            image_digest:
+              oneOf:
+                - $ref: "#/components/schemas/Digest"
+                - type: "null"
+            astroeasy:
+              type: string
+            astropy:
+              type: string
+            photutils:
+              type: string
+            numpy:
+              type: string
+            scipy:
+              type: string
+            python:
+              type: string
+            platform_class:
+              type: string
+              x-extensible-enum: true
+              enum: [linux-x86_64, linux-aarch64, win-amd64, macos-arm64, other]
+            anet:
+              type: [object, "null"]
+              description: astrometry.net as run by astroeasy (a separate program; never part of senpai).
+              properties:
+                commit:
+                  type: string
+                image_digest:
+                  type: [string, "null"]
+                  description: Digest of astroeasy's `astrometry-cli` image, when the docker or sidecar backend ran the solve.
+                backend:
+                  type: [string, "null"]
+                  x-extensible-enum: true
+                  enum: [local, docker, sidecar, null]
+        algorithm:
+          type: object
+          required: [id, pipeline, version]
+          properties:
+            id:
+              type: string
+              examples: ["senpai.frame@5"]
+            pipeline:
+              type: string
+              x-extensible-enum: true
+              enum: [senpai.frame, senpai.collect, senpai.sources-solve]
+            version:
+              type: integer
+            components:
+              type: object
+              additionalProperties:
+                type: string
+              examples:
+                - detect: mf-point/3
+                  trail: rate-trail/2
+                  solve: astroeasy-planner/2
+            pin_requested:
+              type: [string, "null"]
+            pin_honored:
+              type: boolean
+        config:
+          type: object
+          required: [hash]
+          properties:
+            hash:
+              $ref: "#/components/schemas/Digest"
+            overrides:
+              type: object
+              description: Every result-affecting value that differs from the algorithm's defaults (dotted keys), from the request, the site config, or deployment limits that alter results (`star_catalog.max_stars_per_frame`, a server clamp of `detection.max_sources`, internal rescaling). All of them are in `hash`.
+        data:
+          type: object
+          required: [bundle_set, used]
+          properties:
+            bundle_set:
+              $ref: "#/components/schemas/Digest"
+            used:
+              type: array
+              items:
+                $ref: "#/components/schemas/BundleRef"
+            catalog:
+              type: [object, "null"]
+              properties:
+                name:
+                  type: string
+                release:
+                  type: string
+                mag_limit:
+                  type: [number, "null"]
+                epoch_applied:
+                  type: string
+            anet_indices_used:
+              type: array
+              items:
+                type: object
+                required: [file, bundle]
+                properties:
+                  file:
+                    type: string
+                    description: Index file name as reported by solve-field.
+                  bundle:
+                    $ref: "#/components/schemas/Digest"
+        time_data:
+          type: object
+          properties:
+            iers_data_version:
+              type: string
+            iers_age_days:
+              type: number
+            iers_stale:
+              type: boolean
+            leap_second_expiry:
+              type: string
+              format: date
+            iers_bundle:
+              oneOf:
+                - $ref: "#/components/schemas/Digest"
+                - type: "null"
+              description: Digest of the active `iers` bundle whose tables were loaded; null when only the installed astropy-iers-data package was used.
+        input:
+          type: object
+          required: [pixel_sha256]
+          properties:
+            transport_sha256:
+              type: [string, "null"]
+            pixel_sha256:
+              type: [string, "null"]
+              description: Null for sources-solve (no image); see `sources_sha256`.
+            sources_sha256:
+              type: [string, "null"]
+            header_sha256:
+              type: [string, "null"]
+            encoding:
+              type: [string, "null"]
+            lossy:
+              type: boolean
+            detection_attested:
+              type: [boolean, "null"]
+              description: Sources-solve only. `false` when the detections (and `client_asserted_detection_provenance`) come from the client and are not attested by this server.
+        execution:
+          type: object
+          required: [mode, profile]
+          properties:
+            mode:
+              type: string
+              x-extensible-enum: true
+              enum: [remote, service, in_process]
+            profile:
+              type: string
+              x-extensible-enum: true
+              enum: [hosted, self_hosted, airgapped, local]
+            deployment_id:
+              type: string
+            worker:
+              type: string
+        cache:
+          type: object
+          properties:
+            hit:
+              type: boolean
+            original_result_id:
+              type: [string, "null"]
+        reproducibility_key:
+          $ref: "#/components/schemas/Digest"
+
+    # ---------------------------------------------------------------- jobs, meta, data
+    JobProgress:
+      type: object
+      properties:
+        frames_done:
+          type: integer
+        frames_total:
+          type: integer
+        fraction:
+          type: number
+          minimum: 0
+          maximum: 1
+    Job:
+      type: object
+      required: [job_id, kind, state, created_at]
+      properties:
+        job_id:
+          type: string
+        kind:
+          type: string
+          x-extensible-enum: true
+          enum: [frame, collect, sources]
+        state:
+          type: string
+          x-extensible-enum: true
+          enum: [queued, running, succeeded, failed, canceled]
+        progress:
+          $ref: "#/components/schemas/JobProgress"
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+        result_id:
+          type: [string, "null"]
+        result_url:
+          type: [string, "null"]
+          format: uri-reference
+        events_url:
+          type: [string, "null"]
+          format: uri-reference
+        problem:
+          oneOf:
+            - $ref: "#/components/schemas/Problem"
+            - type: "null"
+    HealthCheck:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          examples: [engine_pool, bundles, anet, job_store, disk, iers]
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [ok, degraded, failed]
+        detail:
+          type: [string, "null"]
+    Health:
+      type: object
+      description: Unauthenticated callers (outside the `local` profile) get `status` only.
+      required: [status]
+      properties:
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [ok, degraded, unavailable]
+        api_version:
+          type: string
+          description: Authenticated callers only.
+        server_version:
+          type: string
+          description: Authenticated callers only.
+        checks:
+          description: Authenticated callers only.
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthCheck"
+    AlgorithmInfo:
+      type: object
+      required: [id, pipeline, version, status]
+      properties:
+        id:
+          type: string
+        pipeline:
+          type: string
+        version:
+          type: integer
+        default:
+          type: boolean
+        status:
+          type: string
+          x-extensible-enum: true
+          enum: [stable, candidate, deprecated]
+        released:
+          type: string
+          format: date
+        promotes_at:
+          type: [string, "null"]
+          format: date
+        supported_until:
+          type: [string, "null"]
+          format: date
+        components:
+          type: object
+          additionalProperties:
+            type: string
+    Capabilities:
+      type: object
+      required: [api, server, algorithms, ops, inputs, outputs, solve, bundles, limits, auth, policies]
+      properties:
+        api:
+          type: object
+          properties:
+            version:
+              type: string
+            min_supported_minor:
+              type: integer
+            deprecated:
+              type: array
+              items:
+                type: object
+                properties:
+                  routes:
+                    type: string
+                  deprecated_at:
+                    type: string
+                    format: date
+                  sunset:
+                    type: [string, "null"]
+                    format: date
+        server:
+          type: object
+          properties:
+            product:
+              type: string
+            version:
+              type: string
+            build:
+              type: string
+            lock_sha256:
+              type: [string, "null"]
+            image_digest:
+              type: [string, "null"]
+            profile:
+              type: string
+              x-extensible-enum: true
+              enum: [hosted, self_hosted, airgapped, local]
+            deployment_id:
+              type: string
+            release:
+              type: [object, "null"]
+              properties:
+                channel:
+                  type: string
+                seq:
+                  type: integer
+            environment_sha256:
+              type: string
+            environment_matches_release:
+              type: boolean
+        algorithms:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlgorithmInfo"
+        ops:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+        inputs:
+          type: object
+          properties:
+            formats:
+              type: array
+              items:
+                type: string
+            lossy:
+              type: string
+              x-extensible-enum: true
+              enum: [opt_in, never]
+            image_ref:
+              type: object
+              properties:
+                schemes:
+                  type: array
+                  items:
+                    type: string
+                    x-extensible-enum: true
+                    enum: [upload, https, s3, file]
+                uploads:
+                  type: boolean
+        outputs:
+          type: object
+          properties:
+            media_types:
+              type: array
+              items:
+                type: string
+            table_media_types:
+              type: array
+              items:
+                type: string
+        solve:
+          type: object
+          properties:
+            planner:
+              type: string
+            tiers:
+              type: array
+              items:
+                type: object
+                required: [name, ready]
+                properties:
+                  name:
+                    $ref: "#/components/schemas/SolveTier"
+                  ready:
+                    type: boolean
+                  missing:
+                    type: [string, "null"]
+                  fov_range_deg:
+                    type: [array, "null"]
+                    items:
+                      type: number
+        bundles:
+          type: object
+          properties:
+            set:
+              $ref: "#/components/schemas/Digest"
+            active:
+              type: array
+              items:
+                allOf:
+                  - $ref: "#/components/schemas/BundleRef"
+                  - type: object
+                    properties:
+                      verified:
+                        type: boolean
+                        description: Payload file hashes checked against `bundle.json` at activation and at server start.
+                      verified_at:
+                        type: [string, "null"]
+                        format: date-time
+                      license:
+                        $ref: "#/components/schemas/BundleLicense"
+                      coverage:
+                        type: object
+        catalogs:
+          type: object
+          properties:
+            astrometric:
+              type: string
+            photometric:
+              type: string
+            online:
+              type: boolean
+        time_data:
+          type: object
+          properties:
+            iers_data_version:
+              type: string
+            iers_age_days:
+              type: number
+        limits:
+          type: object
+          properties:
+            max_request_bytes:
+              type: integer
+              description: Applies to multipart and JSON bodies, and to bytes fetched for an `image.ref`.
+            max_decoded_pixels:
+              type: integer
+            max_decoded_bytes:
+              type: integer
+              description: Decoded image size in bytes (pixels x |BITPIX|/8).
+            max_hdus:
+              type: integer
+            max_header_cards:
+              type: integer
+            max_frames_per_collect:
+              type: integer
+            max_sources:
+              type: integer
+            max_input_sources:
+              type: integer
+              description: Maximum `sources[]` on `/v2/solve/sources`.
+            max_stars_per_frame:
+              type: integer
+              description: Catalog cap (magnitude-stratified). Result-affecting, so it is part of `config_hash`.
+            sync_default_deadline_s:
+              type: number
+            sync_max_deadline_s:
+              type: number
+            sync_concurrency:
+              type: integer
+            sync_tier_budget_s:
+              type: [object, "null"]
+              description: "Per-tier time budget on the sync routes, e.g. `{\"T4\": 10}`."
+              additionalProperties:
+                type: number
+            promoted_max_s:
+              type: number
+              description: Maximum time a request promoted to a job keeps its sync worker.
+            overload_reject_ms:
+              type: integer
+              description: Bound on the `503 overloaded` fast-fail.
+            requests_per_min:
+              type: [integer, "null"]
+            per_tenant:
+              type: object
+              description: The caller's tenant limits (already folded into the values above).
+              properties:
+                sync_concurrency:
+                  type: integer
+                compute_seconds_per_hour:
+                  type: [number, "null"]
+                max_queued_jobs:
+                  type: integer
+                requests_per_min:
+                  type: [integer, "null"]
+        auth:
+          type: object
+          properties:
+            modes:
+              type: array
+              items:
+                type: string
+                x-extensible-enum: true
+                enum: [none, static_keys, oidc]
+            scopes:
+              type: array
+              items:
+                type: string
+        policies:
+          type: object
+          properties:
+            retention_default:
+              type: string
+              x-extensible-enum: true
+              enum: [none, results, frames]
+            retention_max_days:
+              type: integer
+            audit_retention_days:
+              type: integer
+              description: How long audit rows (ids, timestamps, version axes, pixel hash) are kept.
+            results_ttl_h:
+              type: integer
+            job_ttl_h:
+              type: integer
+            idempotency_ttl_s:
+              type: integer
+            idempotency_required:
+              type: array
+              description: Routes that reject requests without `Idempotency-Key` (`400 idempotency-key-missing`), e.g. `["POST /v2/jobs"]` on hosted.
+              items:
+                type: string
+            contribution:
+              type: object
+              properties:
+                supported:
+                  type: boolean
+                terms_version:
+                  type: [string, "null"]
+                purposes:
+                  type: array
+                  items:
+                    type: string
+            result_cache:
+              type: boolean
+            async_promotion:
+              type: boolean
+              description: Default false on `hosted`.
+            outbound_network:
+              type: string
+              x-extensible-enum: true
+              enum: [none, update_check_only, catalogs_and_updates]
+        jobs:
+          type: object
+          properties:
+            sse:
+              type: boolean
+            max_queued:
+              type: integer
+        expert_keys:
+          type: array
+          items:
+            type: string
+    FrameRecord:
+      type: object
+      required: [pixel_sha256, retained]
+      properties:
+        pixel_sha256:
+          $ref: "#/components/schemas/Sha256Hex"
+        retained:
+          type: boolean
+        retain_until:
+          type: [string, "null"]
+          format: date-time
+        results:
+          type: array
+          items:
+            type: string
+        contribution:
+          type: [object, "null"]
+          properties:
+            granted:
+              type: boolean
+            purposes:
+              type: array
+              items:
+                type: string
+            terms_version:
+              type: string
+            granted_at:
+              type: string
+              format: date-time
+        holds:
+          type: array
+          description: Temporary holds on the frame bytes beyond the request, with their consent basis (e.g. a shadow evaluation under `algorithm_eval`).
+          items:
+            type: object
+            properties:
+              purpose:
+                type: string
+              until:
+                type: string
+                format: date-time
+
+    # ---------------------------------------------------------------- errors
+    Problem:
+      type: object
+      description: RFC 9457 problem details. Clients ignore unknown members.
+      required: [type, title, status, code, request_id, retryable]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: "`https://ssc-ai.github.io/senpai/problems/<code>` (stable; resolves to static docs, also bundled offline)."
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+          x-extensible-enum: true
+          enum:
+            - invalid-request
+            - idempotency-key-missing
+            - unauthenticated
+            - forbidden
+            - not-found
+            - idempotency-in-flight
+            - api-version-gone
+            - api-minor-unsupported
+            - payload-too-large
+            - unsupported-format
+            - unreadable-image
+            - lossy-encoding-not-allowed
+            - image-ref-forbidden
+            - image-ref-unreachable
+            - image-ref-checksum-mismatch
+            - image-ref-unusable
+            - idempotency-key-reused
+            - algorithm-unavailable
+            - bundle-unavailable
+            - tier-unavailable
+            - operation-unavailable
+            - rate-limited
+            - overloaded
+            - not-ready
+            - deadline-exceeded
+            - internal
+        request_id:
+          type: string
+        retryable:
+          type: boolean
+        retry_after_s:
+          type: [integer, "null"]
+        errors:
+          type: array
+          description: Validation failures (for `invalid-request`).
+          items:
+            type: object
+            required: [pointer, reason]
+            properties:
+              pointer:
+                type: string
+                description: JSON pointer into the request part.
+              reason:
+                type: string
+                examples: [unknown_field, type, range, required, conflict]
+              message:
+                type: string
+        available:
+          type: array
+          description: For `*-unavailable`, what this server does offer.
+          items:
+            type: string
+
+  examples:
+    AnalyzeRequestPointingWarm:
+      summary: Pointing-model client, WARM phase (multipart; this is the `request` part plus a Rice FITS `image` part)
+      value:
+        request:
+          client_frame_id: "run_01JB7Q2A:017:0"
+          ops: [detect, solve]
+          frame:
+            exposure_s: 2.0
+            t_start_utc: "2026-10-19T03:12:43.512Z"
+            binning: [2, 2]
+            filter: L
+            calibrated: true
+          hint:
+            phase: warm
+            center:
+              ra_deg: 83.8221
+              dec_deg: -5.3911
+              radius_deg: 0.25
+            scale:
+              arcsec_per_px: 1.12
+              rel_tol: 0.05
+            parity: 1
+            star_motion:
+              length_px: 0.4
+              angle_deg: null
+            fwhm_px: 3.1
+          detection:
+            method: auto
+            threshold_sigma: 5.0
+            max_sources: 100
+          solve:
+            tiers: [T0, T1, T4]
+            gate:
+              min_matches: 8
+              max_rms_px: 5.0
+              min_log_odds: 10.0
+              match_tol_px: 8.0
+            sip_order: 2
+          products:
+            candidate_wcs: true
+            matches: true
+          pin:
+            algorithm: senpai.frame@5
+            policy: exact
+          data_policy:
+            retain: none
+          deadline_s: 20
+        image: "<Rice-compressed FITS bytes>"
+    AnalyzeRequestByRef:
+      summary: Cloud/batch caller referencing an uploaded frame
+      value:
+        client_frame_id: f-0001
+        ops: [detect, solve, seeing, photometry]
+        image:
+          ref:
+            uri: upload:upl_01JB7Q8M4N5P6Q7R8S9T0V1W2X
+        frame:
+          track_mode: auto
+    FrameResultSolved:
+      summary: Solved WARM frame (abbreviated)
+      value:
+        result_type: frame
+        result_id: res_01JB7Q4C1V8N2M3K4J5H6G7F8E
+        request_id: req_01JB7Q4C1V8N2M3K4J5H6G7F8D
+        job_id: null
+        client_frame_id: "run_01JB7Q2A:017:0"
+        status: complete
+        pixel_convention:
+          origin: 0
+          center_of_first_pixel: [0, 0]
+          x_axis: column
+        frame:
+          width: 3008
+          height: 3008
+          dtype: uint16
+          binning: [2, 2]
+          encoding: fits+rice
+          lossy: false
+          transport_sha256: 9b1c3f0e6d2a4b5c8e7f60123456789abcdef0123456789abcdef0123456789a
+          pixel_sha256: 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
+          internal_scale_factor: 1.0
+          t_start_utc: "2026-10-19T03:12:43.512Z"
+          t_mid_utc: "2026-10-19T03:12:44.512Z"
+          t_mid_source: derived
+          exposure_s:
+            value: 2.0
+            source: request
+          epoch:
+            positions_at: mid_exposure
+          track_mode:
+            value: sidereal
+            source: rates
+            detail: header rates within sidereal threshold
+        warnings:
+          - code: NO_SITE
+            message: No site given; alt/az and airmass not computed.
+            disables: [altaz, airmass]
+        detection:
+          status: ok
+          method: point
+          route_reason: predicted trail 0.4 px < 1.5 x FWHM 3.1 px
+          predicted_trail_px: 0.4
+          routing_threshold_px: 4.65
+          fwhm:
+            value_px: 3.1
+            source: measured
+            trail_corrected: false
+          background:
+            median_adu: 812.0
+            std_adu: 11.2
+          threshold_sigma: 5.0
+          max_sources: 100
+          counts:
+            candidates: 412
+            rejected_low_snr: 288
+            dropped_edge: 3
+            unrefined: 0
+            returned: 100
+          star_trail: null
+          sources:
+            - id: 0
+              rank: 0
+              shape: point
+              class: star
+              x: 1503.2713
+              y: 811.9042
+              flux: 123456.0
+              flux_err: 412.0
+              flux_unit: adu
+              snr: 88.1
+              peak_adu: 30111
+              saturated: false
+              fwhm_px: 3.0
+        solution:
+          status: solved
+          reason: null
+          tier: T1
+          rung: "T1:parity+1"
+          wcs:
+            header:
+              CTYPE1: RA---TAN-SIP
+              CTYPE2: DEC--TAN-SIP
+              CRPIX1: 1505.0
+              CRPIX2: 1505.0
+              CRVAL1: 83.8302
+              CRVAL2: -5.3874
+              CD1_1: -0.000311
+              CD1_2: 0.0000042
+              CD2_1: 0.0000041
+              CD2_2: 0.000311
+              A_ORDER: 2
+              A_0_2: 2.1e-7
+              A_1_1: -1.3e-7
+              A_2_0: 4.0e-8
+              B_ORDER: 2
+              B_0_2: -6.0e-8
+              B_1_1: 1.9e-7
+              B_2_0: -2.4e-7
+              RADESYS: ICRS
+              EQUINOX: 2000.0
+              IMAGEW: 3008
+              IMAGEH: 3008
+              TIMESYS: UTC
+              DATE-OBS: "2026-10-19T03:12:43.512"
+              DATE-BEG: "2026-10-19T03:12:43.512"
+              DATE-AVG: "2026-10-19T03:12:44.512"
+            is_candidate: false
+          derived:
+            reference_pixel: [1504.0, 1504.0]
+            center_ra_deg: 83.8302
+            center_dec_deg: -5.3874
+            scale_arcsec_px: 1.1197
+            roll_deg: 0.7737
+            parity: 1
+            fov_deg: [0.9356, 0.9356]
+          quality:
+            n_matched: 61
+            rms_px: 0.41
+            rms_arcsec: 0.46
+            log_odds: 212.0
+            expected_chance_matches: 0.3
+            n_catalog_in_frame: 140
+            wcs_status: direct_fit
+          attempts:
+            - rung: "T0:prior"
+              tier: T0
+              status: skipped
+              reason: no prior_wcs
+              ms: 0
+            - rung: "T0:boresight"
+              tier: T0
+              status: rejected
+              reason: gate:n_matches<8
+              ms: 95
+              gate:
+                n_matches: 5
+                passed: false
+            - rung: "T1:parity+1"
+              tier: T1
+              status: accepted
+              ms: 412
+              gate:
+                n_matches: 61
+                rms_px: 0.41
+                log_odds: 212.0
+                expected_chance_matches: 0.3
+                passed: true
+        timings_ms:
+          queue: 3
+          decode: 41
+          detect: 380
+          solve: 507
+          total: 951
+        data_policy_applied:
+          retain: none
+          retain_until: "2026-10-20T03:12:46Z"
+          frame_retained: false
+          frame_retain_until: null
+          contribute: false
+        provenance:
+          request_id: req_01JB7Q4C1V8N2M3K4J5H6G7F8D
+          api_version: "2.0"
+          release:
+            channel: stable
+            seq: 41
+          software:
+            senpai: 3.0.0
+            build: g1a2b3c4
+            lock_sha256: 5d41402abc4b2a76b9719d911017c592ae2b4f7c1d3e5f60718293a4b5c6d7e8
+            environment_sha256: 9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d
+            environment_matches_release: true
+            image_digest: sha256:aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233
+            astroeasy: 1.4.0
+            astropy: 7.1.0
+            platform_class: linux-x86_64
+          algorithm:
+            id: senpai.frame@5
+            pipeline: senpai.frame
+            version: 5
+            pin_requested: senpai.frame@5
+            pin_honored: true
+          config:
+            hash: sha256:1111111111111111111111111111111111111111111111111111111111111111
+            overrides:
+              detection.threshold_sigma: 5.0
+          data:
+            bundle_set: sha256:2222222222222222222222222222222222222222222222222222222222222222
+            used:
+              - kind: tetra3-db
+                name: fov0.5-1.5_g11
+                version: 2026.10.0
+                digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+                origin: upstream
+                attribution: ESA/Gaia/DPAC
+          time_data:
+            iers_data_version: 0.2026.10.19
+            iers_age_days: 0
+            iers_stale: false
+            iers_bundle: null
+          input:
+            pixel_sha256: 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
+            encoding: fits+rice
+            lossy: false
+          execution:
+            mode: remote
+            profile: hosted
+            deployment_id: hosted-us1
+          reproducibility_key: sha256:4444444444444444444444444444444444444444444444444444444444444444
+    ProblemAlgorithmUnavailable:
+      summary: Exact pin not served here
+      value:
+        type: https://ssc-ai.github.io/senpai/problems/algorithm-unavailable
+        title: Pinned algorithm version not available
+        status: 422
+        detail: senpai.frame@3 is not served by this deployment
+        instance: /v2/analyze
+        code: algorithm-unavailable
+        request_id: req_01JB7Q5D2W9P3N4L5K6J7H8G9F
+        retryable: false
+        available: ["senpai.frame@4", "senpai.frame@5"]
+    CapabilitiesSelfHosted:
+      summary: Self-hosted narrow-field server without astrometry.net
+      value:
+        api:
+          version: "2.0"
+          min_supported_minor: 0
+          deprecated:
+            - routes: "/senpai/*, /astrometry/*"
+              deprecated_at: "2026-12-01"
+              sunset: null
+        server:
+          product: astro-senpai
+          version: 3.0.0
+          build: g1a2b3c4
+          image_digest: sha256:aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233
+          profile: self_hosted
+          deployment_id: obs-a-senpai-01
+          release:
+            channel: stable
+            seq: 41
+        algorithms:
+          - id: senpai.frame@5
+            pipeline: senpai.frame
+            version: 5
+            default: true
+            status: stable
+            released: "2026-11-15"
+          - id: senpai.collect@8
+            pipeline: senpai.collect
+            version: 8
+            default: true
+            status: stable
+            released: "2026-11-15"
+        ops: [detect, solve, seeing, photometry, streaks]
+        inputs:
+          formats: [fits, fits+rice, fits+tile-gzip, fits+gzip]
+          lossy: opt_in
+          image_ref:
+            schemes: []
+            uploads: false
+        outputs:
+          media_types: [application/json, application/vnd.senpai.v2+msgpack]
+          table_media_types: [application/vnd.apache.arrow.stream, application/json]
+        solve:
+          planner: astroeasy-planner/2
+          tiers:
+            - name: T0
+              ready: true
+            - name: T1
+              ready: true
+              fov_range_deg: [0.5, 1.5]
+            - name: T3
+              ready: false
+              missing: anet-index
+            - name: T4
+              ready: false
+              missing: anet-index
+        bundles:
+          set: sha256:2222222222222222222222222222222222222222222222222222222222222222
+          active:
+            - kind: tetra3-db
+              name: fov0.5-1.5_g11
+              version: 2026.10.0
+              digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+              origin: upstream
+              attribution: ESA/Gaia/DPAC
+              verified: true
+              verified_at: "2026-11-16T08:00:00Z"
+              license:
+                spdx: LicenseRef-CC-BY-NC-3.0-IGO
+                attribution: ESA/Gaia/DPAC
+                notice: NOTICE
+                upstreams:
+                  - name: Gaia DR3
+                    release: DR3, gaiadr3.gaia_source
+                    credit: ESA/Gaia/DPAC
+                    citation: Gaia Collaboration, Prusti et al. 2016, A&A 595, A1; Gaia Collaboration, Vallenari et al. 2023, A&A 674, A1
+                    license: CC BY-NC 3.0 IGO; ESA ESDC terms and conditions
+                    terms_url: https://www.cosmos.esa.int/web/gaia-users/license
+                    url: https://gea.esac.esa.int/archive/
+            - kind: gaia-mirror
+              name: dr3-g16
+              version: 2026.10.0
+              digest: sha256:5555555555555555555555555555555555555555555555555555555555555555
+              origin: upstream
+              verified: true
+              verified_at: "2026-11-16T08:00:00Z"
+            - kind: sstrc7
+              name: sstrc7
+              version: 1.0.1
+              digest: sha256:6666666666666666666666666666666666666666666666666666666666666666
+              origin: upstream
+              verified: true
+              verified_at: "2026-11-16T08:00:00Z"
+        catalogs:
+          astrometric: gaia-mirror/dr3-g16
+          photometric: sstrc7
+          online: false
+        limits:
+          max_request_bytes: 67108864
+          max_decoded_pixels: 100000000
+          max_decoded_bytes: 400000000
+          max_hdus: 8
+          max_header_cards: 10000
+          max_frames_per_collect: 200
+          max_sources: 2000
+          max_input_sources: 20000
+          max_stars_per_frame: 20000
+          sync_default_deadline_s: 10
+          sync_max_deadline_s: 30
+          sync_concurrency: 4
+          promoted_max_s: 120
+          overload_reject_ms: 1000
+          per_tenant:
+            sync_concurrency: 4
+            max_queued_jobs: 1000
+        auth:
+          modes: [static_keys]
+          scopes: [analyze, jobs, "results:read", "data:delete"]
+        policies:
+          retention_default: none
+          retention_max_days: 30
+          audit_retention_days: 395
+          results_ttl_h: 24
+          job_ttl_h: 24
+          idempotency_ttl_s: 86400
+          idempotency_required: []
+          contribution:
+            supported: false
+          result_cache: false
+          async_promotion: true
+          outbound_network: none
+        jobs:
+          sse: true
+          max_queued: 1000
+        expert_keys: ["streak.min_snr", "validation.min_matches", "wcs_validation.max_rms_px", "chain_gate.max_shift_px"]
