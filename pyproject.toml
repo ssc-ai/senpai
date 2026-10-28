@@ -13,6 +13,8 @@ keywords = [
     "astrometric calibration",
 ]
 readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE*"]
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "arrow>=1.3.0",
