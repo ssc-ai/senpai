@@ -1,5 +1,5 @@
 import numpy as np
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 def normalize_angle(angle: float) -> float:
@@ -54,6 +54,9 @@ class StreakMeasurement(BaseModel):
     rotation: float
     length: float
     fwhm: float | None = None
+    prior_length: float | None = Field(default=None, exclude=True)
+    """Length (px) of the seed the measurement started from: the matched-filter estimate or
+    the caller's prior. Not serialized; lets a later stage reject a result inconsistent with it."""
 
     @model_validator(mode="after")
     def normalize_rotation(self) -> "StreakMeasurement":

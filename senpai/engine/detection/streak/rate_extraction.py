@@ -45,12 +45,30 @@ def extract_rate_streak_measurement(
         return None, None, measured_fwhm
 
     # Refine using the two-stage robust refiner when we have a PSF cutout.
+    prior = measurement.prior_length
     if psf is not None:
         measurement, measured_fwhm = refine_robust_streak(
             psf, measurement, frame_index=rate_frame.index
         )
 
+    # The refined length must stay consistent with the matched-filter seed: a stack
+    # of a few poor candidates refines to 3-4x the trail (sdasim 30 s mag <= 9:
+    # 72 and 104 px for a 23.6 px trail, seed 27 px). No streak beats a wrong one.
+    if prior and not (_PRIOR_RATIO[0] * prior <= measurement.length <= _PRIOR_RATIO[1] * prior):
+        logger.warning(
+            "Refined streak length %.1f px inconsistent with the seed %.1f px "
+            "(outside %.1f-%.1fx); no streak measurement",
+            measurement.length, prior, *_PRIOR_RATIO,
+        )
+        return None, psf, measured_fwhm
+
     return measurement, psf, measured_fwhm
+
+
+_PRIOR_RATIO = (0.25, 2.5)
+"""Refined length / seed length range accepted by extract_rate_streak_measurement. The floor is
+loose because the matched-filter seed grid starts at 12 px and overestimates short trails (an
+18 px seed for a 7.8 px trail); over-long results are the failure this guards against."""
 
 
 def build_streak_metadata(measurement: StreakMeasurement) -> StreakMetadata:
