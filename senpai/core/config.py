@@ -190,6 +190,15 @@ class DetectionConfig(BaseModel):
     streak_angle_tolerance_deg: float = Field(
         default=15.0, description="Angle tolerance for cross-frame streak matching"
     )
+    measure_hfr: bool = Field(
+        default=False,
+        description=(
+            "Also measure the median half-flux radius of sidereal detections "
+            "(DetectionMetadata.pixel_hfr). Costs one extra segmentation pass, "
+            "~0.15-0.5 s per 5 Mpix frame. Off by default; always on in "
+            "pipeline_mode 'detect', which is what focus sweeps request."
+        ),
+    )
 
 
 class VariableKernelConfig(BaseModel):

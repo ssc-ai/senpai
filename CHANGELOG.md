@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-10-29
+
+### Added
+
+- **Half-flux radius for focus sweeps (opt-in).** `measure_half_flux_radius()`
+  reports the median half-flux radius of a frame's unsaturated sources as
+  `DetectionMetadata.pixel_hfr` / `n_hfr_measurements`. Unlike the
+  detection-stage FWHM it needs no centroid peak, so it keeps growing through
+  donut defocus: on a Huntsman focus sweep the V-curve fit went from R² = 0.17
+  (FWHM) to R² = 0.999 (2 × HFR). It costs one extra segmentation pass
+  (~0.15–0.5 s per 2744×1836 frame), so it runs only in `pipeline_mode: detect`
+  or when `detection.measure_hfr: true` (default `false`).
+
+### Changed
+
+- **Licence: AGPL-3.0-or-later** (from 2.9.0 on).
+
 ## [2.8.2] - 2026-08-31
 
 ### Fixed

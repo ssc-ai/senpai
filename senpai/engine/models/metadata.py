@@ -46,6 +46,10 @@ class FWHMMetadata(BaseModel):
 class DetectionMetadata(BaseModel):
     pixel_fwhm: float
     fwhm_stats: FWHMMetadata | None = None
+    # Median half-flux radius of the unsaturated sources [px]; monotonic with
+    # defocus, unlike the FWHM measures (see measure_half_flux_radius).
+    pixel_hfr: float | None = None
+    n_hfr_measurements: int | None = None
 
 
 class CollectionMetadata(BaseModel):

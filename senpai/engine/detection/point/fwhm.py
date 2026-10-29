@@ -62,6 +62,65 @@ def _radial_profile_fwhm(
     return float(2.0 * r_half)
 
 
+def _clip_level(data: np.ndarray, min_pixels: int = 10) -> float | None:
+    """The frame's clip level if pixels pile up at exactly its maximum, else None.
+
+    A clipped sensor repeats one value (65504 on the ASI183 frames this was built
+    on) across every saturated core; an unclipped frame's maximum is a single
+    brightest pixel. Returns just under that value so the clipped sources fail a
+    ``peak < level`` test.
+    """
+    top = float(np.max(data))
+    if np.count_nonzero(data == top) < min_pixels:
+        return None  # nothing clipped: the maximum is just the brightest star
+    return top - 0.5
+
+
+def measure_half_flux_radius(
+    data: np.ndarray,
+    background: float,
+    noise: float,
+    sat_level: float | None = None,
+    threshold_sigma: float = 5.0,
+    min_pixels: int = 10,
+) -> tuple[float | None, int]:
+    """Median half-flux radius (HFR) of the frame's unsaturated sources, in pixels.
+
+    The radius enclosing half of each source's segmented flux (photutils
+    ``SourceCatalog.fluxfrac_radius(0.5)``). Unlike the half-max measures above
+    it needs no centroid peak, so it stays monotonic with defocus: a defocused
+    star is a donut whose centroid sits in the dark hole, where the connected
+    half-max area and the radial profile both read noise. That makes it the
+    metric for a focus sweep that starts far from focus.
+
+    Saturated sources are dropped: their clipped cores flatten the profile and
+    inflate the radius. Without an explicit ``sat_level`` a source counts as
+    saturated when it reaches the frame's clip level (see _clip_level).
+
+    Returns ``(median_hfr, n_measured)``; ``median_hfr`` is None when no
+    unsaturated source is segmented.
+    """
+    from photutils.segmentation import SourceCatalog, detect_sources
+
+    sub = data.astype(np.float32) - np.float32(background)
+    segments = detect_sources(sub, threshold=threshold_sigma * noise, npixels=min_pixels)
+    if segments is None:
+        return None, 0
+
+    catalog = SourceCatalog(sub, segments)
+    radii = np.asarray(catalog.fluxfrac_radius(0.5).value, dtype=float)
+    peaks = np.asarray(catalog.max_value, dtype=float) + background
+    if sat_level is None:
+        sat_level = _clip_level(data)
+    keep = np.isfinite(radii) & (radii > 0)
+    if sat_level is not None:
+        keep &= peaks < sat_level
+
+    if not keep.any():
+        return None, 0
+    return float(np.median(radii[keep])), int(keep.sum())
+
+
 def _catalog_sat_level(peaks: list[float]) -> float:
     """Fallback saturation level from a magnitude-sorted catalog sample.
 

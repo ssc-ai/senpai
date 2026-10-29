@@ -5,6 +5,7 @@ from astropy.table import Table
 from photutils.detection import DAOStarFinder
 from scipy.optimize import curve_fit
 
+from senpai.engine.detection.point.fwhm import measure_half_flux_radius
 from senpai.engine.models.images import ProcessedFitsImage
 from senpai.engine.models.starfield import StarInImage, StarListImage
 from senpai.engine.utils.stats import robust_background_stats
@@ -395,7 +396,10 @@ def _refine_centroid_full_res(
 
 
 def extract_point_sources(
-    image: ProcessedFitsImage, max_detections: int = 100, min_separation: float = None
+    image: ProcessedFitsImage,
+    max_detections: int = 100,
+    min_separation: float = None,
+    measure_hfr: bool = False,
 ) -> tuple[StarListImage, float]:
     logger.info("Extracting point sources from image %s", image.metadata.image_id)
 
@@ -559,7 +563,26 @@ def extract_point_sources(
         image_metadata=image.metadata,
         sat_level=(float(sat_level) if np.isfinite(sat_level) else None),
     )
+    if measure_hfr:
+        starlist.hfr, starlist.n_hfr = _half_flux_radius(data, bg_stats)
     return starlist, fwhm_pixel
+
+
+def _half_flux_radius(data: np.ndarray, bg_stats) -> tuple[float | None, int]:
+    """Median half-flux radius alongside the FWHM, for focus sweeps.
+
+    The FWHM measures above read noise on defocused (donut) stars; the half-flux
+    radius stays monotonic with defocus. Costs one extra segmentation pass
+    (~0.15-0.5 s on a 5 Mpix frame), so callers opt in. The detection sat_level
+    is not reused: on sparse or defocused fields it lands far below the true clip
+    (~1-3k ADU on 65k-clip frames), which would reject every usable star;
+    measure_half_flux_radius keys on the frame's clip instead.
+    """
+    _, bg_median, bg_std = bg_stats
+    hfr, n_hfr = measure_half_flux_radius(data, bg_median, bg_std)
+    if hfr is not None:
+        logger.info("Median half-flux radius %.2f px from %d sources", hfr, n_hfr)
+    return hfr, n_hfr
 
 
 def validate_point_detection(

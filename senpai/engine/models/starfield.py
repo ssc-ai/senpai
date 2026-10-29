@@ -142,6 +142,10 @@ class StarListImage(BaseModel):
     # percentile lands in the faint bulk), whereas the detection-flux-sorted
     # sample measures it correctly.
     sat_level: float | None = None
+    # Median half-flux radius of the frame's unsaturated sources [px], and how
+    # many sources it was measured from (see measure_half_flux_radius).
+    hfr: float | None = None
+    n_hfr: int = 0
 
     def centers_xy(self) -> np.ndarray:
         return np.array([[star.x, star.y, star.counts] for star in self.detections])

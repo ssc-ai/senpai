@@ -114,10 +114,12 @@ def stubbed_stages(monkeypatch):
         "refine": 0,
         "catalog": 0,
         "catalog_fwhm": 0,
+        "measure_hfr": None,
     }
 
-    def fake_extract(fits_image, max_detections=None):
+    def fake_extract(fits_image, max_detections=None, measure_hfr=False):
         calls["extract"] += 1
+        calls["measure_hfr"] = measure_hfr
         return _fake_sources(), DETECTION_FWHM
 
     def fake_solve(sources, wcs=None):
@@ -274,6 +276,34 @@ def test_full_mode_still_runs_the_whole_pipeline(monkeypatch, stubbed_stages):
     # Catalog-measured FWHM wins in full mode, not the detection-stage value.
     assert starfield.fwhm_stats.median_fwhm == 9.0
     assert starfield.detection_metadata.pixel_fwhm == 9.0
+
+
+# --------------------------------------------------------------------------
+# Half-flux radius is a focus-sweep metric: science runs don't pay for it
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mode, expected", [("full", False), ("detect_solve", False), ("detect", True)]
+)
+def test_hfr_measured_only_in_detect_mode_by_default(
+    monkeypatch, stubbed_stages, mode, expected
+):
+    _use_pipeline_mode(monkeypatch, mode)
+    sidereal_mod.process_astrometry_fits_sidereal(_fake_image())
+    assert stubbed_stages["measure_hfr"] is expected
+
+
+def test_hfr_opt_in_for_full_mode(monkeypatch, stubbed_stages):
+    _use_pipeline_mode(monkeypatch, "full")
+    config = cfg_mod._config_instance
+    detection = config.detection.model_copy(update={"measure_hfr": True})
+    monkeypatch.setattr(
+        cfg_mod, "_config_instance", config.model_copy(update={"detection": detection})
+    )
+
+    sidereal_mod.process_astrometry_fits_sidereal(_fake_image())
+    assert stubbed_stages["measure_hfr"] is True
 
 
 # --------------------------------------------------------------------------
