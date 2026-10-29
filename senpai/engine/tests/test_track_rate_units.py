@@ -8,6 +8,8 @@ upstream unit convention.
 """
 
 
+import math
+
 import pytest
 
 from senpai.engine.utils.fits_io import _to_arcsec_per_second
@@ -20,7 +22,7 @@ from senpai.engine.utils.fits_io import _to_arcsec_per_second
     ("degrees/second", 0.0112, 40.32),   # burr's calsat rate
     ("deg/second", 1.0, 3600.0),
     ("deg/s", 0.001, 3.6),
-    ("radians/second", 1e-5, pytest.approx(2.063, abs=1e-3)),
+    ("radians/second", 1e-5, math.degrees(1e-5) * 3600.0),  # ~2.063
 ])
 def test_known_units(unit, value, expected):
     assert _to_arcsec_per_second(value, unit) == pytest.approx(expected, rel=1e-6)
