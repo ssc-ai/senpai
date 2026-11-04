@@ -494,7 +494,9 @@ def refine_robust_streak(
     from scipy.ndimage import gaussian_filter1d as _g1d
     from scipy.ndimage import median_filter as _medfilt
 
-    def _stable_half_extent(prof: np.ndarray, frac: float = 0.5) -> float:
+    def _stable_half_extent(
+        prof: np.ndarray, frac: float = 0.5, center: int | None = None, max_gap: int | None = None
+    ) -> float:
         if prof.size == 0:
             return 0.0
         # Median filter rejects isolated hot-pixel columns (which would set a
@@ -504,7 +506,19 @@ def refine_robust_streak(
         if peak <= 0:
             return 0.0
         idx = np.where(sm >= frac * peak)[0]
-        return float(idx[-1] - idx[0]) if idx.size >= 2 else 0.0
+        if idx.size < 2:
+            return 0.0
+        if center is None or max_gap is None:
+            return float(idx[-1] - idx[0])
+        # The run of above-half samples that contains the streak centre, bridging
+        # dips up to max_gap (a fragmented trail) but not the background gap to a
+        # neighbouring star: outermost crossings across the whole cutout spanned
+        # to a neighbour at the cutout edge (sdasim 10 s frame: 54 px for 7.8).
+        runs = np.split(idx, np.where(np.diff(idx) > max_gap + 1)[0] + 1)
+        at_centre = [r for r in runs if r[0] - max_gap <= center <= r[-1] + max_gap]
+        # without a run at the centre, fall back to the brightest run
+        run = at_centre[0] if at_centre else max(runs, key=lambda r: float(np.max(sm[r])))
+        return float(run[-1] - run[0])
 
     # Hot-pixel-robust center: argmax of a median-filtered PSF (the global argmax
     # can be a hot pixel, which would put the measurement band off the streak).
@@ -516,7 +530,8 @@ def refine_robust_streak(
     _ly0 = max(0, cprof_y - _lband)
     _ly1 = min(rotated_psf.shape[0], cprof_y + _lband + 1)
     along_profile = np.max(rotated_psf[_ly0:_ly1, :], axis=0)
-    fwhm_length = _stable_half_extent(along_profile)
+    _gap = int(max(6, round(2.0 * (seed.fwhm or 4.0))))  # bridges a mid-trail dip
+    fwhm_length = _stable_half_extent(along_profile, center=int(cprof_x), max_gap=_gap)
     if fwhm_length > 0:
         refined_length = fwhm_length
     else:
@@ -1244,6 +1259,19 @@ def _estimate_streak_seed(
         return 40.0, 0.0
 
 
+_SEED_ANGLE_TOL_DEG = 20.0
+"""Candidates within this angle of the seed are consistent with it (the seed angle is on a
+15 deg grid, so it can be ~7.5 deg off by construction; 30 deg let a 108.6 deg selection pass
+a 135 deg seed for a 144 deg trail)."""
+_SEED_LENGTH_RATIO = (0.3, 3.0)
+"""Candidate component length / seed length range considered consistent with the seed."""
+_MIN_CONSISTENT = 3
+"""Fewest seed-consistent candidates to build a streak PSF from after a failed sanity check."""
+_ALIGNED = 0.9
+"""Axial alignment (|mean exp(2i theta)|) above which selected candidates are trusted over the
+seed angle: ~1 for trails from one rate, ~0 for scattered blobs."""
+
+
 def extract_streak_dims_robust(
     data: np.ndarray,
     n_streaks: int = 10,
@@ -1361,8 +1389,12 @@ def extract_streak_dims_robust(
     streak_candidates = []
     streak_metrics = []
 
-    # Size of cutout region (make it generously larger than expected streak)
-    cutout_size = int(max(length * 1.3, fwhm * 10))
+    # Half-size of the cutout: the trail's half-length plus a few FWHM of wings
+    # and background. It used to be max(1.3 L, 10 FWHM), which for small PSFs is
+    # a box of 20 FWHM that takes in neighbouring stars (they then enter the
+    # stack and the length measurement); 0.75 L + 4 FWHM still holds the whole
+    # trail with margin when the seed length is 50% short.
+    cutout_size = int(np.ceil(max(0.75 * length + 4.0 * fwhm, 6.0 * fwhm, 12.0)))
 
     # Minimum distance between streak centers to avoid duplicates
     min_distance = max(int(length * 0.5), 10)
@@ -1382,7 +1414,18 @@ def extract_streak_dims_robust(
             effective_kernel=eff_kernel, bg_value=bg_median, response=filtered_data,
         )
 
-    for _ in range(min(30, n_streaks * 3)):  # Try more candidates than needed
+    # Candidate budget. Only candidates that reach shape analysis count toward
+    # it: rejections for the frame edge, mask overlap, low SNR or saturation are
+    # cheap and must not use it up. Brightest-first, the budget used to go to
+    # saturated trails in long or bright frames (a 30 s sdasim frame: all 30;
+    # a 10 s one: 27 of 30, leaving a single cutout as the "stack", whose
+    # neighbouring star then set the length). max_peaks bounds the whole search.
+    max_examined = min(30, n_streaks * 3)
+    max_peaks = max_examined * 10
+    n_examined = 0
+    for _ in range(max_peaks):
+        if n_examined >= max_examined:
+            break
         if np.all(
             processed_mask[border_width:-border_width, border_width:-border_width]
         ):
@@ -1391,6 +1434,8 @@ def extract_streak_dims_robust(
         # Next-brightest unprocessed peak — already-masked regions are -inf in the
         # response (set by _mask), so no per-iteration full-frame masking needed.
         y_max, x_max = np.unravel_index(np.argmax(filtered_data), filtered_data.shape)
+        if not np.isfinite(filtered_data[y_max, x_max]):
+            break  # everything left is masked
 
         # Skip if too close to edge for full cutout
         if (
@@ -1456,7 +1501,8 @@ def extract_streak_dims_robust(
                 _mask(y_max, x_max)
                 continue
 
-        # Analyze shape using connected components
+        # Analyze shape using connected components (counts toward the budget)
+        n_examined += 1
         binary_cutout = norm_cutout > 0.3  # Threshold at 30% of peak
 
         # Skip if no pixels above threshold
@@ -1584,6 +1630,43 @@ def extract_streak_dims_robust(
     top_n = min(n_streaks, len(streak_candidates))
     selected_indices = sorted_indices[:top_n]
 
+    # Sanity check against the seed (the matched-filter estimate, or the caller's
+    # prior). When few unsaturated trails are left, the candidates can be faint
+    # blobs whose shape says nothing about the trail (sdasim 30 s, mag <= 7.5:
+    # 2.7 px at 102 deg for a 23.6 px trail at 144 deg, seed 27 px at 150 deg),
+    # and the stack built from them is garbage. Keep only candidates consistent
+    # with the seed; with fewer than _MIN_CONSISTENT left, report no streak
+    # instead of a wrong one.
+    def _ang_diff(a: float) -> float:
+        d = abs(a - rotation) % 180.0
+        return min(d, 180.0 - d)
+
+    def _consistent(m: dict) -> bool:
+        ratio = m["length"] / length if length > 0 else 1.0
+        return _ang_diff(m["angle"]) <= _SEED_ANGLE_TOL_DEG and _SEED_LENGTH_RATIO[0] <= ratio <= _SEED_LENGTH_RATIO[1]
+
+    sel = [streak_metrics[i] for i in selected_indices]
+    med_angle_diff = _ang_diff(float(np.median([m["angle"] for m in sel])))
+    med_ratio = float(np.median([m["length"] for m in sel])) / length if length > 0 else 1.0
+    # Real trails share one angle; the failure is faint blobs at scattered angles. When the
+    # selected candidates agree with each other (axial mean resultant length, as in the
+    # pixel track-mode test), trust them over the seed's angle: the seed is a coarse grid
+    # search whose kernel widens with the FWHM guess (seed FWHM 8 px: 165 deg for 144 deg).
+    sel_angles = np.deg2rad([m["angle"] for m in sel])
+    alignment = float(abs(np.mean(np.exp(2j * sel_angles)))) if len(sel) >= _MIN_CONSISTENT else 0.0
+    angle_off = med_angle_diff > _SEED_ANGLE_TOL_DEG and alignment < _ALIGNED
+    if angle_off or not (_SEED_LENGTH_RATIO[0] <= med_ratio <= _SEED_LENGTH_RATIO[1]):
+        consistent = [i for i in sorted_indices if _consistent(streak_metrics[i])]
+        logger.warning(
+            "Streak candidates disagree with the seed (median angle off by %.0f deg, length %.2fx "
+            "seed %.0f px at %.0f deg); %d of %d candidates are consistent with it",
+            med_angle_diff, med_ratio, length, rotation, len(consistent), len(streak_metrics),
+        )
+        if len(consistent) < _MIN_CONSISTENT:
+            return None, None, fwhm
+        top_n = min(n_streaks, len(consistent))
+        selected_indices = np.array(consistent[:top_n])
+
     selected_streaks = [streak_candidates[i] for i in selected_indices]
     selected_metrics = [streak_metrics[i] for i in selected_indices]
 
@@ -1699,6 +1782,7 @@ def extract_streak_dims_robust(
         rotation=final_angle,
         length=final_length,
         fwhm=measured_fwhm,
+        prior_length=float(length) if length else None,
     )
     # Return the measured FWHM along with other parameters
     return streak_measurement, psf, measured_fwhm

@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rate-track streak measurement on small-PSF and saturated frames.** Stage 1
+  examined its 30 candidates brightest-first and counted saturated, edge and
+  low-SNR rejections against that budget, so frames full of saturated trails
+  found no streak; now only candidates that reach shape analysis count. The
+  cutout is sized to the trail (0.75 L + 4 FWHM) instead of a box that took in
+  neighbouring stars, and the refined length is the half-peak run at the trail
+  centre rather than the outermost crossings. Candidates that disagree with the
+  seed's angle or length, and refined lengths outside 0.25-2.5x the seed, now
+  give no streak instead of a wrong one. On simulated 135 mm frames, 10 s trails
+  measure 6-8 px at every FWHM seed (was up to 54 px) and 30 s trails 21-22 px
+  (previously none at 12 of 13 seeds).
+
 ## [2.9.1] - 2026-11-03
 
 ### Changed
