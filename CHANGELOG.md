@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-11-03
+
 ### Fixed
 
 - **Rate-track streak measurement on small-PSF and saturated frames.** Stage 1
