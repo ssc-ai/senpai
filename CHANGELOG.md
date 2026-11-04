@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-11-03
+
 ### Changed
 
 - **Published on PyPI as `senpai`** (`pip install senpai`); the import package
