@@ -16,6 +16,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `astro-senpai` ≤ 2.9.0 install with pip can delete `senpai`'s files; if
   `senpai` is broken afterwards, run
   `pip install --force-reinstall --no-deps senpai`. uv is not affected.
+- **`import senpai` warns when `astro-senpai` is installed** (`FutureWarning`),
+  telling the project to depend on `senpai` instead. Wheels cannot print at
+  install time, so import is the first place to flag it.
 
 ## [2.9.0] - 2026-10-29
 
