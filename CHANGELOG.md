@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Published on PyPI as `senpai`** (`pip install senpai`); the import package
+  is unchanged. Thanks to [sangarshanan](https://pypi.org/user/sangarshanan/)
+  for handing over the name. `astro-senpai`, the old name, is now released
+  alongside it as an empty package that depends on the same version of
+  `senpai`, so existing installs and pins keep working. Upgrading an
+  `astro-senpai` ≤ 2.9.0 install with pip can delete `senpai`'s files; if
+  `senpai` is broken afterwards, run
+  `pip install --force-reinstall --no-deps senpai`. uv is not affected.
+
 ## [2.9.0] - 2026-10-29
 
 ### Added

@@ -1,0 +1,26 @@
+# astro-senpai is the old PyPI name of senpai. This builds an empty package
+# that only depends on the same version of senpai, so `pip install astro-senpai`
+# and existing astro-senpai pins keep working. It is released in lockstep with
+# senpai: `version` and the `senpai==` pin must equal the version in the
+# top-level pyproject.toml (the publish workflow and CI check this).
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "astro-senpai"
+version = "2.9.0"
+description = "Old name of senpai on PyPI. Installs senpai; use `pip install senpai`."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11,<3.14"
+dependencies = ["senpai==2.9.0"]
+
+[project.urls]
+Homepage = "https://github.com/ssc-ai/senpai"
+"New package" = "https://pypi.org/project/senpai/"
+
+[tool.hatch.build.targets.wheel]
+# No code: the senpai distribution ships the senpai import package.
+bypass-selection = true

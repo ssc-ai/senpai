@@ -58,9 +58,11 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
       - name: Build distributions
-        run: uv build
+        run: |
+          uv build
+          uv build --out-dir dist-shim packaging/astro-senpai
       - name: Check distribution metadata
-        run: uvx twine check dist/*
+        run: uvx twine check dist/* dist-shim/*
 
       - name: Construct the app from the installed wheel
         # Issue #6: create_app() worked in an editable checkout and raised on
@@ -76,4 +78,18 @@ jobs:
           from senpai.api.main import create_app
           create_app().openapi()
           print('installed wheel constructs the app and its OpenAPI schema')
+          "
+
+      - name: Install the astro-senpai shim over the built senpai
+        # The shim must pin exactly this senpai version (--find-links offers
+        # the local build; a wrong pin fails to resolve) and ship no code.
+        run: |
+          uv pip install --python /tmp/wheel-check/bin/python --find-links dist dist-shim/*.whl
+          cd /tmp
+          /tmp/wheel-check/bin/python -c "
+          from importlib.metadata import files, version
+          import senpai
+          assert version('astro-senpai') == version('senpai') == senpai.__version__, senpai.__version__
+          assert not [f for f in files('astro-senpai') if f.suffix == '.py'], 'shim ships code'
+          print('astro-senpai', version('astro-senpai'), '-> senpai', senpai.__version__)
           "

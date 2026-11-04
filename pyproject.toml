@@ -1,5 +1,5 @@
 [project]
-name = "astro-senpai"
+name = "senpai"
 version = "2.9.0"
 description = "SENPAI is a software package for the analysis of astronomical images."
 authors = [

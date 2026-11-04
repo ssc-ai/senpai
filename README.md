@@ -26,11 +26,17 @@ Is SENPAI the tool I'm looking for? SENPAI processes FITS imagery from ground-ba
 
 ## Install
 
-Install from PyPI (package name `astro-senpai`, imports as `senpai`):
+Install from PyPI:
 
 ```sh
-pip install astro-senpai
+pip install senpai
 ```
+
+Releases up to 2.9.0 were published as `astro-senpai`. That name still works: it
+now installs `senpai` at the same version. If you upgrade an old `astro-senpai`
+install with pip and `senpai` is then broken (for example, it has no
+`__version__`), run `pip install --force-reinstall --no-deps senpai`, or switch
+cleanly with `pip uninstall astro-senpai && pip install senpai`.
 
 ### Development install
 
@@ -132,6 +138,11 @@ docker run -p 8000:8000 \
 This will mount your custom config file in place of the default containerize.yaml. Make sure your custom config file follows the same format as the default configuration.
 
 http://localhost:8000/docs
+
+## Acknowledgments
+
+Thanks to [sangarshanan](https://pypi.org/user/sangarshanan/) for handing over the
+`senpai` name on PyPI.
 
 ## Citation
 

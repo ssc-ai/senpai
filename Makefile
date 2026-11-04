@@ -7,7 +7,9 @@ endif
 
 # Project variables
 PACKAGE      := senpai
-DIST_NAME    := astro-senpai
+DIST_NAME    := senpai
+SHIM_NAME    := astro-senpai
+SHIM_DIR     := packaging/astro-senpai
 VERSION      := $(shell sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
 # Export variables
 EXPORT_BASE := dist/export
@@ -81,22 +83,31 @@ format: ## Format code and fix lint issues (ruff)
 # Release         #
 ###################
 
-.PHONY: version build check-clean-tree check-version-unpublished check-tag-free tag publish-test publish
+.PHONY: version build check-shim-version check-clean-tree check-version-unpublished check-tag-free tag publish-test publish
 
 version: ## Print the version from pyproject.toml
 	@echo $(VERSION)
 
-build: ## Build wheel and sdist (dist name: astro-senpai)
+build: check-shim-version ## Build senpai and the astro-senpai shim into dist/
 	rm -rf dist/
-	uv build
+	uv build --out-dir dist/senpai
+	uv build --out-dir dist/astro-senpai $(SHIM_DIR)
+
+# The astro-senpai shim is released in lockstep: same version, pinned to senpai==<version>.
+check-shim-version:
+	@grep -qx 'version = "$(VERSION)"' $(SHIM_DIR)/pyproject.toml && \
+		grep -qx 'dependencies = \["senpai==$(VERSION)"\]' $(SHIM_DIR)/pyproject.toml || \
+		{ echo "ERROR: $(SHIM_DIR)/pyproject.toml must have version $(VERSION) and depend on senpai==$(VERSION)"; exit 1; }
 
 check-clean-tree:
 	@test -z "$$(git status --porcelain)" || { echo "ERROR: git tree is dirty; commit or stash first"; git status --short; exit 1; }
 
 check-version-unpublished:
-	@if curl -sf https://pypi.org/pypi/$(DIST_NAME)/$(VERSION)/json > /dev/null; then \
-		echo "ERROR: $(DIST_NAME) $(VERSION) is already on PyPI; bump version in pyproject.toml first"; exit 1; \
-	fi
+	@for name in $(DIST_NAME) $(SHIM_NAME); do \
+		if curl -sf https://pypi.org/pypi/$$name/$(VERSION)/json > /dev/null; then \
+			echo "ERROR: $$name $(VERSION) is already on PyPI; bump version in pyproject.toml and $(SHIM_DIR)/pyproject.toml first"; exit 1; \
+		fi; \
+	done
 	@echo "PyPI check OK: $(DIST_NAME) $(VERSION) not yet published"
 
 check-tag-free:
@@ -113,13 +124,15 @@ tag: check-clean-tree check-tag-free ## git tag v<version> from pyproject.toml a
 	git push origin v$(VERSION)
 
 publish-test: check-clean-tree test-ci build ## Test + build + upload to TestPyPI (token from ~/.pypirc)
-	uvx twine upload --repository testpypi dist/*
+	uvx twine upload --repository testpypi dist/senpai/*
+	uvx twine upload --repository testpypi dist/astro-senpai/*
 
 # Publish to PyPI. Guarded: refuses on a dirty tree or an already-published
 # version, always rebuilds from scratch, and runs the CI test subset first.
 # PyPI uploads are irreversible per version - bump pyproject.toml first.
 publish: check-clean-tree check-version-unpublished test-ci build ## Guarded upload to PyPI (token from ~/.pypirc)
-	uvx twine upload dist/*
+	uvx twine upload dist/senpai/*
+	uvx twine upload dist/astro-senpai/*
 
 ###################
 # Export          #
