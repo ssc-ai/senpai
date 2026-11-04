@@ -1,4 +1,6 @@
-# Build and publish astro-senpai to PyPI when a GitHub Release is published.
+# Build and publish senpai to PyPI when a GitHub Release is published, along
+# with astro-senpai (its old PyPI name) as an empty package pinned to the same
+# senpai version (packaging/astro-senpai/).
 #
 # Trigger:   publishing a Release (not merges to main, not draft releases,
 #            not prereleases -- see the `if:` guard on release-build).
@@ -30,9 +32,11 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # PyPI project name; the built artifacts normalize `-` to `_`.
-      DIST_NAME: astro-senpai
-      DIST_FILE: astro_senpai
+      # PyPI project names. The shim's built artifacts normalize `-` to `_`.
+      DIST_NAME: senpai
+      SHIM_NAME: astro-senpai
+      SHIM_FILE: astro_senpai
+      SHIM_DIR: packaging/astro-senpai
 
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +64,26 @@ jobs:
           fi
           echo "VERSION=${PROJECT_VERSION}" >> "$GITHUB_ENV"
 
+      - name: Verify astro-senpai shim is pinned to this version
+        run: |
+          uv run --no-project python - <<'EOF'
+          import os, pathlib, tomllib
+          version = os.environ["VERSION"]
+          shim = tomllib.loads(pathlib.Path(os.environ["SHIM_DIR"], "pyproject.toml").read_text())["project"]
+          want = f"senpai=={version}"
+          if shim["version"] != version or shim["dependencies"] != [want]:
+              raise SystemExit(f"::error::{os.environ['SHIM_DIR']}/pyproject.toml must have version = \"{version}\" and dependencies = [\"{want}\"], got version {shim['version']!r}, dependencies {shim['dependencies']!r}.")
+          print(f"shim OK: astro-senpai {version} -> {want}")
+          EOF
+
       - name: Verify version is not already on PyPI
         run: |
-          if curl -sf "https://pypi.org/pypi/${DIST_NAME}/${VERSION}/json" > /dev/null; then
-            echo "::error::${DIST_NAME} ${VERSION} is already published on PyPI. Bump the version in pyproject.toml -- PyPI will not accept a re-upload."
-            exit 1
-          fi
+          for name in "${DIST_NAME}" "${SHIM_NAME}"; do
+            if curl -sf "https://pypi.org/pypi/${name}/${VERSION}/json" > /dev/null; then
+              echo "::error::${name} ${VERSION} is already published on PyPI. Bump the version in pyproject.toml and ${SHIM_DIR}/pyproject.toml -- PyPI will not accept a re-upload."
+              exit 1
+            fi
+          done
           echo "PyPI check OK: ${VERSION} is not yet published"
 
       - name: Install dependencies
@@ -85,18 +103,20 @@ jobs:
         run: uv run pytest -v -m "not requires_astrometry and not requires_catalog"
 
       - name: Build release distributions
-        run: uv build
+        run: |
+          uv build --out-dir dist/senpai
+          uv build --out-dir dist/astro-senpai "${SHIM_DIR}"
 
       - name: Verify built artifacts carry the expected version
         run: |
-          ls -l dist/
-          test -f "dist/${DIST_FILE}-${VERSION}-py3-none-any.whl" || {
-            echo "::error::Expected dist/${DIST_FILE}-${VERSION}-py3-none-any.whl, got: $(ls dist/)"; exit 1; }
-          test -f "dist/${DIST_FILE}-${VERSION}.tar.gz" || {
-            echo "::error::Expected dist/${DIST_FILE}-${VERSION}.tar.gz, got: $(ls dist/)"; exit 1; }
+          ls -lR dist/
+          for f in "senpai/${DIST_NAME}-${VERSION}-py3-none-any.whl" "senpai/${DIST_NAME}-${VERSION}.tar.gz" \
+                   "astro-senpai/${SHIM_FILE}-${VERSION}-py3-none-any.whl" "astro-senpai/${SHIM_FILE}-${VERSION}.tar.gz"; do
+            test -f "dist/${f}" || { echo "::error::Expected dist/${f}, got: $(ls -R dist/)"; exit 1; }
+          done
 
       - name: Check distribution metadata
-        run: uvx twine check dist/*
+        run: uvx twine check dist/senpai/* dist/astro-senpai/*
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -118,7 +138,7 @@ jobs:
     # this job waits for a human approval before uploading.
     environment:
       name: pypi
-      url: https://pypi.org/p/astro-senpai
+      url: https://pypi.org/p/senpai
 
     steps:
       - name: Retrieve release distributions
@@ -127,7 +147,17 @@ jobs:
           name: release-dists
           path: dist/
 
-      - name: Publish release distributions to PyPI
+      # senpai first: the astro-senpai shim depends on it. skip-existing lets
+      # a re-run of this job finish the shim upload if senpai already went up;
+      # the build job has already refused versions that were on PyPI before.
+      - name: Publish senpai to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist/
+          packages-dir: dist/senpai/
+          skip-existing: true
+
+      - name: Publish astro-senpai shim to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/astro-senpai/
+          skip-existing: true

@@ -14,10 +14,12 @@ regression without a build.
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 from pathlib import Path
 
 import pytest
 
+import senpai
 from senpai.core import constants
 
 
@@ -94,3 +96,18 @@ def test_openapi_example_needs_no_files_on_disk(monkeypatch):
 
     assert len(example.detections) > 0
     assert example.image_metadata.width == 1024
+
+
+@pytest.mark.parametrize(
+    ("installed", "warns"),
+    [({"senpai"}, False), ({"senpai", "astro-senpai"}, True), ({"astro-senpai"}, False)],
+)
+def test_astro_senpai_install_warns_to_depend_on_senpai(monkeypatch, recwarn, installed, warns):
+    def fake_version(name):
+        if name not in installed:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return "0"
+
+    monkeypatch.setattr(senpai, "version", fake_version)
+    senpai._warn_if_installed_via_astro_senpai()
+    assert any(issubclass(w.category, FutureWarning) and "astro-senpai" in str(w.message) for w in recwarn) == warns
