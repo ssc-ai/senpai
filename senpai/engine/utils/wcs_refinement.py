@@ -1,6 +1,7 @@
 """Sidereal and rate-track WCS refinement engines."""
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.signal import convolve
@@ -180,6 +181,38 @@ def refine_wcs_by_kernel_convolution(frame: RateTrackFrame) -> tuple[float, floa
     # Update the WCS with the global shift (no limiting magnitude — need all stars for refinement)
     update_starfield_wcs(frame, updated_wcs_model, limiting_magnitude=None)
 
+    # The per-star refit below searches only WINDOW_SEARCH_RADIUS px around each predicted star.
+    # The global shift cannot be relied on to bring the WCS that close: it pairs bright maxima with
+    # the nearest stars of the full (deep) catalog, so on a dense field it reads near zero whatever
+    # the true offset. Check that the windows reach the stars, and walk them there if they do not.
+    search = converge_search_windows(convolved_image, window_probe_positions(frame))
+    if not search.converged:
+        logger.warning(
+            "Frame %d: %s of probe stars still on the %d px search-window border after walking "
+            "the windows by (%+.1f, %+.1f) px; the WCS is too far off to refine, not refitting",
+            frame.index,
+            ", ".join(f"{f:.0%}" for f in search.edge_fractions),
+            WINDOW_SEARCH_RADIUS,
+            *search.offset,
+        )
+        _mark_unrefined(frame)
+        return global_shift_x, global_shift_y
+    if search.offset != (0.0, 0.0):
+        logger.warning(
+            "Frame %d: %.0f%% of probe stars sat on the %d px search-window border; walked the "
+            "windows by (%+.1f, %+.1f) px in %d steps (border fractions %s)",
+            frame.index,
+            100 * search.edge_fractions[0],
+            WINDOW_SEARCH_RADIUS,
+            *search.offset,
+            len(search.edge_fractions) - 1,
+            ", ".join(f"{f:.0%}" for f in search.edge_fractions),
+        )
+        walked_wcs = shift_wcs(frame.starfield.wcs, -search.offset[0], -search.offset[1])
+        update_starfield_wcs(frame, walked_wcs, limiting_magnitude=None)
+        global_shift_x += search.offset[0]
+        global_shift_y += search.offset[1]
+
     if config.plotting.debug:
         plot_single_frame(
             frame.frame.data,
@@ -254,6 +287,169 @@ def _finalize_refined_wcs_status(
         frame.starfield.wcs_status = WCSStatus.REFINED_UNVALIDATED_WCS
     else:
         frame.starfield.wcs_status = WCSStatus.KERNEL_REFINED_WCS
+
+
+def _mark_unrefined(frame: RateTrackFrame) -> None:
+    """Mark a rate frame whose refinement could not run as not to be trusted for astrometry.
+
+    The absolute validation is still recorded for inspection, but it cannot vouch for the frame: a
+    WCS several pixels off ALONG the star trails still puts star flux at the predicted positions,
+    and passes it.
+    """
+    frame.starfield.wcs_quality = validate_frame_wcs(frame, refit_stats=None)
+    frame.starfield.wcs_status = WCSStatus.REFINED_UNVALIDATED_WCS
+
+
+# ---------------------------------------------------------------------------
+# Rate-track: the per-star search window
+# ---------------------------------------------------------------------------
+
+# Half-width of the window each star's peak is searched in, around its predicted position.
+WINDOW_SEARCH_RADIUS = 10
+# Brightest catalog stars used to check that the windows reach the stars.
+WINDOW_PROBE_STARS = 50
+# A star whose argmax sits on its window's border has its true peak outside the window. On noise
+# about 18% of a 21 x 21 window's pixels are border pixels, so a majority on the border means the
+# WCS, not the star, is off.
+WINDOW_EDGE_MAJORITY = 0.5
+# Steps of at most WINDOW_SEARCH_RADIUS px each: enough to cross a full GEO trail length.
+WINDOW_WALK_MAX_STEPS = 4
+
+
+@dataclass(frozen=True)
+class WindowSearch:
+    """Where the per-star search windows have to sit to reach the stars.
+
+    Attributes:
+        offset: (dx, dy) px to add to every predicted star position: measured minus predicted.
+        edge_fractions: share of probe stars on the window border at each step, the first being
+            the unwalked windows.
+        converged: False when a majority was still on the border after the last step.
+    """
+
+    offset: tuple[float, float]
+    edge_fractions: list[float]
+    converged: bool
+
+
+def measure_window_peak(
+    convolved: np.ndarray, x: float, y: float, radius: int = WINDOW_SEARCH_RADIUS
+) -> tuple[int, int, bool] | None:
+    """Locate the integer argmax of the convolved image in the window around (x, y).
+
+    Args:
+        convolved (np.ndarray): the frame convolved with its streak kernel.
+        x (float): predicted column.
+        y (float): predicted row.
+        radius (int): window half-width in px.
+
+    Returns:
+        tuple[int, int, bool] | None: (column, row, on_border), on_border being True when the
+            argmax sits on the window's edge -- the true peak then lies outside the window, so the
+            position is not a measurement. None when the window falls outside the image.
+    """
+    height, width = convolved.shape
+    x_min, x_max = max(0, int(x - radius)), min(width, int(x + radius + 1))
+    y_min, y_max = max(0, int(y - radius)), min(height, int(y + radius + 1))
+    region = convolved[y_min:y_max, x_min:x_max]
+    if region.size == 0:
+        return None
+    local_y, local_x = np.unravel_index(int(np.argmax(region)), region.shape)
+    on_border = (
+        local_x in (0, region.shape[1] - 1) or local_y in (0, region.shape[0] - 1)
+    )
+    return int(x_min + local_x), int(y_min + local_y), bool(on_border)
+
+
+def converge_search_windows(
+    convolved: np.ndarray,
+    positions: np.ndarray,
+    radius: int = WINDOW_SEARCH_RADIUS,
+    max_steps: int = WINDOW_WALK_MAX_STEPS,
+    edge_majority: float = WINDOW_EDGE_MAJORITY,
+) -> WindowSearch:
+    """Move the search windows until they reach the stars, if the WCS put them short.
+
+    A star's response in the streak-convolved image is a ridge as long as its trail, peaking at the
+    trail's centre. When the predicted positions are more than ``radius`` off along the trails,
+    every window misses its peak and the argmax climbs to the border nearest it, so every star
+    reports the same clipped shift. This moves all windows by the median border shift and measures
+    again, until most stars are inside their windows. With the windows already on the stars it
+    returns a zero offset after one measurement.
+
+    Args:
+        convolved (np.ndarray): the frame convolved with its streak kernel.
+        positions (np.ndarray): (n, 2) predicted (x, y) of the probe stars.
+        radius (int): window half-width in px.
+        max_steps (int): most walking steps to take.
+        edge_majority (float): border share above which the windows are judged off the stars.
+
+    Returns:
+        WindowSearch: the offset to apply, the border share at each step, and whether it converged.
+    """
+    offset_x = offset_y = 0.0
+    fractions: list[float] = []
+    for step in range(max_steps + 1):
+        border_shifts = []
+        measured = 0
+        for x, y in positions:
+            peak = measure_window_peak(convolved, x + offset_x, y + offset_y, radius)
+            if peak is None:
+                continue
+            measured += 1
+            if peak[2]:
+                border_shifts.append((peak[0] - (x + offset_x), peak[1] - (y + offset_y)))
+        if measured == 0:
+            break
+        fractions.append(len(border_shifts) / measured)
+        if fractions[-1] <= edge_majority:
+            return WindowSearch((offset_x, offset_y), fractions, converged=True)
+        if step == max_steps:
+            break
+        offset_x += float(np.median([s[0] for s in border_shifts]))
+        offset_y += float(np.median([s[1] for s in border_shifts]))
+    return WindowSearch((offset_x, offset_y), fractions, converged=not fractions)
+
+
+def _streak_safety_margins(streak) -> tuple[float, float]:
+    """Half the streak's x and y extent (at least 15 px): stars closer to the edge are cut off."""
+    angle = streak.radian_angle()
+    min_margin = 15  # pixels
+    return (
+        max(abs(streak.pixel_length * np.cos(angle)) / 2, min_margin),
+        max(abs(streak.pixel_length * np.sin(angle)) / 2, min_margin),
+    )
+
+
+def window_probe_positions(
+    frame: RateTrackFrame, max_stars: int = WINDOW_PROBE_STARS, min_separation: float = 15.0
+) -> np.ndarray:
+    """Predicted positions of the brightest well-separated catalog stars clear of the frame edge.
+
+    Args:
+        frame (RateTrackFrame): the frame, its catalog stars placed by the current WCS.
+        max_stars (int): how many stars to return.
+        min_separation (float): minimum distance between returned stars, px.
+
+    Returns:
+        np.ndarray: (n, 2) array of (x, y).
+    """
+    height, width = frame.frame.data.shape
+    margin_x, margin_y = _streak_safety_margins(frame.streak)
+    stars = sorted(
+        (s for s in frame.starfield.catalog_stars if s.x is not None and s.y is not None),
+        key=lambda s: s.magnitude if s.magnitude is not None else float("inf"),
+    )
+    picked: list[tuple[float, float]] = []
+    for star in stars:
+        if len(picked) >= max_stars:
+            break
+        if not (margin_x <= star.x <= width - margin_x and margin_y <= star.y <= height - margin_y):
+            continue
+        if any((star.x - px) ** 2 + (star.y - py) ** 2 < min_separation**2 for px, py in picked):
+            continue
+        picked.append((float(star.x), float(star.y)))
+    return np.array(picked, dtype=float).reshape(-1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -729,23 +925,9 @@ def refine_wcs_with_catalog_stars(
     # Get image dimensions
     height, width = frame.frame.data.shape
 
-    # Calculate the safety margin based on streak properties
-    # This ensures we don't use stars that might be cut off at the edges
-    streak_length = frame.streak.pixel_length
-    streak_angle_rad = frame.streak.radian_angle()
-
-    # Calculate the maximum possible projection of the streak in x and y directions
-    dx_max = abs(streak_length * np.cos(streak_angle_rad))
-    dy_max = abs(streak_length * np.sin(streak_angle_rad))
-
-    # Set safety margin to half the streak length in each direction
-    safety_margin_x = dx_max / 2
-    safety_margin_y = dy_max / 2
-
-    # Ensure minimum safety margin
-    min_margin = 15  # pixels
-    safety_margin_x = max(safety_margin_x, min_margin)
-    safety_margin_y = max(safety_margin_y, min_margin)
+    # Safety margin: half the streak's extent on each axis (at least 15 px), so stars whose
+    # streaks might be cut off at the frame edge are not used.
+    safety_margin_x, safety_margin_y = _streak_safety_margins(frame.streak)
 
     logger.info(
         f"Using safety margins: x={safety_margin_x:.1f}, y={safety_margin_y:.1f} pixels to avoid edge-cut streaks"
@@ -756,6 +938,7 @@ def refine_wcs_with_catalog_stars(
     filtered_star_data = []
     diag_star_counter = 0
     variable_kernel_used_count = 0
+    dropped_on_border = 0
 
     # Maximum number of stars to process for WCS refinement
     MAX_STARS_FOR_REFINEMENT = 250
@@ -841,6 +1024,13 @@ def refine_wcs_with_catalog_stars(
                     if correlation.size > 0:
                         max_idx = int(np.argmax(correlation))
                         local_y, local_x = np.unravel_index(max_idx, correlation.shape)
+                        if local_x in (0, correlation.shape[1] - 1) or local_y in (
+                            0,
+                            correlation.shape[0] - 1,
+                        ):
+                            # Peak outside the cutout: not a measurement of this star.
+                            dropped_on_border += 1
+                            continue
                         measured_x = x_min + local_x
                         measured_y = y_min + local_y
                         variable_kernel_used = True
@@ -873,22 +1063,16 @@ def refine_wcs_with_catalog_stars(
 
         if measured_x is None or measured_y is None:
             # Fallback / default behavior: use the globally convolved image near the catalog position.
-            search_radius = 10  # pixels
-            x_min, x_max = max(0, int(x - search_radius)), min(
-                width, int(x + search_radius + 1)
-            )
-            y_min, y_max = max(0, int(y - search_radius)), min(
-                height, int(y + search_radius + 1)
-            )
-
-            local_region = convolved_image[y_min:y_max, x_min:x_max]
-            if local_region.size == 0:
+            peak = measure_window_peak(convolved_image, x, y, WINDOW_SEARCH_RADIUS)
+            if peak is None:
                 continue
-
-            max_idx = np.argmax(local_region)
-            local_y, local_x = np.unravel_index(max_idx, local_region.shape)
-            measured_x = x_min + local_x
-            measured_y = y_min + local_y
+            measured_x, measured_y, on_border = peak
+            if on_border:
+                # The true peak lies outside the window: the clipped position is not a
+                # measurement, and every such star reports the same shift, which the MAD cut on
+                # shift magnitude below cannot reject.
+                dropped_on_border += 1
+                continue
 
         # Double-check that the measured position isn't too close to the edge
         if (
@@ -928,6 +1112,15 @@ def refine_wcs_with_catalog_stars(
     logger.info(
         f"Found {len(filtered_star_data)} well-separated, high-SNR stars for WCS refinement"
     )
+    if dropped_on_border:
+        logger.info(
+            "Frame %d: dropped %d of %d measured stars whose peak sat on the search-window border "
+            "(%.0f%%)",
+            frame.index,
+            dropped_on_border,
+            dropped_on_border + len(filtered_star_data),
+            100 * dropped_on_border / (dropped_on_border + len(filtered_star_data)),
+        )
 
     # Fill detection counts in one batched, shared-shape aperture pass
     # (identical aperture geometry to extract_counts_with_rectangular_aperture).
