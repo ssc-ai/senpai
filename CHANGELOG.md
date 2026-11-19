@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rate-frame WCS is no longer shifted by half a pixel.** `rectangle_pyramoid`
+  sized its grid without forcing an odd size, so an even dimension put the
+  kernel's centre between two pixels and the `mode="same"` convolution that
+  rate-frame refinement measures stars on moved every star by +0.5 px on that
+  axis. The refit carried the half pixel into the WCS, on whichever axes the
+  measured trail length and FWHM made even, so it changed from frame to frame
+  within a collect. On a simulated GEO rate-track run 84% of rate frames were
+  shifted on at least one axis (0.62" on one, 0.88" on both); every rate-frame
+  WCS of the same collects now sits within 0.16 px of the truth star field.
+  The kernel is now always odd-sized, as `sidereal_kernel` and
+  `streak_matched_kernel` already were.
+- **A rate-frame WCS that starts more than 10 px off along the trails is
+  recovered, or marked untrustworthy, instead of kept a few pixels off.**
+  Refinement looks for each star within 10 px of its predicted position. Past
+  that, every window missed its star, every argmax landed on the window border,
+  all stars reported the same clipped shift, and the refit kept the start error
+  minus 10 px, stamped `KERNEL_REFINED_WCS`. The global shift that runs first
+  did not catch it: it pairs bright maxima with the full catalog by assignment,
+  and on a dense field each maximum takes a nearby faint star, so it reads near
+  zero. Refinement now checks the search windows on the 50 brightest stars and,
+  when most sit on their border, walks every window by the median border shift
+  (up to four steps) before refitting; a frame whose windows never reach the
+  stars is not refitted and is marked `REFINED_UNVALIDATED_WCS`. Stars whose
+  peak sits on the window border are dropped from the refit. On the simulated
+  collect that showed it, the first rate frame reached from the sidereal anchor
+  went from 5.4 px off to 0.1 px.
+
 ## [2.9.2] - 2026-11-03
 
 ### Fixed
