@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.3] - 2026-11-21
+
+### Added
+
+- **`astrometry.verify_solution`** (default `true`), passed to astroeasy. It turns astrometry.net's
+  verify/re-tweak step on or off from configuration. Set it `false` to keep the solve's own,
+  unverified solution.
+- **`validation.max_shift_trials`** (default `10`, the previous hardcoded value): how many shift
+  candidates each frame-to-frame search (sidereal -> rate, rate -> rate) tries before giving up on the
+  hop. The correct shift can sit behind a sign-flipped decoy and side-lobes of peaks already tried, and
+  a failed hop takes the WCS of the frames after it. On MDP v2 a budget of 25 rescued 91 of 391
+  exhausted hops, for about 30 more correlated observations at almost no run-time cost.
+
+### Changed
+
+- **Requires astroeasy 1.3** (`astroeasy~=1.3.0`). astroeasy 1.3 gives its verify
+  step the same `astrometry.cfg` as the solve. Before, the verify step read
+  solve-field's default config, so whether it re-tweaked the WCS depended on the
+  host, and identical inputs gave cold solutions up to a pixel apart. It also pins
+  astrometry.net 0.99 and refuses any other release. The narrow pin is what carries
+  that guarantee to senpai: a given senpai release solves with one astrometry.net
+  release on every host.
+
 ### Fixed
 
 - **Rate-frame WCS is no longer shifted by half a pixel.** `rectangle_pyramoid`
