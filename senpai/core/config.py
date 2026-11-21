@@ -123,6 +123,13 @@ class AstrometryConfig(BaseModel):
         default=True,
         description="Enable SIP refit after initial solve using catalog stars for better edge distortion fitting",
     )
+    verify_solution: bool = Field(
+        default=True,
+        description="Run astrometry.net's verify/re-tweak step after a solve (astroeasy "
+        "`verify_solution`). It re-fits the solution against the deepest index covering the field, "
+        "which usually tightens it; the reference-star list is the solve's either way. Set false "
+        "to keep the solve's own, unverified solution.",
+    )
 
 
 class StarCatalogConfig(BaseModel):
