@@ -461,7 +461,7 @@ def solve_rate_from_rate(
         scale = max(int(expected_shift * 1.2), int(3 * streak_fwhm), 5)
 
     valid = False
-    max_trials = 10
+    max_trials = get_config().validation.max_shift_trials
     trials = 0
     best_correlation_score = -1
     best_shift = None  # Track the best shift we've found

@@ -6,6 +6,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.3] - 2026-11-21
+
+### Added
+
+- **`astrometry.verify_solution`** (default `true`), passed to astroeasy. It turns astrometry.net's
+  verify/re-tweak step on or off from configuration. Set it `false` to keep the solve's own,
+  unverified solution.
+- **`validation.max_shift_trials`** (default `10`, the previous hardcoded value): how many shift
+  candidates each frame-to-frame search (sidereal -> rate, rate -> rate) tries before giving up on the
+  hop. The correct shift can sit behind a sign-flipped decoy and side-lobes of peaks already tried, and
+  a failed hop takes the WCS of the frames after it. On MDP v2 a budget of 25 rescued 91 of 391
+  exhausted hops, for about 30 more correlated observations at almost no run-time cost.
+
+### Changed
+
+- **Requires astroeasy 1.3** (`astroeasy~=1.3.0`). astroeasy 1.3 gives its verify
+  step the same `astrometry.cfg` as the solve. Before, the verify step read
+  solve-field's default config, so whether it re-tweaked the WCS depended on the
+  host, and identical inputs gave cold solutions up to a pixel apart. It also pins
+  astrometry.net 0.99 and refuses any other release. The narrow pin is what carries
+  that guarantee to senpai: a given senpai release solves with one astrometry.net
+  release on every host.
+
+### Fixed
+
+- **Rate-frame WCS is no longer shifted by half a pixel.** `rectangle_pyramoid`
+  sized its grid without forcing an odd size, so an even dimension put the
+  kernel's centre between two pixels and the `mode="same"` convolution that
+  rate-frame refinement measures stars on moved every star by +0.5 px on that
+  axis. The refit carried the half pixel into the WCS, on whichever axes the
+  measured trail length and FWHM made even, so it changed from frame to frame
+  within a collect. On a simulated GEO rate-track run 84% of rate frames were
+  shifted on at least one axis (0.62" on one, 0.88" on both); every rate-frame
+  WCS of the same collects now sits within 0.16 px of the truth star field.
+  The kernel is now always odd-sized, as `sidereal_kernel` and
+  `streak_matched_kernel` already were.
+- **A rate-frame WCS that starts more than 10 px off along the trails is
+  recovered, or marked untrustworthy, instead of kept a few pixels off.**
+  Refinement looks for each star within 10 px of its predicted position. Past
+  that, every window missed its star, every argmax landed on the window border,
+  all stars reported the same clipped shift, and the refit kept the start error
+  minus 10 px, stamped `KERNEL_REFINED_WCS`. The global shift that runs first
+  did not catch it: it pairs bright maxima with the full catalog by assignment,
+  and on a dense field each maximum takes a nearby faint star, so it reads near
+  zero. Refinement now checks the search windows on the 50 brightest stars and,
+  when most sit on their border, walks every window by the median border shift
+  (up to four steps) before refitting; a frame whose windows never reach the
+  stars is not refitted and is marked `REFINED_UNVALIDATED_WCS`. Stars whose
+  peak sits on the window border are dropped from the refit. On the simulated
+  collect that showed it, the first rate frame reached from the sidereal anchor
+  went from 5.4 px off to 0.1 px.
+
 ## [2.9.2] - 2026-11-03
 
 ### Fixed

@@ -86,6 +86,11 @@ def rectangle_pyramoid(
     border = (int(halo_fwhm / 2) if halo_fwhm else 0) + 3
     n_cols = int(np.ceil(abs(length * cosx) + abs(width * sinx))) + 2 * border + 1
     n_rows = int(np.ceil(abs(length * sinx) + abs(width * cosx))) + 2 * border + 1
+    # Keep both dimensions odd so the kernel's centre is a pixel centre. With an even dimension the
+    # centre lies between two pixels, and a mode="same" convolution moves every response by half a
+    # pixel on that axis -- which rate-frame WCS refinement then fits into the WCS.
+    n_cols += 1 - n_cols % 2
+    n_rows += 1 - n_rows % 2
 
     # Exact per-pixel area coverage of the rotated rectangle, via supersampling: subdivide each
     # output pixel into ss x ss sub-samples, test each against the rectangle, and average. This

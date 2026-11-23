@@ -123,6 +123,13 @@ class AstrometryConfig(BaseModel):
         default=True,
         description="Enable SIP refit after initial solve using catalog stars for better edge distortion fitting",
     )
+    verify_solution: bool = Field(
+        default=True,
+        description="Run astrometry.net's verify/re-tweak step after a solve (astroeasy "
+        "`verify_solution`). It re-fits the solution against the deepest index covering the field, "
+        "which usually tightens it; the reference-star list is the solve's either way. Set false "
+        "to keep the solve's own, unverified solution.",
+    )
 
 
 class StarCatalogConfig(BaseModel):
@@ -304,6 +311,14 @@ class ValidationConfig(BaseModel):
         description="Strict absolute-correlation floor for the same noise-signal case.",
     )
     max_validation_stars: int = Field(default=50, description="Maximum number of stars to use for validation")
+    max_shift_trials: int = Field(
+        default=10,
+        ge=1,
+        description="Shift candidates (cross-correlation peaks) each frame-to-frame search tries, "
+        "sidereal->rate and rate->rate, before giving up on the hop. The correct shift can sit "
+        "behind a sign-flipped decoy and side-lobes of peaks already tried, so a hop that fails "
+        "at 10 can succeed with more; a failed hop takes the WCS of the frames after it.",
+    )
     test_negated_shift: bool = Field(
         default=True,
         description="Also correlate the negated shift; reject the proposed shift if its "

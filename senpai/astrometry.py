@@ -35,6 +35,7 @@ def _build_astroeasy_config() -> astroeasy.AstrometryConfig:
         max_sources=cfg.max_sources,
         min_sources_for_attempt=cfg.min_sources_for_attempt,
         docker_image=cfg.docker_image,
+        verify_solution=cfg.verify_solution,
     )
 
 
